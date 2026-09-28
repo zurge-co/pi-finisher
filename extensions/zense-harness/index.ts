@@ -1848,11 +1848,17 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	/** Close out a phase's cycle scope but KEEP the longrun ref + worktree (unlike
-	 *  resetCycleState, which runs only at whole-tracker closure). */
-	const resetLongrunPhaseCycle = (slug: string, trackerVersion: number, extra?: Partial<LongRunRef>): void => {
+	 *  resetCycleState, which runs only at whole-tracker closure).
+	 *  preserveFinalApply (regression fix 2026-09-28): the completion paths call this right
+	 *  AFTER longrunApplyFinal — which just created state.pendingApply and repinned
+	 *  state.lastEval.head to the index tree. Wiping either here made /zense accept blind
+	 *  in the same turn ("no pending apply to accept") and the tracker could never reach
+	 *  "done". Mid-phase closure keeps the clears (its pendingApply is undefined by
+	 *  construction; its lastEval belongs to the phase being closed). */
+	const resetLongrunPhaseCycle = (slug: string, trackerVersion: number, extra?: Partial<LongRunRef>, preserveFinalApply = false): void => {
 		state.spec = undefined;
 		state.phase = "requirements";
-		state.lastEval = undefined;
+		if (!preserveFinalApply) state.lastEval = undefined;
 		state.baselineHead = undefined;
 		state.evalOverrideFails = undefined;
 		state.specSource = undefined;
@@ -1860,7 +1866,7 @@ export default function (pi: ExtensionAPI) {
 		state.specJsonPath = undefined;
 		state.lastCompileLessons = undefined;
 		state.worktreeLeaveNotified = undefined;
-		state.pendingApply = undefined;
+		if (!preserveFinalApply) state.pendingApply = undefined;
 		state.longRun = { slug, trackerVersion, ...extra };
 	};
 
@@ -1921,7 +1927,7 @@ export default function (pi: ExtensionAPI) {
 		const r = longrunApplyFinal(ctx, t);
 		if (!r.ok) return { ok: false, text: `✅ final phase ${phase.id} auto-advanced (checkpoint ${ck.sha?.slice(0, 12)}) — but the final apply needs attention:\n${r.text}`, complete: true };
 		const slugKeep = t.slug, ver = t.version;
-		resetLongrunPhaseCycle(slugKeep, ver, { auto: true, autoFixRounds: 0 });
+		resetLongrunPhaseCycle(slugKeep, ver, { auto: true, autoFixRounds: 0 }, true); // final apply: keep pendingApply+lastEval for /zense accept (2026-09-28)
 		state.phase = "review";
 		persist();
 		return { ok: true, text: `✅ final phase ${phase.id} auto-advanced — the whole set is complete\n📋 YOUR SINGLE REVIEW: ${digest}\n${r.text}`, complete: true };
@@ -2102,7 +2108,11 @@ export default function (pi: ExtensionAPI) {
 						else return say("retry needs the last phase's spec on disk (.zense/spec.json) — missing; human: apply manually via git merge --squash", {}, true);
 					}
 					const r = longrunApplyFinal(ctx, t);
-					if (r.ok) resetLongrunPhaseCycle(t.slug, t.version);
+					if (r.ok) {
+						resetLongrunPhaseCycle(t.slug, t.version, undefined, true); // final apply: keep pendingApply+lastEval for /zense accept (2026-09-28)
+						state.phase = "review";
+						persist();
+					}
 					return say(r.text, {}, !r.ok);
 				}
 				const phase = nextPendingPhase(t);
@@ -2145,7 +2155,11 @@ export default function (pi: ExtensionAPI) {
 						if (disk) state.spec = disk;
 					}
 					const r = longrunApplyFinal(ctx, t);
-					if (r.ok) resetLongrunPhaseCycle(t.slug, t.version);
+					if (r.ok) {
+						resetLongrunPhaseCycle(t.slug, t.version, undefined, true); // final apply: keep pendingApply+lastEval for /zense accept (2026-09-28)
+						state.phase = "review";
+						persist();
+					}
 					return say(r.text, {}, !r.ok);
 				}
 				if (state.phase !== "review" || !state.spec)
@@ -2175,7 +2189,7 @@ export default function (pi: ExtensionAPI) {
 					if (!r.ok) return say(`✅ phase ${phase.id} closed (checkpoint ${ck.sha?.slice(0, 12)}) — but the final apply needs attention:\n${r.text}`, {}, true);
 					// keep state.phase = "review" + pendingApply → the standard /zense accept flow marks the tracker done
 					const slugKeep = t.slug, ver = t.version;
-					resetLongrunPhaseCycle(slugKeep, ver);
+					resetLongrunPhaseCycle(slugKeep, ver, undefined, true); // final apply: keep pendingApply+lastEval or accept is blind (regression 2026-09-28 — the comment above promised kept pendingApply; the unguarded clear broke it)
 					state.phase = "review"; // pendingApply exists → review/accept flow continues from here
 					persist();
 					return say(`✅ final phase ${phase.id} closed (checkpoint ${ck.sha?.slice(0, 12)})\n${r.text}`, { trackerComplete: true });
