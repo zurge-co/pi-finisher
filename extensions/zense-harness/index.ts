@@ -527,8 +527,15 @@ export default function (pi: ExtensionAPI) {
 		ctx: ExtensionContext,
 		options: unknown, // pi keeps options in 2 shapes (overlay/non-overlay) — passed through via cast
 		factory: (tui: any, theme: any, kb: any, done: (v: T) => void) => any,
-	): Promise<T> =>
-		ctx.ui.custom<T>((tui, theme, kb, done) => {
+		// peek (2026-10-14): canPeek mirrors the "space is still free" contract of the dialog's own
+		// handleInput — the guard only peeks when the dialog says yes (a picker mid-filter keeps
+		// space for typing, a checkbox dialog toggles with it)
+		canPeek?: () => boolean,
+	): Promise<T> => {
+		// setHidden mirror lives in this scope: escGuard.open's setHidden callback and pi's onHandle
+		// both close over it (declared before either runs — no TDZ)
+		let overlayHidden: ((hidden: boolean) => void) | undefined;
+		return ctx.ui.custom<T>((tui, theme, kb, done) => {
 			let closed = false;
 			// closing with null semantics = cancel, matching every dialog's original ESC (every
 			// callsite already accepts a T that includes null)
@@ -538,14 +545,26 @@ export default function (pi: ExtensionAPI) {
 				handle.close();
 				done(v);
 			};
-			const handle = escGuard.open(() => trackedDone(null as T));
+			// until pi's onHandle fires, the guard entry exists without a setHidden — toggle is a
+			// no-op, never a crash
+			const handle = escGuard.open(
+				() => trackedDone(null as T),
+				(hidden) => overlayHidden?.(hidden),
+				canPeek,
+			);
 			try {
 				return factory(tui, theme, kb, trackedDone);
 			} catch (e) {
 				trackedDone(null as T); // factory died before returning a component — drop the guard entry, don't leak it
 				throw e;
 			}
-		}, options as never);
+		}, {
+			...((options as Record<string, unknown>) ?? {}),
+			onHandle: (h: any) => {
+				overlayHidden = (hidden: boolean) => h.setHidden(hidden);
+			},
+		} as never);
+	};
 
 	// ----- spec presentation: the dialog must show the full spec before a signing decision
 	// (pi-tui's ScrollView needs layout integration, so we scroll manually via offset + slice)
@@ -644,7 +663,7 @@ export default function (pi: ExtensionAPI) {
 					if (items.length > 2) out.push(`  ${theme.fg("muted", `[o] ${items[1].label}`)}`);
 					const nLabel = (items.length > 2 ? items[2] : items[1])?.label ?? "Decide later";
 					out.push(`  ${theme.fg("muted", `[n] ${nLabel}`)}`);
-					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom"), 1, 0).render(w));
+					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • space = read chat"), 1, 0).render(w));
 					out.push(...border.render(w));
 					return panelize(theme, out, w);
 				},
@@ -716,12 +735,17 @@ export default function (pi: ExtensionAPI) {
 					tui.requestRender();
 				},
 			};
-		});
+		},
+		// space is this dialog's checkbox toggle — never peek here (Esc still cancels)
+		() => false);
 
 	// ----- zense's shared picker: title + search filter + SelectList (reused for role/model picking)
 
-	const zensePick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint = ""): Promise<string | null> =>
-		zenseCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
+	const zensePick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint = ""): Promise<string | null> => {
+		// filter lives outside the factory so canPeek can see it: space peeks only while the
+		// filter is empty — once the human types, space must keep feeding SelectList's filter
+		let filter = "";
+		return zenseCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const selectList = new SelectList(items, Math.min(items.length, 12), {
 				selectedPrefix: (t) => theme.fg("accent", t),
@@ -732,7 +756,6 @@ export default function (pi: ExtensionAPI) {
 			});
 			selectList.onSelect = (item) => done(item.value);
 			selectList.onCancel = () => done(null);
-			let filter = "";
 			return {
 				render: (w: number) =>
 					panelize(theme, [
@@ -740,7 +763,7 @@ export default function (pi: ExtensionAPI) {
 						...new Text(theme.fg("accent", theme.bold(title)), 1, 0).render(w),
 						...new Text(theme.fg("dim", `filter: ${filter || "(type to filter)"}${hint ? ` • ${hint}` : ""}`), 1, 0).render(w),
 						...selectList.render(w),
-						...new Text(theme.fg("dim", "↑↓ select • Enter confirm • Esc cancel • type = filter"), 1, 0).render(w),
+						...new Text(theme.fg("dim", `↑↓ select • Enter confirm • Esc cancel • type = filter${filter ? "" : " • space = read chat"}`), 1, 0).render(w),
 						...border.render(w),
 					], w),
 				invalidate: () => {
@@ -760,7 +783,8 @@ export default function (pi: ExtensionAPI) {
 					tui.requestRender();
 				},
 			};
-		});
+		}, () => filter === "");
+	};
 
 	// ----- requirements' clarify questions: with choices → picker (pick an option, or "Other
 	// (type your own)"); without → direct input
@@ -829,7 +853,7 @@ export default function (pi: ExtensionAPI) {
 						? "▶ tail (following end of log)"
 						: `⏸ lines ${offset + 1}-${Math.min(offset + h, lines.length)}/${lines.length} — press G to resume following`;
 					out.push(...new Text(theme.fg("dim", range), 1, 0).render(w));
-					out.push(...new Text(theme.fg("dim", "auto refresh 1s • ↑↓ scroll • ←→ page • g/G top/bottom • Esc close (sub-agent keeps running)"), 1, 0).render(w));
+					out.push(...new Text(theme.fg("dim", "auto refresh 1s • ↑↓ scroll • ←→ page • g/G top/bottom • space = read chat • Esc close (sub-agent keeps running)"), 1, 0).render(w));
 					out.push(...border.render(w));
 					return panelize(theme, out, w);
 				},
@@ -889,7 +913,7 @@ export default function (pi: ExtensionAPI) {
 			list.onSelect = (item) => done(item.value);
 			list.onCancel = () => done(null);
 			container.addChild(list);
-			container.addChild(new Text(theme.fg("dim", "↑↓ navigate • Enter watch • Esc cancel"), 1, 0));
+			container.addChild(new Text(theme.fg("dim", "↑↓ navigate • Enter watch • Esc cancel • space = read chat (list hidden, comes back)"), 1, 0));
 			container.addChild(new Spacer(1));
 			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 			return {
@@ -900,7 +924,7 @@ export default function (pi: ExtensionAPI) {
 					tui.requestRender();
 				},
 			};
-		});
+		}, () => true); // space is unbound in the agents viewer — peek freely
 		const runIdx = picked == null ? -1 : Number(picked);
 		if (runIdx < 0 || !state.subagentRuns[runIdx]) return;
 		await tailViewer(ctx, state.subagentRuns[runIdx]);
