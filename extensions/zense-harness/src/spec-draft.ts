@@ -10,6 +10,11 @@ import { hasUnsubstitutedPlaceholder } from "./evidence.ts";
 export interface SpecDraft {
 	title: string;
 	intent: string;
+	/** Plain-language "what you'll get" for the human signer (request-language, no jargon/
+	 *  file paths/shell commands) — the ONLY thing the sign dialog shows. Optional at parse time
+	 *  (an absent summary is a quality-gate note, not a parse error — the dialog falls back to
+	 *  intent) so older sub-agent outputs and explicit agent-authored drafts keep working. */
+	outcomes?: string;
 	approach: string[];
 	scope: string[];
 	constraints: string[];
@@ -162,6 +167,7 @@ export const parseSpecDraft = (text: string): DraftParse => {
 		draft: {
 			title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : "untitled",
 			intent: typeof o.intent === "string" ? o.intent : "",
+			outcomes: typeof o.outcomes === "string" && o.outcomes.trim() ? o.outcomes.trim() : undefined,
 			approach: asStringArray(o.approach) ?? [],
 			scope: asStringArray(o.scope) ?? [],
 			constraints: asStringArray(o.constraints) ?? [],
@@ -216,6 +222,21 @@ export const findSimilarSpec = (cwd: string, draft: SpecDraft): { file: string; 
 	return best;
 };
 
+/** Outcome-summary jargon heuristic (2026-10-16): the outcomes text is the ONLY thing the
+ *  signer reads, so it must read like product language, not engineering notes. Conservative by
+ *  design — only tokens that are unambiguous engineering artifacts flag it: code fences/
+ *  backticks, file extensions/paths, shell-composition operators, command invocations,
+ *  path-exists checks. False negatives are fine (a human still reads it at signing); false
+ *  positives would push clean text into specDebt, so the token set stays narrow. */
+export const hasOutcomeJargon = (text: string): string[] => {
+	const hits: string[] = [];
+	if (/```|`/.test(text)) hits.push("code fence/backtick");
+	if (/\b[a-zA-Z0-9_-]+\.(ts|tsx|js|mjs|cjs|json|md|sh|yaml|yml)\b/.test(text)) hits.push("file name");
+	if (/\.\.?\/|(^|\s)\//.test(text)) hits.push("path");
+	if (/&&|\|\||\bnpm\s|\bnpx\s|\bnode\s|\bgit\s|\bgrep\s|\btsc\b|path exists:/.test(text)) hits.push("shell command");
+	return hits;
+};
+
 /**
  * G: harness-side quality gate — the sub-agent is good at drafting, but the harness must be
  * skeptical on the human's behalf: empty scope / unverifiable check / duplicate of an old spec
@@ -225,6 +246,20 @@ export const findSimilarSpec = (cwd: string, draft: SpecDraft): { file: string; 
 export const applyQualityGate = (cwd: string, draft: SpecDraft): { draft: SpecDraft; notes: string[] } => {
 	const notes: string[] = [];
 	const extraDebt: string[] = [];
+	// outcome-summary gates (2026-10-16): absent → the sign dialog falls back to the intent
+	// text (still readable, but the signer deserves the dedicated summary); jargon → the signer
+	// pain point this field exists to fix, so it goes to human review instead of silently
+	// rendering command soup in the sign dialog
+	if (!draft.outcomes) {
+		extraDebt.push("quality-gate: no plain-language outcomes summary — the sign dialog will show the intent text instead; ask the requirements agent for one (request-language, no jargon)");
+		notes.push("outcomes-missing");
+	} else {
+		const jargon = hasOutcomeJargon(draft.outcomes);
+		if (jargon.length) {
+			extraDebt.push(`quality-gate: outcomes summary contains technical tokens (${jargon.join(", ")}) — rewrite it in plain language before signing`);
+			notes.push("outcomes-jargon");
+		}
+	}
 	if (!draft.scope.length) {
 		extraDebt.push("quality-gate: scope not specified — every write would pass the scope check; name the path prefixes the agent may touch");
 		notes.push("empty-scope");

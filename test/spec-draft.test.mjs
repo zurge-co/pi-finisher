@@ -9,6 +9,7 @@ import {
 	buildSubagentArgv,
 	extractJsonObject,
 	findSimilarSpec,
+	hasOutcomeJargon,
 	isMachineCheckable,
 	parseSpecDraft,
 	QUESTION_POLICY,
@@ -17,6 +18,7 @@ import {
 const GOOD_SPEC = {
 	title: "Fix login redirect",
 	intent: "users hit /login twice",
+	outcomes: "หลังเข้าสู่ระบบ คุณจะถึงหน้าที่ต้องการได้ทันทีโดยไม่ต้องเข้าสู่ระบบซ้ำ", // plain-language, request-language (2026-10-16)
 	scope: ["src/auth"],
 	constraints: ["no new deps"],
 	criteria: [
@@ -160,15 +162,18 @@ test("applyQualityGate: empty scope and non-machine checks are forced into specD
 			],
 			specDebt: [],
 		});
-		assert.deepEqual(gated.notes, ["empty-scope", "manual-check:c2"]);
-		assert.equal(gated.draft.specDebt.length, 2);
-
+		// outcomes gate (2026-10-16): no plain-language summary → the sign dialog falls back to
+		// intent, the gate notes it + forces human review
+		assert.deepEqual(gated.notes, ["outcomes-missing", "empty-scope", "manual-check:c2"]);
+		assert.equal(gated.draft.specDebt.length, 3);
+		assert.ok(gated.draft.specDebt.some((d) => d.includes("outcomes summary")));
 		// a scope pointing at a nonexistent path → the quality gate catches it (a typo'd scope is toothless)
 		const ghost = applyQualityGate(dir, { ...gated.draft, scope: ["ghost/path-xyz"], specDebt: [] });
 		assert.ok(ghost.notes.some((n) => n.startsWith("scope-missing:ghost/path-xyz")));
 		assert.ok(ghost.draft.specDebt.some((d) => d.includes("ghost/path-xyz")));
-		assert.match(gated.draft.specDebt[0], /scope/);
-		assert.match(gated.draft.specDebt[1], /c2/);
+		assert.match(gated.draft.specDebt[0], /outcomes summary/);
+		assert.match(gated.draft.specDebt[1], /scope/);
+		assert.match(gated.draft.specDebt[2], /c2/);
 		assert.equal(gated.draft.criteria.length, 2); // criteria untouched, only flagged
 
 		// a good draft (scope hits a real repo path — the wave 2/3 scope-missing rule) → specDebt untouched
@@ -284,4 +289,43 @@ test("applyQualityGate: unsubstituted placeholder in check → specDebt + notes 
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+
+// ---------- outcomes (2026-10-16): the plain-language "what you'll get" the signer reads
+
+test("parseSpecDraft: outcomes parsed + trimmed; absent outcomes stay undefined (back-compat with legacy outputs)", () => {
+	const withOut = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, outcomes: "  คุณจะได้หน้าล็อกอินที่เข้าได้ทันที  " }));
+	assert.equal(withOut.kind, "spec");
+	assert.equal(withOut.draft.outcomes, "คุณจะได้หน้าล็อกอินที่เข้าได้ทันที");
+	const legacy = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, outcomes: "   " }));
+	assert.equal(legacy.kind, "spec");
+	assert.equal(legacy.draft.outcomes, undefined, "blank outcomes must normalize to undefined, never an empty string");
+});
+
+test("hasOutcomeJargon: clean request-language text passes; backticks, file names, paths and commands are flagged", () => {
+	assert.deepEqual(hasOutcomeJargon("หลังเข้าสู่ระบบ คุณจะเห็นหน้าโปรไฟล์ของตัวเองได้ทันที"), []);
+	assert.deepEqual(hasOutcomeJargon("You can see your profile right after logging in"), []);
+	assert.ok(hasOutcomeJargon("run `npm test` to confirm").includes("code fence/backtick"));
+	assert.ok(hasOutcomeJargon("adds src/auth/guard.ts").includes("file name"));
+	assert.ok(hasOutcomeJargon("grep -q x y && echo ok").includes("shell command"));
+});
+
+test("applyQualityGate: jargon in outcomes is forced into specDebt (the signer must not read command soup)", () => {
+	const dir = mkdtempSync(join(tmpdir(), "zense-draft-"));
+	try {
+		const gated = applyQualityGate(dir, { ...GOOD_SPEC, outcomes: "adds `src/auth/guard.ts` and runs npm test" });
+		assert.ok(gated.notes.includes("outcomes-jargon"));
+		assert.ok(gated.draft.specDebt.some((d) => d.includes("technical tokens")));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("buildRequirementsPrompt: outcomes are REQUIRED, request-language, jargon-free (the sign dialog shows only this)", () => {
+	const p = buildRequirementsPrompt("fix the login flow", []);
+	assert.match(p, /"outcomes": string/, "the draft JSON contract must carry outcomes");
+	assert.match(p, /outcomes: REQUIRED/);
+	assert.match(p, /SAME LANGUAGE as the Request/i);
+	assert.match(p, /NEVER use jargon/);
 });

@@ -182,3 +182,46 @@ test("source: the shared picker unlocks peek only while its filter is empty", ()
 	const body = src.slice(i, i + 3000);
 	assert.match(body, /filter === ""/, "space must stay a filter key once the human starts typing");
 });
+
+
+// ---- index.ts source regression guards: outcome-first sign surfaces + review-decision modal
+//      (2026-10-16) — the TUI wiring itself can't run under node:test, so the contracts are
+//      pinned as source greps: the sign dialog shows ONLY "what you'll get", the review ends
+//      in y=accept / n=close-only, and non-UI sessions keep the chat-text fallback.
+
+test("source: specSignDialog renders only the outcome summary — no technical spec, no Changes section", () => {
+	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
+	const i = src.indexOf("const specSignDialog");
+	assert.ok(i > 0, "specSignDialog must exist");
+	const body = src.slice(i, src.indexOf("const trackerSignDialog"));
+	assert.match(body, /renderSignOutcome/, "the dialog body must come from renderSignOutcome (outcomes/intent only)");
+	assert.ok(!body.includes("renderSpecMd"), "the full technical spec must not render in the sign dialog");
+	assert.ok(!body.includes("renderSpecChangesTui"), "the Changes section must not render in the sign dialog");
+});
+
+test("source: tracker sign is an outcome-first dialog (y=AUTO, m=MANUAL, n/Esc=not yet); plan flow calls it", () => {
+	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
+	const i = src.indexOf("const trackerSignDialog");
+	assert.ok(i > 0);
+	const body = src.slice(i, src.indexOf("const reviewModalDialog"));
+	assert.match(body, /renderTrackerOutcomes/, "the tracker sign body must come from renderTrackerOutcomes");
+	assert.match(body, /done\("auto"\)/);
+	assert.match(body, /done\("manual"\)/);
+	assert.match(body, /matchesKey\(data, Key\.escape\)/);
+	assert.ok(src.includes("await trackerSignDialog(ctx, t)"), "the plan flow must sign via the dialog");
+});
+
+test("source: zense_review ends in a decision modal — y=accept (commit-on-behalf), n/Esc=close-only, non-UI falls back to chat text", () => {
+	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
+	const i = src.indexOf("const reviewModalDialog");
+	assert.ok(i > 0);
+	const body = src.slice(i, src.indexOf("const extConfigDialog"));
+	assert.match(body, /buildReviewModalText/, "the modal body must come from the pure builder");
+	assert.match(body, /if \(data === "y" && canAccept\) done\(true\)/, "y only counts as consent when something is staged");
+	assert.match(body, /done\(false\)/, "n must close without discarding");
+	const rev = src.slice(src.indexOf('name: "zense_review"'));
+	assert.match(rev, /reviewModalDialog\(ctx, packet/, "the review tool must open the modal after the packet");
+	assert.match(rev, /ctx\.hasUI && ctx\.mode === "tui"/, "the modal must be TUI-only — RPC/print keeps chat text");
+	assert.match(rev, /acceptPending\(ctx, true\)/, "y routes to the accept side's commit-on-behalf path");
+	assert.ok(!rev.slice(0, rev.indexOf("zense_discard")).includes("discardPendingApply"), "review must never discard on its own");
+});

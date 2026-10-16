@@ -60,7 +60,7 @@ export * from "./src/longrun-status.ts";
 // The original package import block (top of file) already covers every external the factory
 // body needs — the lines below are only the local src/ bindings the factory uses by name.
 import { zenseDir, type Criterion, type LongRunRef, type Spec, type State, type SubagentRun, type Tracker, type TrackerPhase, type Worktree as WorktreeT } from "./src/types.ts";
-import { buildSpecChanges, renderSpecChangesTui, renderSpecMd, syncApprovedSpecFiles, applyFullscreenDefault } from "./src/spec-changes.ts";
+import { buildSpecChanges, renderSignOutcome, renderSpecMd, renderTrackerOutcomes, syncApprovedSpecFiles, applyFullscreenDefault } from "./src/spec-changes.ts";
 import { rewritePathForWorktree, buildWorktreeCommand, gitOk, canReuseWorktree, createWorktree, ensureLongrunWorktree } from "./src/worktree.ts";
 import { loadSpecFromDisk, discoverResumeState, findSpecArchivePaths, discoverLongrunTrackers } from "./src/resume.ts";
 import {
@@ -80,7 +80,7 @@ import { parseSpecDraft, applyQualityGate, type ClarifyQuestion } from "./src/sp
 import { SUBAGENT_EXCLUDE_TOOLS, subagentTimeout, zenseGlobalConfigDir, extDisplayLabel, listInstalledExtensions, subagentExtIncludes, writeSubagentExtIncludes, subagentStripFlagsAsync, modelMatchesPattern, PROVIDER_MISSING_RX, findProviderExtension, mergeExtInclude, diagnoseProviderMissing, buildProviderMissingGuidance, buildRequirementsPrompt } from "./src/subagent-config.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
 import { gatherRepoFacts, loadSpecExemplar, gitChangeSummary, CHECK_FORMAT_CONTRACT, runCheckProbes, lintSpecChecks } from "./src/evidence.ts";
-import { parseGraderOutput, buildGraderPrompt, buildCompactProbeSection, buildEvalResultText, buildReviewResultText, COMMENT_DISCIPLINE_GUIDELINE, parseReviewerPacket, findUngroundedTokens, isLastEvalStale, buildReviewerPrompt, buildPendingApplyEvidencePrefix, type GradeParse, type EvalResultView } from "./src/eval-review.ts";
+import { parseGraderOutput, buildGraderPrompt, buildCompactProbeSection, buildEvalResultText, buildReviewResultText, buildReviewModalText, COMMENT_DISCIPLINE_GUIDELINE, parseReviewerPacket, findUngroundedTokens, isLastEvalStale, buildReviewerPrompt, buildPendingApplyEvidencePrefix, type GradeParse, type EvalResultView } from "./src/eval-review.ts";
 import { firstAdrDenyViolation } from "./src/adr-deny.ts";
 import { fmtTok, subagentLogPath, runSubagent } from "./src/subagent-runner.ts";
 import { aggregateMemory, memorySummaryLines, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./src/memory.ts";
@@ -599,16 +599,18 @@ export default function (pi: ExtensionAPI) {
 			const hint = new Text(
 				theme.fg(
 					"warning",
-					`Read the entire spec below before deciding to sign` +
+					`What you'll get — in plain language` +
 						(state.lastCompileLessons ? ` · 📚 fed ${state.lastCompileLessons} lessons from memory at compile time` : ""),
 				),
 				1,
 				0,
 			);
-			// spec body via plain Markdown, minus the Changes section (changesFrom: undefined) —
-			// Changes render separately via renderSpecChangesTui (drops the redundant heading label
-			// + colors instead of +/− markers)
-			const md = new Markdown(renderSpecMd({ ...spec, changesFrom: undefined }), 0, 0, {
+			// outcome-first sign dialog (2026-10-16): the signer reads WHAT they get, not how —
+			// the technical spec (approach/scope/checks/spec debt/Changes) lives in .zense/spec.md,
+			// named by the pointer line in the body. renderSignOutcome builds from outcomes/intent
+			// ONLY, so technical detail cannot leak here even if the spec carries it. The hotkeys
+			// and done() values are unchanged (y/o/n at every callsite)
+			const md = new Markdown(renderSignOutcome(spec), 0, 0, {
 				heading: (t) => theme.fg("accent", theme.bold(t)),
 				link: (t) => theme.fg("accent", t),
 				linkUrl: (t) => theme.fg("dim", t),
@@ -638,11 +640,9 @@ export default function (pi: ExtensionAPI) {
 					if (w !== cachedWidth) {
 						cachedWidth = w;
 						const wBody = Math.max(20, w - 6);
-						// the Changes section (colored +/−/~) first, then the spec body from Markdown — both wrapped at the same width
-						const changeLines = renderSpecChangesTui(spec, (role, t) => theme.fg(role, t)).flatMap((ln) =>
-							ln ? wrapTextWithAnsi(ln, wBody) : [""],
-						);
-						lines = [...changeLines, ...(changeLines.length ? [""] : []), ...md.render(wBody)];
+						// outcome body only (2026-10-16) — no Changes section, no scope/criteria/spec-debt:
+						// the technical spec lives in .zense/spec.md, named by the pointer line
+						lines = md.render(wBody);
 					}
 					offset = Math.max(0, Math.min(offset, maxOffset()));
 					const h = bodyRows();
@@ -653,8 +653,8 @@ export default function (pi: ExtensionAPI) {
 					for (let i = slice.length; i < h; i++) out.push(""); // keep the dialog height steady
 					const range =
 						lines.length > h
-							? `— spec lines ${offset + 1}-${Math.min(offset + h, lines.length)}/${lines.length} —`
-							: `— full spec shown (${lines.length} lines) —`;
+							? `— outcome lines ${offset + 1}-${Math.min(offset + h, lines.length)}/${lines.length} —`
+							: `— full summary shown (${lines.length} lines) —`;
 					out.push(...new Text(theme.fg("dim", range), 1, 0).render(w));
 					// actions are direct hotkeys (not a SelectList) so the arrows stay free for scrolling:
 					//   y = first item (🔏 sign) / o = middle item (⚠️ override — only in the 3-option
@@ -677,6 +677,172 @@ export default function (pi: ExtensionAPI) {
 					if (data === "y") done(items[0].value);
 					else if (data === "o" && items.length > 2) done(items[1].value);
 					else if (data === "n" || matchesKey(data, Key.escape)) done(null);
+					else {
+						const act = scrollKeyAction(data);
+						if (act === "top") offset = 0;
+						else if (act === "bottom") offset = maxOffset();
+						else if (act) offset = Math.max(0, Math.min(maxOffset(), offset + act.dir * (act.page ? bodyRows() : 1)));
+					}
+					tui.requestRender();
+				},
+			};
+		});
+
+	/** Tracker sign dialog (2026-10-16) — outcome-first like specSignDialog: the signer reads
+	 *  "what you'll get" (set + per phase, plain language) and picks the loop mode in one
+	 *  place. Direct hotkeys (arrows stay free for scrolling): y = AUTO (phases run end-to-end,
+	 *  ONE review at the end), m = MANUAL (per-phase human gates), n/Esc = not yet. Returns
+	 *  "auto" | "manual" | null — null keeps the tracker in planning exactly like the old
+	 *  select's "Not yet" option. */
+	const trackerSignDialog = (ctx: ExtensionContext, t: Tracker): Promise<"auto" | "manual" | null> =>
+		zenseCustom<"auto" | "manual" | null>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
+			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+			const title = new Text(theme.fg("accent", theme.bold(`🔏 Sign longrun "${t.slug}" v${t.version}: ${t.title}?`)), 1, 0);
+			const hint = new Text(theme.fg("warning", `What you'll get — in plain language · one signature covers all ${t.phases.length} phase(s)`), 1, 0);
+			const md = new Markdown(renderTrackerOutcomes(t), 0, 0, {
+				heading: (h) => theme.fg("accent", theme.bold(h)),
+				link: (l) => theme.fg("accent", l),
+				linkUrl: (l) => theme.fg("dim", l),
+				code: (c) => theme.fg("success", c),
+				codeBlock: (c) => theme.fg("success", c),
+				codeBlockBorder: (c) => theme.fg("dim", c),
+				quote: (q) => theme.fg("muted", q),
+				quoteBorder: (q) => theme.fg("dim", q),
+				hr: (h) => theme.fg("dim", h),
+				listBullet: (b) => theme.fg("accent", b),
+				bold: (b) => theme.bold(b),
+				italic: (i) => theme.italic(i),
+				strikethrough: (s) => s,
+				underline: (u) => theme.underline(u),
+			});
+			let lines: string[] = [];
+			let cachedWidth = -1;
+			let offset = 0;
+			const bodyRows = () => Math.max(4, Math.floor(tui.terminal.rows * 0.85) - 9);
+			const maxOffset = () => Math.max(0, lines.length - bodyRows());
+			return {
+				render: (w: number) => {
+					if (w !== cachedWidth) {
+						cachedWidth = w;
+						lines = md.render(Math.max(20, w - 6));
+					}
+					offset = Math.max(0, Math.min(offset, maxOffset()));
+					const h = bodyRows();
+					const out: string[] = [];
+					out.push(...border.render(w), ...title.render(w), ...hint.render(w));
+					const slice = lines.slice(offset, offset + h);
+					for (const ln of slice) out.push("  " + ln);
+					for (let i = slice.length; i < h; i++) out.push("");
+					const range =
+						lines.length > h
+							? `— outcome lines ${offset + 1}-${Math.min(offset + h, lines.length)}/${lines.length} —`
+							: `— full summary shown (${lines.length} lines) —`;
+					out.push(...new Text(theme.fg("dim", range), 1, 0).render(w));
+					out.push(`  ${theme.fg("accent", theme.bold("[y] 🔏 Sign — AUTO loop: phases run end-to-end, ONE review at the end"))}`);
+					out.push(`  ${theme.fg("accent", "[m] 🔏 Sign — MANUAL: human review gate after every phase")}`);
+					out.push(`  ${theme.fg("muted", "[n] ✏️ Not yet (amend the plan first)")}`);
+					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • space = read chat"), 1, 0).render(w));
+					out.push(...border.render(w));
+					return panelize(theme, out, w);
+				},
+				invalidate: () => {
+					cachedWidth = -1;
+				},
+				handleInput: (data: string) => {
+					// y auto / m manual / n,Esc later — done() values feed the same signed/auto branches the
+					// old ctx.ui.select produced
+					if (data === "y") done("auto");
+					else if (data === "m") done("manual");
+					else if (data === "n" || matchesKey(data, Key.escape)) done(null);
+					else {
+						const act = scrollKeyAction(data);
+						if (act === "top") offset = 0;
+						else if (act === "bottom") offset = maxOffset();
+						else if (act) offset = Math.max(0, Math.min(maxOffset(), offset + act.dir * (act.page ? bodyRows() : 1)));
+					}
+					tui.requestRender();
+				},
+			};
+		});
+
+	/** Review-decision modal (2026-10-16) — zense_review's result surface: the human reads the
+	 *  packet TL;DR + flags and decides in-place instead of reading chat text and firing
+	 *  zense_accept/zense_discard afterwards. y = accept (explicit human consent → the harness
+	 *  may commit the staged change on their behalf); n/Esc = close ONLY — the staged change and
+	 *  pendingApply are untouched (discard stays a separate, deliberate act). canAccept=false
+	 *  (nothing staged in main, e.g. mid-phase longrun) → y is inert, only n/Esc decide.
+	 *  Returns true only on an explicit y. */
+	const reviewModalDialog = (
+		ctx: ExtensionContext,
+		packet: { tlDr: string; trajectory: string[]; specDebt: string[]; escalations: { kind: string; detail: string }[] },
+		canAccept: boolean,
+		logPath: string,
+	): Promise<boolean> =>
+		zenseCustom<boolean>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
+			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+			const title = new Text(theme.fg("accent", theme.bold("🔍 Review result — decide")), 1, 0);
+			const hint = new Text(theme.fg("warning", canAccept ? "read, then decide — [y] accepts and commits for you · [n] keeps everything as-is" : "nothing to accept here — [n] just closes; the work stays exactly as-is"), 1, 0);
+			const md = new Markdown(
+				buildReviewModalText({ tlDr: packet.tlDr, trajectory: packet.trajectory, specDebt: packet.specDebt, escalations: packet.escalations, ...(state.pendingApply?.paths?.length ? { paths: state.pendingApply.paths } : {}), logPath, canAccept }),
+				0,
+				0,
+				{
+					heading: (h) => theme.fg("accent", theme.bold(h)),
+					link: (l) => theme.fg("accent", l),
+					linkUrl: (l) => theme.fg("dim", l),
+					code: (c) => theme.fg("success", c),
+					codeBlock: (c) => theme.fg("success", c),
+					codeBlockBorder: (c) => theme.fg("dim", c),
+					quote: (q) => theme.fg("muted", q),
+					quoteBorder: (q) => theme.fg("dim", q),
+					hr: (h) => theme.fg("dim", h),
+					listBullet: (b) => theme.fg("accent", b),
+					bold: (b) => theme.bold(b),
+					italic: (i) => theme.italic(i),
+					strikethrough: (s) => s,
+					underline: (u) => theme.underline(u),
+				},
+			);
+			let lines: string[] = [];
+			let cachedWidth = -1;
+			let offset = 0;
+			const bodyRows = () => Math.max(4, Math.floor(tui.terminal.rows * 0.85) - 9);
+			const maxOffset = () => Math.max(0, lines.length - bodyRows());
+			return {
+				render: (w: number) => {
+					if (w !== cachedWidth) {
+						cachedWidth = w;
+						lines = md.render(Math.max(20, w - 6));
+					}
+					offset = Math.max(0, Math.min(offset, maxOffset()));
+					const h = bodyRows();
+					const out: string[] = [];
+					out.push(...border.render(w), ...title.render(w), ...hint.render(w));
+					const slice = lines.slice(offset, offset + h);
+					for (const ln of slice) out.push("  " + ln);
+					for (let i = slice.length; i < h; i++) out.push("");
+					const range =
+						lines.length > h
+							? `— review lines ${offset + 1}-${Math.min(offset + h, lines.length)}/${lines.length} —`
+							: `— full review shown (${lines.length} lines) —`;
+					out.push(...new Text(theme.fg("dim", range), 1, 0).render(w));
+					// keys only — the decision framing (what y/n DO) lives in the md body from
+					// buildReviewModalText; duplicating full labels here would read twice
+					out.push(
+						`  ${canAccept ? theme.fg("accent", theme.bold("[y] accept")) : theme.fg("muted", "[y] (inert — nothing is staged in main this round)")}  ${theme.fg("muted", "[n] close — decide later")}`,
+					);
+					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • space = read chat"), 1, 0).render(w));
+					out.push(...border.render(w));
+					return panelize(theme, out, w);
+				},
+				invalidate: () => {
+					cachedWidth = -1;
+				},
+				handleInput: (data: string) => {
+					// y = accept (only when something is staged — an inert y would read as consent), n/Esc
+					// = close only; the esc-guard still intercepts Esc first when focus slips
+					if (data === "y" && canAccept) done(true);
+					else if (data === "n" || matchesKey(data, Key.escape)) done(false);
 					else {
 						const act = scrollKeyAction(data);
 						if (act === "top") offset = 0;
@@ -980,7 +1146,7 @@ export default function (pi: ExtensionAPI) {
 	 *  compile_spec (sub-agent-drafted) — identical behavior on both paths, no drift. */
 	const commitSpec = async (
 		ctx: ExtensionContext,
-		fields: { title?: string; intent?: string; approach?: string[]; scope?: string[]; constraints?: string[]; criteria?: Criterion[]; specDebt?: string[] },
+		fields: { title?: string; intent?: string; outcomes?: string; approach?: string[]; scope?: string[]; constraints?: string[]; criteria?: Criterion[]; specDebt?: string[] },
 		source: "set" | "compile",
 		// longrun: the signed tracker IS the signature — no dialog; provenance recorded on the
 		// spec; baselineOverride pins git evidence to the phase start (longrun branch HEAD),
@@ -1023,6 +1189,10 @@ export default function (pi: ExtensionAPI) {
 			version,
 			title: fields.title ?? "untitled",
 			intent: fields.intent ?? "",
+			// outcomes is optional at the type level but REQUIRED by the requirements prompt — a
+			// missing one means an agent-authored draft (action=set) or a legacy flow; the quality
+			// gate already noted the absence into specDebt for compile drafts
+			...(fields.outcomes ? { outcomes: fields.outcomes } : {}),
 			approach: fields.approach ?? [],
 			scope: fields.scope ?? [],
 			constraints: fields.constraints ?? [],
@@ -1116,6 +1286,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			action: Type.Union([Type.Literal("set"), Type.Literal("compile_spec")] as const),
 			intent: Type.Optional(Type.String({ description: "What the user wants and why" })),
+			outcomes: Type.Optional(Type.String({ description: "Plain-language 'what you'll get' shown to the signer in the sign dialog — SAME language as the user's request, no jargon/file paths/shell commands. compile_spec drafts this for you; when action=set, write it yourself or the dialog falls back to the intent text" })),
 			approach: Type.Optional(Type.Array(Type.String(), { description: "Planned work outline for the signer: main steps, files to create/modify, expected outcomes (presentational — not machine-checked)" })),
 			scope: Type.Optional(Type.Array(Type.String(), { description: "Path prefixes the agent may modify" })),
 			constraints: Type.Optional(Type.Array(Type.String())),
@@ -1660,6 +1831,19 @@ export default function (pi: ExtensionAPI) {
 			const reviewText = reviewer.ok
 				? buildReviewResultText({ ok: true, tlDr: packet.tlDr, trajectoryCount: packet.trajectory.length, escalationCount: packet.escalations.length, logPath: relative(ctx.cwd, reviewer.logPath) })
 				: buildReviewResultText({ ok: false, tlDr: "", trajectoryCount: 0, escalationCount: 0, logPath: relative(ctx.cwd, reviewer.logPath), errorOutput: reviewer.output.slice(-2_000) });
+			// Review-decision modal (2026-10-16): a TUI session ends the review in a DECISION, not
+			// chat text — y = accept (explicit human consent → commit-on-behalf via the accept
+			// side's commitIfStaged path; the longrun branch inside acceptPending closes the
+			// tracker when this is the final apply); n/Esc = close only, staged change untouched.
+			// Non-TUI (RPC/print) keeps the chat-text result — the modal must never hang a headless
+			// session. A failed reviewer never opens the modal (nothing to decide on)
+			if (reviewer.ok && ctx.hasUI && ctx.mode === "tui") {
+				const accepted = await reviewModalDialog(ctx, packet, !!state.pendingApply, relative(ctx.cwd, reviewer.logPath));
+				if (accepted) {
+					const ar = acceptPending(ctx, true); // the human pressed y — that IS "commit it for me"
+					return { content: [{ type: "text", text: `${reviewText}\n\n${ar.text}` }], details: { ...packet, logPath: reviewer.logPath, acceptedViaModal: ar.ok } };
+				}
+			}
 			return { content: [{ type: "text", text: reviewText }], details: { ...packet, logPath: reviewer.logPath } };
 		},
 	});
@@ -1987,6 +2171,7 @@ export default function (pi: ExtensionAPI) {
 						id: Type.Optional(Type.String({ description: "stable id (p1, pre, …) — auto-assigned when omitted" })),
 						title: Type.String(),
 						intent: Type.String({ description: "what this phase delivers and why" }),
+						outcomes: Type.Optional(Type.String({ description: "plain-language 'what you'll get from this phase' for the human signer — same language as the request, no jargon/file paths/shell commands" })),
 						scope: Type.Array(Type.String()),
 						constraints: Type.Optional(Type.Array(Type.String())),
 						criteria: Type.Array(Type.Object({ id: Type.String(), text: Type.String(), check: Type.String({ description: CHECK_FORMAT_CONTRACT }) })),
@@ -2037,6 +2222,7 @@ export default function (pi: ExtensionAPI) {
 				// no explicit phases → the planner sub-agent drafts them from specs.md (the human
 				// signs the RESULT — the model never bypasses the tracker signature)
 				let planInput = p.phases;
+				let planOutcomes: string | undefined; // planner's set-level plain-language summary (2026-10-16) — leads the tracker sign dialog
 				if (!planInput?.length) {
 					let specsMd = "";
 					try { specsMd = readFileSync(join(longrunDir(ctx.cwd, t0.slug), "specs.md"), "utf8"); } catch { /* best-effort */ }
@@ -2068,27 +2254,41 @@ export default function (pi: ExtensionAPI) {
 						if (!parsed2.ok || parsed2.questions?.length)
 							return say(`planner output invalid after clarifying (${parsed2.ok ? "asked again" : parsed2.error})\nalternative: call plan with an explicit phases list (the raw draft is logged via /zense agents)`, {}, true);
 						planInput = parsed2.phases;
-					} else planInput = parsed.phases;
+						planOutcomes = parsed2.outcomes;
+					} else {
+						planInput = parsed.phases;
+						planOutcomes = parsed.outcomes;
+					}
 					learn(ctx, `longrun ${t0.slug}: planner drafted ${planInput.length} phases (${Date.now() - t0time}ms)`);
 				}
 				const phases: TrackerPhase[] = planInput.map((ph, i) => ({
 					id: ph.id?.trim() || `p${i + 1}`,
 					title: ph.title,
 					intent: ph.intent,
+					...(ph.outcomes ? { outcomes: ph.outcomes } : {}), // plain-language phase outcome — shown in the tracker sign dialog
 					scope: ph.scope,
 					constraints: ph.constraints ?? [],
 					criteria: ph.criteria,
 					status: "pending",
 				}));
-				const t: Tracker = { ...t0, phases, updatedAt: Date.now() };
+				// tracker-level outcomes: planner's set summary, or the merge of per-phase outcomes —
+				// the sign dialog leads with it (fallback: requirement intent, handled in the renderer)
+				const mergedOutcomes = planOutcomes ?? (phases.map((p) => p.outcomes).filter(Boolean).join("\n") || undefined);
+				const t: Tracker = { ...t0, phases, ...(mergedOutcomes ? { outcomes: mergedOutcomes } : {}), updatedAt: Date.now() };
 				const errors = validateTracker(t);
 				if (errors.length) return say(`⛔ tracker invalid:\n${errors.map((e) => `- ${e}`).join("\n")}`, { errors }, true);
 				saveTracker(ctx.cwd, t); // write tracker.md first — the signer reads the full plan
 				let signed = false;
 				// v2 signing chooses the loop mode: AUTO = phases advance on eval PASS with the
 				// context hard-reset between them, ONE review at the end (recommended — the point
-				// of long-running mode); MANUAL = the v1 per-phase human review gates
-				if (ctx.hasUI) {
+				// of long-running mode); MANUAL = the v1 per-phase human review gates.
+				// Outcome-first dialog (2026-10-16): the signer reads "what you'll get" + picks the
+				// mode with y/m — the bare phase-id select survives only as the non-TUI fallback
+				if (ctx.hasUI && ctx.mode === "tui") {
+					const mode = await trackerSignDialog(ctx, t);
+					signed = mode !== null;
+					if (signed) t.auto = mode === "auto";
+				} else if (ctx.hasUI) {
 					const choice = await ctx.ui.select(
 						`🔏 Sign longrun tracker "${t.slug}" v${t.version}? ${phases.length} phase(s): ${phases.map((x) => x.id).join(", ")} — one signature covers all phases (full plan: .zense/long-running/${t.slug}/tracker.md)`,
 						[

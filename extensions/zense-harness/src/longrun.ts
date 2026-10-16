@@ -76,12 +76,16 @@ export const renderTrackerMd = (t: Tracker): string => {
 		"",
 		t.intent || "(see specs.md)",
 		"",
+		// outcome-first render (2026-10-16): the plain-language summary leads the file too — the
+		// sign dialog points here, so this must be the readable plan, not just the machine contract
+		...(t.outcomes ? ["## What you'll get", "", t.outcomes, ""] : []),
 		"## Phases",
 		"",
 	];
 	for (const p of t.phases) {
 		lines.push(`### ${icon(p.status)} ${p.id} — ${p.title}`);
 		if (p.intent) lines.push("", p.intent);
+		if (p.outcomes) lines.push("", `**You'll get:** ${p.outcomes}`);
 		lines.push("", `- scope: ${p.scope.join(", ")}`);
 		if (p.constraints.length) lines.push(`- constraints: ${p.constraints.join("; ")}`);
 		if (p.criteria.length) lines.push(`- criteria: ${p.criteria.map((c) => c.id).join(", ")}`);
@@ -117,6 +121,9 @@ export interface LongrunPlanPhase {
 	id?: string;
 	title: string;
 	intent: string;
+	/** Plain-language "what you'll get from this phase" (request-language, no jargon) — shown
+	 *  in the tracker sign dialog; optional so explicit agent-authored phase lists keep working. */
+	outcomes?: string;
 	scope: string[];
 	constraints?: string[];
 	criteria: Criterion[];
@@ -130,7 +137,7 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 		specsMd ? `Requirement doc:\n${specsMd}` : "",
 		"",
 		"Return ONLY a JSON object (no fences, no commentary):",
-		`{"phases":[{"id":"p1","title":"...","intent":"...","scope":["path/prefix",...],"constraints":["..."],"criteria":[{"id":"P1C1","text":"observable outcome","check":"a single shell command that exits 0 when done"}]}]}`,
+		`{"phases":[{"id":"p1","title":"...","intent":"...","outcomes":"...","scope":["path/prefix",...],"constraints":["..."],"criteria":[{"id":"P1C1","text":"observable outcome","check":"a single shell command that exits 0 when done"}]}], "outcomes":"..."}`,
 		"",
 		"Rules:",
 		"- prefer the FEWEST phases — the default is ONE phase; split only across a genuine boundary: an architecture seam, an irreversible decision, or a settled baseline a later phase must build on (never split just to keep phases small)",
@@ -139,6 +146,7 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 		"- pre-phase (id \"pre\") only when exploration/scaffolding genuinely precedes implementation",
 		"- every criterion's check must be a REAL runnable command (verify it would execute; no placeholders like <path>)",
 		"- criteria are the phase's signature — few but decisive (1–4 per phase)",
+		"- outcomes (top-level + per phase): REQUIRED. The plain-language \"what you'll get\" the human reads INSTEAD of the technical plan at signing — same LANGUAGE as the requirement doc, 1–3 short lines each, product outcomes only: what the human will be able to do/see. NEVER jargon, library names, file paths, shell commands or code. The top-level outcomes summarize the whole set; per-phase outcomes summarize that phase's contribution.",
 		"- scope entries are path prefixes the implementing agent may touch; keep them tight",
 		// question policy (2026-10-16): the planner's boundary decisions are internal technical
 		// calls — it must make them from the requirement doc, never bounce them to the human
@@ -149,7 +157,7 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 /** Parse a planner sub-agent's output into phase drafts. Accepts bare JSON or fenced JSON
  *  (models add ```json despite instructions — strip, don't punish). Structural errors get
  *  actionable messages: the caller retries with an explicit phases list. */
-export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[]; questions?: ClarifyQuestion[] } | { ok: false; error: string } => {
+export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[]; outcomes?: string; questions?: ClarifyQuestion[] } | { ok: false; error: string } => {
 	const stripped = output.replace(/```(?:json)?\s*\n?/g, "").replace(/```/g, "");
 	const start = stripped.indexOf("{");
 	const end = stripped.lastIndexOf("}");
@@ -172,6 +180,7 @@ export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPla
 	}
 	const phases = (parsed as { phases?: unknown }).phases;
 	if (!Array.isArray(phases) || !phases.length) return { ok: false, error: '"phases" must be a non-empty array' };
+	const norm: LongrunPlanPhase[] = [];
 	for (const [i, ph] of phases.entries()) {
 		const p = ph as Partial<LongrunPlanPhase>;
 		if (typeof p?.title !== "string" || !p.title.trim()) return { ok: false, error: `phase #${i + 1}: missing title` };
@@ -182,8 +191,18 @@ export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPla
 		for (const c of p.criteria as Partial<Criterion>[])
 			if (typeof c?.id !== "string" || typeof c?.text !== "string" || typeof c?.check !== "string" || !c.check.trim())
 				return { ok: false, error: `phase "${p.title}": every criterion needs id/text/check` };
+		// outcomes: optional at parse (explicit agent-authored phase lists carry none) — trimmed
+		// when present, dropped when blank (never a half-clean string downstream: the plain
+		// spread would keep the raw " " value, so blank is deleted explicitly)
+		const clean: LongrunPlanPhase = { ...p } as LongrunPlanPhase;
+		if (typeof p.outcomes === "string" && p.outcomes.trim()) clean.outcomes = p.outcomes.trim();
+		else delete clean.outcomes;
+		norm.push(clean);
 	}
-	return { ok: true, phases: phases as LongrunPlanPhase[] };
+	// tracker-level outcomes: same optionality — the sign dialog falls back to the requirement
+	// intent when absent, so an old planner output or hand-written plan keeps working
+	const topOut = (parsed as { outcomes?: unknown }).outcomes;
+	return { ok: true, phases: norm, ...(typeof topOut === "string" && topOut.trim() ? { outcomes: topOut.trim() } : {}) };
 };
 
 /** Build the phase's spec fields from the tracker entry (used by zense_longrun next →
@@ -192,9 +211,12 @@ export const compilePhaseSpec = (
 	t: Tracker,
 	phase: TrackerPhase,
 	extraCriteria: Criterion[] = [],
-): { title: string; intent: string; scope: string[]; constraints: string[]; criteria: Criterion[]; specDebt: string[]; provenance: string } => ({
+): { title: string; intent: string; outcomes?: string; scope: string[]; constraints: string[]; criteria: Criterion[]; specDebt: string[]; provenance: string } => ({
 	title: `longrun(${t.slug}) ${phase.id} – ${phase.title}`,
 	intent: `${phase.intent}\n\n[longrun "${t.slug}" tracker v${t.version} — approved by the tracker's signature; review gate at phase end; worktree ${t.worktreeBranch}]`,
+	// the phase's plain-language outcome summary rides along into the phase spec — a re-sign
+	// or resume of a mid-set phase keeps showing the human what THIS phase delivers
+	outcomes: phase.outcomes,
 	scope: phase.scope,
 	constraints: phase.constraints,
 	criteria: mergePhaseCriteria(phase.criteria, extraCriteria),

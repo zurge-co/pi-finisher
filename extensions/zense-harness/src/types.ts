@@ -13,7 +13,8 @@ export interface Spec {
 	version: number;
 	title: string;
 	intent: string;
-	approach?: string[];       // shown in the sign dialog; optional — older persisted specs lack this field
+	outcomes?: string;         // plain-language "what you'll get" shown to the signer in the sign dialog (request-language, no jargon); optional — older persisted specs lack this field and the dialog falls back to intent
+	approach?: string[];       // shown in .zense/spec.md (the sign dialog no longer inlines it); optional — older persisted specs lack this field
 	scope: string[];           // path globs the agent may touch
 	constraints: string[];
 	criteria: Criterion[];
@@ -85,6 +86,7 @@ export interface TrackerPhase {
 	id: string;                  // "p1", "pre", … — unique within the tracker
 	title: string;
 	intent: string;
+	outcomes?: string;           // plain-language "what you'll get from this phase" (request-language) — shown in the tracker sign dialog; optional for back-compat
 	scope: string[];
 	constraints: string[];
 	criteria: Criterion[];       // seed criteria — carried verbatim (same ids) into the compiled phase spec
@@ -105,6 +107,7 @@ export interface Tracker {
 	slug: string;                // requirement-name — directory + branch key
 	title: string;
 	intent: string;
+	outcomes?: string;           // plain-language "what you'll get" for the whole set (request-language) — merged from per-phase outcomes at plan time; optional for back-compat
 	worktreeBranch: string;      // zense/longrun/<slug> — ONE worktree for the whole set (ADR-004)
 	status: "planning" | "active" | "done" | "abandoned";
 	auto?: boolean;              // v2: signed as autonomous — phases advance without a human gate; eval FAIL auto-fixes bounded by AUTO_FIX_MAX_ROUNDS (false/undefined = v1 manual gates)

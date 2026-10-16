@@ -142,6 +142,41 @@ export const buildReviewResultText = (opts: { ok: boolean; tlDr: string; traject
 		? `✅ Review packet ready — open the review card in the transcript\n\n${opts.tlDr}\n\ntrajectory flags: ${opts.trajectoryCount} · escalations: ${opts.escalationCount}\n\n🧪 the full packet (every section) is in the log: ${opts.logPath} — read it yourself if needed`
 		: `reviewer failed: ${opts.errorOutput ?? "(no output)"}\n\n🧪 log: ${opts.logPath}`;
 
+/** Review-decision modal body (2026-10-16): the review packet ends as a DECISION, not chat
+ *  text — the human reads the TL;DR + flags and decides in-place. y accepts (explicit human
+ *  consent → the harness may commit the staged change on their behalf); n closes ONLY — the
+ *  change stays staged, nothing is discarded (zense_discard stays a separate, deliberate
+ *  act). Pure text so it is unit-testable; the TUI wiring lives in index.ts (esc-guard guards
+ *  Esc). canAccept=false (nothing staged in main — e.g. mid-phase longrun) → the accept
+ *  hotkey is withheld rather than shown-disabled (no dead keys in the dialog). */
+export const buildReviewModalText = (opts: {
+	tlDr: string;
+	trajectory: string[];
+	specDebt: string[];
+	escalations: { kind: string; detail: string }[];
+	paths?: string[];
+	logPath?: string;
+	canAccept: boolean;
+}): string =>
+	[
+		`## Review — TL;DR`,
+		"",
+		opts.tlDr || "(no summary)",
+		"",
+		opts.trajectory.length ? `⚠️ trajectory flags:\n${opts.trajectory.map((f) => `- ${f}`).join("\n")}` : "",
+		opts.escalations.length ? `🚨 escalations:\n${opts.escalations.map((e) => `- ${e.kind}: ${e.detail}`).join("\n")}` : "",
+		opts.specDebt.length ? `📋 spec debt (human-verified only):\n${opts.specDebt.map((d) => `- ${d}`).join("\n")}` : "",
+		opts.paths?.length ? `staged change (${opts.paths.length} file(s)): ${opts.paths.join(", ")}` : "",
+		opts.logPath ? `full packet + evidence: ${opts.logPath}` : "",
+		"",
+		opts.canAccept
+			? "**[y] accept** — approve the work; the harness commits the staged change for you (nothing else happens until you press it)"
+			: "(nothing is staged in main for this round — there is nothing to accept here)",
+		"**[n] close** — decide later; nothing changes, the work stays exactly as it is",
+	]
+		.filter(Boolean)
+		.join("\n");
+
 /** M (comment discipline): system-prompt appendix for the implementation phase only — cuts
  *  output tokens from excess comments (what-comments / JSDoc boilerplate / banners) with
  *  "comment = WHY, not WHAT" as the rule, scoped to new/touched lines — existing

@@ -3,7 +3,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ThemeColor } from "@earendil-works/pi-coding-agent";
-import { zenseDir, type Spec } from "./types.ts";
+import { zenseDir, type Spec, type Tracker } from "./types.ts";
 
 // ----------------------------------------------------------------------------- spec version change summary (module scope — exported for unit tests)
 
@@ -125,7 +125,33 @@ export const renderSpecMd = (s: Spec): string =>
 	(s.changesFrom?.length
 		? `## Changes in v${s.version} (vs v${s.version - 1})\n${groupSpecChanges(s.changesFrom)}\n\n`
 		: "") +
+	(s.outcomes ? `## What you'll get\n${s.outcomes}\n\n` : "") +
 	`## Intent\n${s.intent}\n\n${s.approach?.length ? "## Approach\n" + s.approach.map((x) => `- ${x}`).join("\n") + "\n\n" : ""}## Scope\n${s.scope.map((x) => `- ${x}`).join("\n")}\n\n## Constraints\n${s.constraints.map((x) => `- ${x}`).join("\n")}\n\n## Acceptance criteria\n${s.criteria.map((c) => `- [ ] ${c.id}: ${c.text} *(check: ${c.check})*`).join("\n")}\n\n## Spec debt (human-verified only)\n${s.specDebt.map((x) => `- ${x}`).join("\n")}\n`;
+
+// ----- sign-time outcome rendering (2026-10-16): the sign dialog shows ONLY the plain-language
+//       "what you'll get" + a pointer to the technical file — the signer signs WHAT, the
+//       technical spec stays on disk for the agent/grader (machine contract untouched)
+
+/** The sign dialog body for a regular spec: outcome summary (fallback: intent text for
+ *  outcome-less legacy specs) + a pointer line naming the technical spec file. Provably free
+ *  of the technical sections — it is built from outcomes/intent ONLY, so scope prefixes,
+ *  criteria, raw checks and spec debt can never leak into the sign surface. */
+export const renderSignOutcome = (s: Spec): string =>
+	`## What you'll get\n\n${s.outcomes ?? (s.intent || "(the requirements agent did not summarize this — see the technical spec file)")}\n\n` +
+	`> Full technical spec (approach, scope, checks, constraints, spec debt): \`.zense/spec.md\``;
+
+/** The tracker sign dialog body: the set-level outcome summary, one plain-language line per
+ *  phase (fallback per phase: its intent first line) + a pointer to tracker.md. Same
+ *  outcomes-only discipline as renderSignOutcome — never scope paths, criteria ids or checks. */
+export const renderTrackerOutcomes = (t: Tracker): string => {
+	const phaseLines = t.phases
+		.map((p) => `- ${p.id} “${p.title}”: ${p.outcomes ?? (p.intent || "").split("\n")[0]}`)
+		.join("\n");
+	return (
+		`## What you'll get\n\n${t.outcomes ?? t.intent.split("\n")[0]}\n\n### By phase\n\n${phaseLines}\n\n` +
+		`> Full technical plan (scope, checks, constraints per phase): \`.zense/long-running/${t.slug}/tracker.md\``
+	);
+};
 
 /** Sync the approval back to spec files on disk:
  *  commitSpec writes files with approved:false, while approveCurrentSpec only updates in-memory

@@ -409,3 +409,58 @@ test("discoverLongrunTrackers: finds active trackers sorted by recency, skips do
 	assert.equal(found.filter((t) => t.status === "active").length, 1);
 	rmSync(root, { recursive: true, force: true });
 });
+
+
+// ---------- outcomes (2026-10-16): per-phase plain-language summaries lead the tracker sign
+//          dialog + tracker.md; optional end-to-end so explicit agent-authored plans keep working
+
+test("buildLongrunPlannerPrompt: outcomes are REQUIRED per phase, request-language, jargon-free", () => {
+	const p = buildLongrunPlannerPrompt("Migrate auth", "move to oauth", "req doc");
+	assert.match(p, /"outcomes":"..."/);
+	assert.match(p, /outcomes \(top-level \+ per phase\): REQUIRED/);
+	assert.match(p, /same LANGUAGE as the requirement doc/i);
+});
+
+test("parseLongrunPlan: per-phase + top-level outcomes extracted; blank/absent normalize away (back-compat)", () => {
+	const parsed = parseLongrunPlan(JSON.stringify({
+		outcomes: "ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น",
+		phases: [
+			{ title: "a", intent: "ia", outcomes: "คุณจะล็อกอินครั้งเดียว", scope: ["src/a"], criteria: [{ id: "S1", text: "t", check: "true" }] },
+			{ title: "b", intent: "ib", outcomes: "   ", scope: ["src/b"], criteria: [{ id: "S2", text: "t", check: "true" }] },
+		],
+	}));
+	assert.equal(parsed.ok, true);
+	assert.equal(parsed.outcomes, "ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น");
+	assert.equal(parsed.phases[0].outcomes, "คุณจะล็อกอินครั้งเดียว");
+	assert.equal(parsed.phases[1].outcomes, undefined, "blank outcomes drop to undefined, never an empty string");
+	const legacy = parseLongrunPlan(JSON.stringify({ phases: [{ title: "a", intent: "ia", scope: ["s"], criteria: [{ id: "S1", text: "t", check: "true" }] }] }));
+	assert.equal(legacy.ok, true);
+	assert.equal(legacy.outcomes, undefined);
+	assert.equal(legacy.phases[0].outcomes, undefined, "explicit agent-authored phase lists carry no outcomes — still valid");
+});
+
+test("renderTrackerMd: 'What you'll get' leads when outcomes exist; per-phase 'You'll get' lines render; legacy trackers unchanged", () => {
+	const withOut = renderTrackerMd(mkTracker({
+		outcomes: "ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น",
+		phases: [
+			{ id: "p1", title: "store", intent: "token store", outcomes: "คุณจะล็อกอินครั้งเดียว", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "true" }], status: "pending" },
+			{ id: "p2", title: "login flow", intent: "oauth login", scope: ["src/login"], constraints: [], criteria: [{ id: "S2", text: "t2", check: "true" }], status: "pending" },
+		],
+	}));
+	assert.match(withOut, /## What you'll get/);
+	assert.match(withOut, /ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น/);
+	assert.match(withOut, /\*\*You'll get:\*\* คุณจะล็อกอินครั้งเดียว/);
+	const legacy = renderTrackerMd(mkTracker());
+	assert.ok(!legacy.includes("What you'll get"), "no outcomes → no heading, render unchanged for old trackers");
+});
+
+test("compilePhaseSpec: the phase's outcomes ride into the phase spec (a mid-set resume keeps showing what THIS phase delivers)", () => {
+	const t = mkTracker();
+	const legacy = compilePhaseSpec(t, t.phases[0]);
+	assert.equal(legacy.outcomes, undefined, "no outcomes on the phase → undefined, not empty");
+	const tOut = mkTracker({
+		phases: [{ id: "p1", title: "store", intent: "token store", outcomes: "คุณจะล็อกอินครั้งเดียว", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "true" }], status: "active" }],
+	});
+	const withOut = compilePhaseSpec(tOut, tOut.phases[0]);
+	assert.equal(withOut.outcomes, "คุณจะล็อกอินครั้งเดียว");
+});

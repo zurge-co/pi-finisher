@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { buildSpecChanges, groupSpecChanges, renderSpecChangesTui, renderSpecMd } from "../extensions/zense-harness/index.ts";
+import { buildSpecChanges, groupSpecChanges, renderSpecChangesTui, renderSignOutcome, renderSpecMd, renderTrackerOutcomes } from "../extensions/zense-harness/index.ts";
 
 const baseSpec = (over = {}) => ({
 	version: 1,
@@ -206,4 +206,64 @@ test("renderSpecChangesTui: Other lines are neutral and land last, like the arch
 	const out = renderSpecChangesTui(baseSpec({ version: 2, changesFrom: ["scope +: x", "unrecognized line"] }), tag);
 	const md = out.join("\n");
 	assert.ok(md.indexOf("### Scope\n<success>1. x</>") < md.indexOf("### Other\n1. unrecognized line"));
+});
+
+
+// ---------- sign-time outcome rendering (2026-10-16): the sign dialog shows ONLY "what you'll
+//          get" + a file pointer — scope/criteria/spec debt live in .zense/spec.md
+
+test("renderSignOutcome: outcomes + .zense/spec.md pointer; technical sections can never leak", () => {
+	const md = renderSignOutcome(baseSpec({ outcomes: "คุณจะเข้าสู่ระบบได้รอบเดียว ไม่ต้องกรอกซ้ำ" }));
+	assert.match(md, /## What you'll get/);
+	assert.match(md, /คุณจะเข้าสู่ระบบได้รอบเดียว/);
+	assert.match(md, /\.zense\/spec\.md/, "the pointer must name the technical spec file");
+	// provably outcomes-only: technical content present on the spec must not appear
+	assert.ok(!md.includes("src/auth"), "scope prefixes must not appear in the sign body");
+	assert.ok(!md.includes("npm test") && !md.includes("path exists:"), "raw checks must not appear");
+	assert.ok(!md.includes("verify UX by eye"), "spec debt must not appear");
+	assert.ok(!md.includes("Approach") && !md.includes("read auth code"), "approach steps must not appear");
+});
+
+test("renderSignOutcome: legacy spec without outcomes falls back to the intent text (no crash, still readable)", () => {
+	const md = renderSignOutcome(baseSpec());
+	assert.match(md, /users hit \/login twice/);
+	assert.ok(!md.includes("src/auth"), "the fallback must still never leak technical sections");
+});
+
+test("renderSpecMd: 'What you'll get' section present only when outcomes exist (archive file keeps everything)", () => {
+	assert.match(renderSpecMd(baseSpec({ outcomes: "one login, no repeat" })), /## What you'll get/);
+	assert.ok(!renderSpecMd(baseSpec()).includes("What you'll get"));
+	// the archive file keeps the technical sections — the dialog is the outcomes-only surface, not the file
+	assert.match(renderSpecMd(baseSpec({ outcomes: "x" })), /## Acceptance criteria/);
+});
+
+const baseTracker = (over = {}) => ({
+	version: 1,
+	slug: "migrate-auth",
+	title: "Migrate auth",
+	intent: "Move auth to oauth\nline two",
+	worktreeBranch: "zense/longrun/migrate-auth",
+	status: "planning",
+	updatedAt: Date.now(),
+	phases: [
+		{ id: "p1", title: "store", intent: "token store", outcomes: "คุณจะล็อกอินครั้งเดียวแล้วคงอยู่ต่อได้", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "npm test" }], status: "pending" },
+		{ id: "p2", title: "login flow", intent: "oauth login first line", scope: ["src/login"], constraints: [], criteria: [{ id: "S2", text: "t2", check: "true" }], status: "pending" },
+	],
+	...over,
+});
+
+test("renderTrackerOutcomes: set summary + per-phase plain lines + tracker.md pointer; never scope/checks", () => {
+	const md = renderTrackerOutcomes(baseTracker({ outcomes: "ระบบล็อกอินใหม่ที่ปลอดภัยกว่าเดิม" }));
+	assert.match(md, /## What you'll get/);
+	assert.match(md, /ระบบล็อกอินใหม่ที่ปลอดภัยกว่าเดิม/);
+	assert.match(md, /- p1 “store”: คุณจะล็อกอินครั้งเดียวแล้วคงอยู่ต่อได้/, "per-phase outcomes line");
+	assert.match(md, /- p2 “login flow”: oauth login first line/, "a phase without outcomes falls back to its intent first line");
+	assert.match(md, /\.zense\/long-running\/migrate-auth\/tracker\.md/, "pointer names the tracker file");
+	assert.ok(!md.includes("src/store") && !md.includes("src/login"), "scope paths must not leak");
+	assert.ok(!md.includes("npm test") && !md.includes("S1"), "criteria ids/checks must not leak");
+});
+
+test("renderTrackerOutcomes: no tracker-level outcomes → requirement intent leads (fallback, never a crash)", () => {
+	const md = renderTrackerOutcomes(baseTracker());
+	assert.match(md, /Move auth to oauth/);
 });

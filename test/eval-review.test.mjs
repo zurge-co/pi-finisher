@@ -26,6 +26,7 @@ import {
 	buildEvalResultText,
 	buildPendingApplyEvidencePrefix,
 	buildReviewResultText,
+	buildReviewModalText,
 	COMMENT_DISCIPLINE_GUIDELINE,
 } from "../extensions/zense-harness/index.ts";
 
@@ -618,4 +619,35 @@ test("TDZ guard: probeSection is declared exactly once and always before the inc
 	const evalViewDecl = lines.findIndex((l) => l.includes("const evalView"));
 	const prematureUse = lines.findIndex((l, i) => l.includes("evalView.logPath") && i < evalViewDecl);
 	assert.equal(prematureUse, -1, "evalView.logPath used before its declaration (TDZ regression)");
+});
+
+
+// ---------- review-decision modal text (2026-10-16): review ends in a DECISION — y=accept,
+//          n=close-only; the non-UI chat fallback (buildReviewResultText) stays unchanged
+
+test("buildReviewModalText: TL;DR + flags/debt/escalations render; y accept hint only when something is staged", () => {
+	const md = buildReviewModalText({
+		tlDr: "the login fix landed cleanly",
+		trajectory: ["reviewer hallucination: x.ts"],
+		specDebt: ["verify UX by eye"],
+		escalations: [{ kind: "need-decision", detail: "pick a branch" }],
+		paths: ["src/auth/guard.ts", "test/auth.test.mjs"],
+		logPath: ".zense/subagents/x.log",
+		canAccept: true,
+	});
+	assert.match(md, /## Review — TL;DR/);
+	assert.match(md, /the login fix landed cleanly/);
+	assert.match(md, /reviewer hallucination: x\.ts/);
+	assert.match(md, /verify UX by eye/);
+	assert.match(md, /need-decision: pick a branch/);
+	assert.match(md, /2 file\(s\)/, "staged paths are listed");
+	assert.match(md, /\*\*\[y\] accept\*\*/, "y = accept when canAccept");
+	assert.match(md, /\*\*\[n\] close\*\*/, "n = close only — always offered");
+});
+
+test("buildReviewModalText: nothing staged → the accept hotkey is withheld, not shown disabled", () => {
+	const md = buildReviewModalText({ tlDr: "ok", trajectory: [], specDebt: [], escalations: [], canAccept: false });
+	assert.ok(!md.includes("[y] accept"), "y must not read as an option when nothing can be accepted");
+	assert.match(md, /nothing is staged in main/);
+	assert.match(md, /\[n\] close/);
 });

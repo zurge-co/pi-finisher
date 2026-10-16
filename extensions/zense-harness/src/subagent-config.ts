@@ -363,8 +363,9 @@ export const buildRequirementsPrompt = (intent: string, lessons: string[], facts
 
 ` +
 	`Step 2 — DRAFT exactly ONE JSON object:
-{"title": string, "intent": string, "approach": string[], "scope": string[], "constraints": string[], "criteria": [{"id": string, "text": string, "check": string}], "specDebt": string[]}
+{"title": string, "intent": string, "outcomes": string, "approach": string[], "scope": string[], "constraints": string[], "criteria": [{"id": string, "text": string, "check": string}], "specDebt": string[]}
 Rules:
+- outcomes: REQUIRED. The plain-language "what you'll get" the human signer reads INSTEAD of the technical spec (the sign dialog shows only this). Written in the SAME LANGUAGE as the Request (a Thai request gets a Thai summary, an English request gets English), 2–6 short lines joined with newlines, describing what the human will be able to do/see when the work is done — product outcomes, NOT how it will be built. NEVER use jargon, library names, file paths, file names, shell commands or code. Write it so someone who has never read the codebase understands it at a glance. (The harness quality-gates this: technical tokens in outcomes are pushed to human review as spec debt.)
 - scope: the minimal list of path prefixes the main agent may modify.
 - approach: 3–7 short bullets describing the planned work — main steps, which files will be created or modified, and expected outcomes — grounded in your Step 1 exploration (no guessing). This is presentational info shown to the human signer so they can see what will actually happen; it is NOT a machine-checked criterion.
 - criteria: few and atomic. Each "check" MUST obey this contract:
