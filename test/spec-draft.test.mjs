@@ -11,6 +11,7 @@ import {
 	findSimilarSpec,
 	isMachineCheckable,
 	parseSpecDraft,
+	QUESTION_POLICY,
 } from "../extensions/zense-harness/index.ts";
 
 const GOOD_SPEC = {
@@ -52,8 +53,9 @@ test("parseSpecDraft: approach normalize — missing/invalid → [], valid array
 	assert.deepEqual(missing.draft.approach, []); // missing → []
 	const invalid = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, approach: 42 }));
 	assert.deepEqual(invalid.draft.approach, []); // invalid → []
-	// the clarify/error contract holds: clarify wins only when no criteria exist
-	assert.equal(parseSpecDraft(JSON.stringify({ questions: ["q"], approach: ["x"] })).kind, "clarify");
+	// the clarify/error contract holds: clarify wins only when no criteria exist (a policy-valid
+	// question, i.e. one carrying choices)
+	assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ question: "q", choices: ["a", "b"] }], approach: ["x"] })).kind, "clarify");
 });
 
 test("buildRequirementsPrompt: JSON contract includes approach (presentational, not a machine-checked criterion)", () => {
@@ -64,36 +66,66 @@ test("buildRequirementsPrompt: JSON contract includes approach (presentational, 
 });
 
 test("parseSpecDraft: clarify shape (questions only) → kind clarify; questions+criteria → spec", () => {
-	const clarify = parseSpecDraft(JSON.stringify({ questions: ["which env?", "which db?"] }));
+	const clarify = parseSpecDraft(JSON.stringify({ questions: [
+		{ question: "which env?", choices: ["dev", "prod"] },
+		{ question: "which db?", choices: ["sqlite", "pg"] },
+	] }));
 	assert.equal(clarify.kind, "clarify");
 	assert.deepEqual(clarify.questions, [
-		{ question: "which env?", choices: [] },
-		{ question: "which db?", choices: [] },
+		{ question: "which env?", choices: ["dev", "prod"] },
+		{ question: "which db?", choices: ["sqlite", "pg"] },
 	]);
 	// with criteria present it's a real draft, not a clarification
-	const withCriteria = parseSpecDraft(JSON.stringify({ questions: ["q"], ...GOOD_SPEC }));
+	const withCriteria = parseSpecDraft(JSON.stringify({ questions: [{ question: "q", choices: ["a"] }], ...GOOD_SPEC }));
 	assert.equal(withCriteria.kind, "spec");
 });
 
-test("parseSpecDraft: clarify questions normalize — choices shape, mixed legacy, junk skipped, cap 5", () => {
-	// new shape: the sub-agent attaches choices for quick human picking
+test("parseSpecDraft: clarify questions normalize — choices shape, freeText marker, junk skipped, cap 5", () => {
+	// the sub-agent attaches choices for quick human picking
 	const withChoices = parseSpecDraft(JSON.stringify({ questions: [{ question: "pick env?", choices: ["dev", "prod"] }] }));
 	assert.equal(withChoices.kind, "clarify");
 	assert.deepEqual(withChoices.questions, [{ question: "pick env?", choices: ["dev", "prod"] }]);
-	// both shapes may mix in one array: legacy string + new object
-	const mixed = parseSpecDraft(JSON.stringify({ questions: ["plain?", { question: "with choice?", choices: ["a"] }] }));
+	// both legal shapes may mix in one array: choices + explicit freeText (product/UI, no options)
+	const mixed = parseSpecDraft(JSON.stringify({ questions: [
+		{ question: "what should the empty state look like?", freeText: true },
+		{ question: "with choice?", choices: ["a"] },
+	] }));
+	assert.equal(mixed.kind, "clarify");
 	assert.deepEqual(mixed.questions, [
-		{ question: "plain?", choices: [] },
+		{ question: "what should the empty state look like?", choices: [], freeText: true },
 		{ question: "with choice?", choices: ["a"] },
 	]);
-	// items without a real question are skipped
-	const junky = parseSpecDraft(JSON.stringify({ questions: [{ foo: 1 }, "real?"] }));
-	assert.deepEqual(junky.questions, [{ question: "real?", choices: [] }]);
-	// zero questions left → not clarify (falls back to the criteria-missing error per contract)
+	// items without a real question are skipped (not questions at all)
 	assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ foo: 1 }] })).kind, "error");
 	// the cap of 5 stays (keeps dialogs short)
-	const many = parseSpecDraft(JSON.stringify({ questions: ["1", "2", "3", "4", "5", "6"] }));
+	const many = parseSpecDraft(JSON.stringify({ questions: Array.from({ length: 6 }, (_, i) => ({ question: `q${i}?`, choices: ["a", "b"] })) }));
 	assert.equal(many.questions.length, 5);
+});
+
+test("parseSpecDraft: question policy — a bare string / choice-less question is an ERROR (never a silent open question)", () => {
+	// the legacy bare string is REJECTED: it is the shape that let internal technical questions
+	// reach the human without choices (2026-10-16 policy)
+	const bare = parseSpecDraft(JSON.stringify({ questions: ["which db should we use?"] }));
+	assert.equal(bare.kind, "error");
+	assert.match(bare.error, /question policy violation/);
+	assert.match(bare.error, /which db should we use\?/); // names the offender for the retry
+	// object without choices and without the freeText marker → same rejection
+	const noChoices = parseSpecDraft(JSON.stringify({ questions: [{ question: "which module layout?" }] }));
+	assert.equal(noChoices.kind, "error");
+	assert.match(noChoices.error, /no choices and no "freeText": true/);
+	// one bad question poisons the round (the retry re-asks the whole draft, with feedback)
+	const partiallyBad = parseSpecDraft(JSON.stringify({ questions: [{ question: "ok?", choices: ["a", "b"] }, "bare one"] }));
+	assert.equal(partiallyBad.kind, "error");
+	// freeText: false is NOT the marker → rejected too
+	assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ question: "x?", freeText: false }] })).kind, "error");
+});
+
+test("QUESTION_POLICY: names both sides of the contract (goal-only questions + decide-it-yourself rule)", () => {
+	assert.match(QUESTION_POLICY, /product\/UI-outcome questions/i);
+	assert.match(QUESTION_POLICY, /2–6 pickable choices/);
+	assert.match(QUESTION_POLICY, /internal technical\/detail/);
+	assert.match(QUESTION_POLICY, /assumption plus a specDebt entry/);
+	assert.match(QUESTION_POLICY, /freeText/);
 });
 
 test("parseSpecDraft: invalid outputs → kind error with a specific reason (retry feedback)", () => {
@@ -214,6 +246,18 @@ test("buildRequirementsPrompt: enforces explore-first, JSON-only output and the 
 	assert.match(p, /"choices"/); // grilling loop: the sub-agent may attach answer options
 	assert.match(p, /type their own/); // the user can always type their own answer
 	assert.match(p, /1–2 most decision-critical/); // few questions per round, several rounds
+});
+
+test("buildRequirementsPrompt: goal-only questions — names the banned internal technical category + the assumption/specDebt fallback", () => {
+	const p = buildRequirementsPrompt("add dark mode", []);
+	assert.match(p, /GOAL-ONLY QUESTIONS/);
+	assert.match(p, /product\/UI terms/);
+	assert.match(p, /NEVER ask the human an internal technical\/detail question/);
+	assert.match(p, /library choice, module split/); // names the banned category
+	assert.match(p, /specDebt entry/); // decided-instead instruction
+	assert.match(p, /assumption/);
+	assert.match(p, /freeText/); // the one legal choice-less shape
+	assert.match(p, /policy violation/); // the sub-agent is told the parser rejects it
 	assert.match(p, /Request: add dark mode$/);
 	assert.doesNotMatch(p, /Past lessons/);
 	const withLessons = buildRequirementsPrompt("x", ["📚 lesson one"]);

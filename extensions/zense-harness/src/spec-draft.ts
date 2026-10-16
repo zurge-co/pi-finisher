@@ -17,12 +17,39 @@ export interface SpecDraft {
 	specDebt: string[];
 }
 
-/** One clarify question (normalized): supports a legacy bare string (choices empty) and the
- *  newer shape where the sub-agent attaches answer options — the human picks from the list or
- *  chooses "Other (type your own)". */
+/** One clarify question (normalized) — a question TO THE HUMAN, so it must satisfy
+ *  QUESTION_POLICY below: either answer options the human picks from ("Other (type your own)"
+ *  is appended by the picker), or freeText:true for a product/UI-outcome question that
+ *  genuinely has no guessable options (renders a plain input). A legacy bare string carries
+ *  neither and is REJECTED (2026-10-16) — never silently downgraded to an open question. */
 export interface ClarifyQuestion {
 	question: string;
 	choices: string[];
+	freeText?: boolean;
+}
+
+/** Question policy (2026-10-16) — the ONE contract shared by the requirements clarify loop,
+ *  the planner prompts and the zense_ask tool. A question to the human is a PRODUCT/UI-OUTCOME
+ *  question ("what should the result be/do?"), never an internal technical/detail decision
+ *  (library, module split, naming, test approach, data shape, refactor structure): the agent
+ *  decides those itself from the repo/context, proceeds, and records the decision as an
+ *  explicit assumption + specDebt entry the human sees at signing. Answer options are the
+ *  default; omitting them is legal ONLY with an explicit "freeText": true marker for a
+ *  genuine product/UI question that has no guessable options. */
+export const QUESTION_POLICY =
+	"Ask ONLY product/UI-outcome questions — what the human wants the result to be or do — each with 2–6 pickable choices. " +
+	'Never ask internal technical/detail questions (library, module split, naming, test approach, data shape, refactor structure): decide those from the repo/context, proceed, and record the decision as an explicit assumption plus a specDebt entry. ' +
+	'Choices may be omitted only for a product/UI question with genuinely no guessable options, and then the question MUST set "freeText": true.';
+
+/** Picker cap: >6 options is a menu, not a decision check-in. */
+export const MAX_CLARIFY_CHOICES = 6;
+
+/** One scan of raw clarify questions: the ACCEPTED ones plus one feedback line per rejected
+ *  item (the requirements sub-agent gets the lines back as retry feedback, so a policy
+ *  violation costs a round instead of silently reaching the human). */
+export interface ClarifyScan {
+	questions: ClarifyQuestion[];
+	violations: string[];
 }
 
 export type DraftParse =
@@ -33,25 +60,46 @@ export type DraftParse =
 const asStringArray = (v: unknown): string[] | undefined =>
 	Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : undefined;
 
-/** Normalize clarify-draft questions → ClarifyQuestion[]: legacy string → empty choices;
- *  {question, choices} → kept as-is (max 6 options, keeps the dialog short); items without a
- *  real question are skipped; nothing left → undefined (falls through to the criteria-missing
- *  error per contract, not clarify). */
-export const asClarifyQuestions = (v: unknown): ClarifyQuestion[] | undefined => {
-	if (!Array.isArray(v)) return undefined;
-	const out: ClarifyQuestion[] = [];
+/** Normalize + police raw clarify questions → ClarifyScan. Accepted shapes: {question,
+ *  choices:[…]} (capped at MAX_CLARIFY_CHOICES) and {question, freeText:true} (product/UI
+ *  question with no guessable options). Rejected with a feedback line: a bare string and any
+ *  object with neither choices nor the freeText marker — the two ways a model used to hand the
+ *  human an open-ended (often internal technical) question. Items with no question text are
+ *  not questions at all and are skipped silently (unchanged behavior). */
+export const scanClarifyQuestions = (v: unknown): ClarifyScan => {
+	const questions: ClarifyQuestion[] = [];
+	const violations: string[] = [];
+	if (!Array.isArray(v)) return { questions, violations };
+	const short = (s: string) => (s.length > 80 ? `${s.slice(0, 77)}…` : s);
 	for (const x of v) {
 		if (typeof x === "string") {
 			const q = x.trim();
-			if (q) out.push({ question: q, choices: [] });
-		} else if (x && typeof x === "object" && !Array.isArray(x)) {
-			const o = x as Record<string, unknown>;
-			const q = typeof o.question === "string" ? o.question.trim() : "";
-			if (q) out.push({ question: q, choices: (asStringArray(o.choices) ?? []).slice(0, 6) });
+			if (q) violations.push(`"${short(q)}" — bare question string with no choices (attach 2–6 choices, or add "freeText": true for a product/UI question with no guessable options)`);
+			continue;
 		}
+		if (!x || typeof x !== "object" || Array.isArray(x)) continue;
+		const o = x as Record<string, unknown>;
+		const q = typeof o.question === "string" ? o.question.trim() : "";
+		if (!q) continue;
+		const choices = (asStringArray(o.choices) ?? []).slice(0, MAX_CLARIFY_CHOICES);
+		if (choices.length) questions.push({ question: q, choices });
+		else if (o.freeText === true) questions.push({ question: q, choices: [], freeText: true });
+		else violations.push(`"${short(q)}" — no choices and no "freeText": true (a question without options is only legal for a product/UI-outcome question that genuinely has no guessable options)`);
 	}
-	return out.length ? out : undefined;
+	return { questions, violations };
 };
+
+/** Back-compat view of scanClarifyQuestions: the ACCEPTED questions only (undefined when none).
+ *  Callers that must surface the policy feedback use scanClarifyQuestions. */
+export const asClarifyQuestions = (v: unknown): ClarifyQuestion[] | undefined => {
+	const { questions } = scanClarifyQuestions(v);
+	return questions.length ? questions : undefined;
+};
+
+/** Retry feedback for rejected questions — names the policy AND the offenders so the retrying
+ *  sub-agent (or the main agent) can fix exactly what broke instead of guessing. */
+export const questionPolicyError = (violations: string[]): string =>
+	`question policy violation — ${QUESTION_POLICY} Rejected: ${violations.join("; ")}`;
 
 /**
  * Extract a single JSON object from sub-agent output — tolerant of raw JSON, ```json fences,
@@ -79,8 +127,9 @@ export const extractJsonObject = (text: string): unknown => {
  * A: parse + validate the requirements sub-agent draft per contract:
  *   - spec shape    → {title,intent,approach,scope,constraints,criteria[{id,text,check}],specDebt}
  *   - clarify shape (F) → {"questions": [...]} (ask back instead of guessing) — counts as
- *     clarify only when no criteria are present; questions may be bare strings (legacy) or
- *     {question, choices} objects (answer options for fast human picking)
+ *     clarify only when no criteria are present; each question is {question, choices} or
+ *     {question, freeText:true} per QUESTION_POLICY — a bare string / a choice-less question is
+ *     an ERROR (retry feedback), never a silent open question
  *   - anything else → error describing what broke (used as feedback on the round-2 retry)
  * Minor shape issues are normalized (missing criteria ids → auto c1..n, missing arrays → []),
  * but empty criteria / items without text+check are invalid — a spec without teeth is worse
@@ -91,8 +140,11 @@ export const parseSpecDraft = (text: string): DraftParse => {
 	if (raw === undefined || typeof raw !== "object" || raw === null || Array.isArray(raw))
 		return { kind: "error", error: "output is not a JSON object (no parseable JSON found — the prompt instructs output ONLY JSON)" };
 	const o = raw as Record<string, unknown>;
-	const qs = asClarifyQuestions(o.questions);
-	if (qs?.length && o.criteria === undefined) return { kind: "clarify", questions: qs.slice(0, 5) };
+	const scan = scanClarifyQuestions(o.questions);
+	if (o.questions !== undefined && o.criteria === undefined) {
+		if (scan.violations.length) return { kind: "error", error: questionPolicyError(scan.violations) };
+		if (scan.questions.length) return { kind: "clarify", questions: scan.questions.slice(0, 5) };
+	}
 	if (!Array.isArray(o.criteria) || o.criteria.length === 0)
 		return { kind: "error", error: "criteria must be an array with at least 1 item (each needs a check that is a runnable command)" };
 	const criteria: Criterion[] = [];

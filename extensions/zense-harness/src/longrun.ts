@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { zenseDir, type Criterion, type Tracker, type TrackerPhase } from "./types.ts";
 import { gitOk } from "./worktree.ts";
 import { gitAddButZense, NOT_ZENSE } from "./pending-apply.ts";
+import { scanClarifyQuestions, questionPolicyError, type ClarifyQuestion } from "./spec-draft.ts";
 
 // ----- paths / identity
 
@@ -139,12 +140,16 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 		"- every criterion's check must be a REAL runnable command (verify it would execute; no placeholders like <path>)",
 		"- criteria are the phase's signature — few but decisive (1–4 per phase)",
 		"- scope entries are path prefixes the implementing agent may touch; keep them tight",
+		// question policy (2026-10-16): the planner's boundary decisions are internal technical
+		// calls — it must make them from the requirement doc, never bounce them to the human
+		"- if the requirement doc leaves the OUTCOME ambiguous (what the human wants the result to be or do, product/UI level), return ONLY {\"questions\":[{\"question\":\"…\",\"choices\":[\"a\",\"b\"]}]} instead of phases (max 5; omit choices only for a product/UI question with genuinely no guessable options, marking it \"freeText\": true) — the human answers and you are re-run",
+		"- NEVER ask the human internal technical/detail questions (library, module split, naming, test approach, data shape, refactor structure): decide those from the requirement doc and repo, and proceed",
 	].join("\n");
 
 /** Parse a planner sub-agent's output into phase drafts. Accepts bare JSON or fenced JSON
  *  (models add ```json despite instructions — strip, don't punish). Structural errors get
  *  actionable messages: the caller retries with an explicit phases list. */
-export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[] } | { ok: false; error: string } => {
+export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[]; questions?: ClarifyQuestion[] } | { ok: false; error: string } => {
 	const stripped = output.replace(/```(?:json)?\s*\n?/g, "").replace(/```/g, "");
 	const start = stripped.indexOf("{");
 	const end = stripped.lastIndexOf("}");
@@ -154,6 +159,16 @@ export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPla
 		parsed = JSON.parse(stripped.slice(start, end + 1));
 	} catch (e) {
 		return { ok: false, error: `JSON.parse failed: ${(e as Error).message.slice(0, 120)}` };
+	}
+	// questions instead of phases → a human decision the planner surfaced (it is a sub-agent:
+	// it cannot open a picker itself, so the caller asks). Enforced through the SAME question
+	// policy as the requirements clarify loop / zense_ask (2026-10-16): choices by default, a
+	// choice-less question only with the explicit freeText marker for a product/UI outcome.
+	const questionField = (parsed as { questions?: unknown }).questions;
+	if (questionField !== undefined && (parsed as { phases?: unknown }).phases === undefined) {
+		const scan = scanClarifyQuestions(questionField);
+		if (scan.violations.length) return { ok: false, error: questionPolicyError(scan.violations) };
+		if (scan.questions.length) return { ok: true, phases: [], questions: scan.questions.slice(0, 5) };
 	}
 	const phases = (parsed as { phases?: unknown }).phases;
 	if (!Array.isArray(phases) || !phases.length) return { ok: false, error: '"phases" must be a non-empty array' };

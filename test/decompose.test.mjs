@@ -157,9 +157,17 @@ test("compileDecomposed: a subtask failing mid-way stops everything (later subta
 test("compileDecomposed: a subtask asking to clarify → throw (decompose has no per-subtask clarify — caller falls back)", async () => {
 	const runTask = runFor([], {
 		planner: () => Promise.resolve(fakePlanner(planJson(twoSubs()))),
-		requirements: () => Promise.resolve(fakePlanner(JSON.stringify({ questions: ["which db?"] }))),
+		requirements: () => Promise.resolve(fakePlanner(JSON.stringify({ questions: [{ question: "which db?", choices: ["sqlite", "pg"] }] }))),
 	});
 	await assert.rejects(compileDecomposed("X", runTask, (st) => st.id), /clarify/);
+});
+
+test("compileDecomposed: a subtask violating the question policy → invalid draft (retry feedback), not a clarify", async () => {
+	const runTask = runFor([], {
+		planner: () => Promise.resolve(fakePlanner(planJson(twoSubs()))),
+		requirements: () => Promise.resolve(fakePlanner(JSON.stringify({ questions: ["which db should we use?"] }))),
+	});
+	await assert.rejects(compileDecomposed("X", runTask, (st) => st.id), /draft invalid[\s\S]*question policy violation/);
 });
 
 // ---------- planner is a first-class role: wired into every per-role registry like the others

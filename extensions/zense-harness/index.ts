@@ -85,7 +85,7 @@ import { firstAdrDenyViolation } from "./src/adr-deny.ts";
 import { fmtTok, subagentLogPath, runSubagent } from "./src/subagent-runner.ts";
 import { aggregateMemory, memorySummaryLines, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./src/memory.ts";
 import { readModelsConfig, resolveModelPattern, writeModelsConfig, availableModelChoices, panelize } from "./src/models.ts";
-import { asAskQuestions, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
+import { askQuestionScan, askPolicyError, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
 
 // ----------------------------------------------------------------------------- extension
 
@@ -2047,7 +2047,28 @@ export default function (pi: ExtensionAPI) {
 					const parsed = parseLongrunPlan(run.output);
 					if (!parsed.ok)
 						return say(`planner output invalid: ${parsed.error}\nalternative: call plan with an explicit phases list (the raw draft is logged via /zense agents)`, {}, true);
-					planInput = parsed.phases;
+					// the planner asked the human something instead of planning (goal ambiguity it cannot
+					// resolve itself): ask it through the SAME goal-only picker, feed answers back, re-run
+					if (parsed.questions?.length) {
+						if (!ctx.hasUI)
+							return say(`planner needs a human answer but this session has no UI (RPC/print):\n${parsed.questions.map((q) => `- ${q.question}`).join("\n")}\nAnswer in chat text (or pass an explicit phases list) and call plan again.`, { questions: parsed.questions }, true);
+						const answers: string[] = [];
+						for (const q of parsed.questions) {
+							const a = await askClarifyQuestion(ctx, q);
+							if (a === undefined) continue;
+							if (a.trim()) answers.push(`- Q: ${q.question}\n  A: ${a.trim()}`);
+						}
+						learn(ctx, `longrun ${t0.slug}: planner asked ${parsed.questions.length} goal question(s), ${answers.length} answered`);
+						if (!answers.length) return say(`the planner's questions were all skipped — no answers to plan with. Either answer them (call plan again) or pass an explicit phases list.`, {}, true);
+						const specsMd2 = `${specsMd}\n\nHuman answers to the planner's goal questions (authoritative):\n${answers.join("\n")}`;
+						const run2 = await launchSubagent(ctx, "planner", buildLongrunPlannerPrompt(t0.title, t0.intent, specsMd2), undefined, sig);
+						if (sig?.aborted) return say("⏸ plan cancelled (Esc) — do not retry on your own", {}, true);
+						if (!run2.ok) return say(`planner sub-agent failed: ${run2.output}\nalternative: call plan with an explicit phases list`, {}, true);
+						const parsed2 = parseLongrunPlan(run2.output);
+						if (!parsed2.ok || parsed2.questions?.length)
+							return say(`planner output invalid after clarifying (${parsed2.ok ? "asked again" : parsed2.error})\nalternative: call plan with an explicit phases list (the raw draft is logged via /zense agents)`, {}, true);
+						planInput = parsed2.phases;
+					} else planInput = parsed.phases;
 					learn(ctx, `longrun ${t0.slug}: planner drafted ${planInput.length} phases (${Date.now() - t0time}ms)`);
 				}
 				const phases: TrackerPhase[] = planInput.map((ph, i) => ({
@@ -2387,26 +2408,32 @@ export default function (pi: ExtensionAPI) {
 		name: "zense_ask",
 		label: "Zense Ask Human",
 		description:
-			"Ask the human decision-critical questions through the harness multiple-choice picker (search-filtered TUI with an 'Other (type your own)' free-text option). Callable in ANY phase — prefer this over dumping a '1. a 2. b 3. c' numbered list as chat text whenever the human should pick a design decision. In non-UI (RPC/print) sessions it returns guidance to ask in plain text instead — it never hangs.",
-		promptSnippet: "Ask the human questions with a multiple-choice picker any time a design decision needs a human pick",
+			"Ask the human GOAL-ONLY questions through the harness multiple-choice picker (search-filtered TUI with an 'Other (type your own)' free-text option). Callable in ANY phase — prefer this over dumping a '1. a 2. b 3. c' numbered list as chat text. Ask ONLY about the product/UI outcome the human wants (what the result should be or do), each question carrying 2–6 pickable choices. NEVER ask internal technical/detail questions — library choice, module split, file layout, naming, test approach, data shape, refactor structure, error-handling style — or ask the human to pick an implementation strategy: decide those yourself from the repo/context, proceed, and record the decision as an explicit assumption plus a specDebt entry the human reviews at signing. Choices may be omitted only for a genuine product/UI question with no guessable options, and then the question MUST set freeText:true. In non-UI (RPC/print) sessions it returns guidance to ask in plain text instead — it never hangs.",
+		promptSnippet: "Ask the human a product/UI-goal question with a multiple-choice picker (choices required; never ask what you should decide yourself)",
 		promptGuidelines: [
-			"Use zense_ask whenever the human should choose between options (design decisions, direction changes, ambiguous next steps) — it renders a pickable/searchable TUI instead of a long numbered chat list.",
-			"Attach 2–6 plausible choices per question; the human can also pick 'Other (type your own)' to answer freely. Esc = that question is skipped (reported as such — never infer an answer from a skip).",
+			"Ask ONLY product/UI-outcome questions — what the human wants the result to be or do. If a wrong guess would be cheap, do not ask at all: decide, proceed, and note the assumption.",
+			"Never ask the human an internal technical/detail decision: library, module split, file layout, naming, test approach, data shape, refactor structure, error handling, or any implementation strategy — decide those from the repo/context yourself and record an explicit assumption plus a specDebt entry instead.",
+			"Attach 2–6 plausible choices to EVERY question; the human can also pick 'Other (type your own)' to answer freely. Esc = that question is skipped (reported as such — never infer an answer from a skip).",
+			"Choices may be omitted only for a genuine product/UI-outcome question that has no guessable options, and that question must set freeText:true (the harness rejects a choice-less question otherwise).",
 			"Keep it to the few decision-critical questions (max 5 per call); this is an interactive check-in, not batch form-filling.",
 		],
 		parameters: Type.Object({
 			questions: Type.Array(
 				Type.Object({
 					question: Type.String(),
-					choices: Type.Optional(Type.Array(Type.String(), { description: "pickable options (2–6 work best); omit for a plain free-text answer" })),
+					choices: Type.Optional(Type.Array(Type.String(), { description: "pickable options (2–6). Required for every question except a product/UI-outcome question that genuinely has no guessable options — that one sets freeText:true instead" })),
+					freeText: Type.Optional(Type.Boolean({ description: "true ONLY for a product/UI-outcome question with no guessable options (the picker then renders a plain input). A question with neither choices nor freeText is rejected" })),
 				}),
 				{ description: "questions asked in order, each with its own picker (max 5)" },
 			),
 		}),
 		async execute(_id, p, _s, _o, ctx) {
-			const qs = asAskQuestions(p.questions);
-			if (!qs?.length)
-				return { content: [{ type: "text", text: "zense_ask: no usable question — pass at least one non-empty question text" }], details: {}, isError: true };
+			const { questions: qsAll, violations } = askQuestionScan(p.questions);
+			// policy rejection (2026-10-16): a choice-less / bare-string question never reaches the
+			// human — the model gets the policy back immediately and fixes it in the same turn
+			if (violations.length) return { content: [{ type: "text", text: askPolicyError(violations) }], details: { violations }, isError: true };
+			if (!qsAll.length) return { content: [{ type: "text", text: "zense_ask: no usable question — pass at least one non-empty question text" }], details: {}, isError: true };
+			const qs = qsAll;
 			// no UI → never await a picker: graceful non-error guidance (RPC/print must not hang)
 			if (!ctx.hasUI) return { content: [{ type: "text", text: ASK_NO_UI_TEXT }], details: { noUi: true } };
 			const answers: AskAnswer[] = [];

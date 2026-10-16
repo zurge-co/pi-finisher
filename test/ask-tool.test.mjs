@@ -8,6 +8,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	asAskQuestions,
+	askQuestionScan,
+	askPolicyError,
 	formatAskAnswers,
 	ASK_MAX_QUESTIONS,
 	ASK_NO_UI_TEXT,
@@ -18,12 +20,22 @@ const readSrc = (rel) => readFileSync(join(here, "..", rel), "utf8");
 
 // ---------- asAskQuestions (normalize raw tool params → picker questions)
 
-test("asAskQuestions: bare strings and {question, choices} objects both normalize", () => {
-	const qs = asAskQuestions(["plain question?", { question: "with choices?", choices: ["a", "b"] }]);
-	assert.deepEqual(qs, [
-		{ question: "plain question?", choices: [] },
-		{ question: "with choices?", choices: ["a", "b"] },
-	]);
+test("asAskQuestions: {question, choices} objects normalize; a bare string is no longer accepted", () => {
+	// policy (2026-10-16): a choice-less question can only be an explicit product/UI freeText one
+	assert.deepEqual(asAskQuestions([{ question: "with choices?", choices: ["a", "b"] }]), [{ question: "with choices?", choices: ["a", "b"] }]);
+	assert.deepEqual(asAskQuestions([{ question: "no options for this one", freeText: true }]), [{ question: "no options for this one", choices: [], freeText: true }]);
+	// a legacy bare string has no choices and no freeText marker → dropped by the back-compat view
+	assert.equal(asAskQuestions(["plain question?"]), undefined);
+});
+
+test("askQuestionScan: reports why questions were rejected (policy feedback reaches the model)", () => {
+	const scan = askQuestionScan(["which db should we use?", { question: "what should the screen show?", choices: ["list", "grid"] }]);
+	assert.deepEqual(scan.questions, [{ question: "what should the screen show?", choices: ["list", "grid"] }]);
+	assert.equal(scan.violations.length, 1);
+	assert.match(scan.violations[0], /bare question string with no choices/);
+	// the error text carries the policy so the model self-corrects in the same turn
+	assert.match(askPolicyError(scan.violations), /product\/UI-outcome questions/);
+	assert.match(askPolicyError(scan.violations), /internal technical\/detail/);
 });
 
 test("asAskQuestions: empty/garbage items are dropped; questions and choices are trimmed", () => {
@@ -36,12 +48,13 @@ test("asAskQuestions: nothing usable → undefined (the tool reports an error in
 	assert.equal(asAskQuestions("not an array"), undefined);
 	assert.equal(asAskQuestions([]), undefined);
 	assert.equal(asAskQuestions([{ question: "   " }, { choices: ["orphan"] }]), undefined);
+	assert.equal(asAskQuestions([{ question: "q?" }]), undefined); // choice-less + no freeText → rejected, not asked
 });
 
 test("asAskQuestions: choices capped at 6 and questions at ASK_MAX_QUESTIONS (picker stays readable)", () => {
 	const many = asAskQuestions([{ question: "q", choices: ["1", "2", "3", "4", "5", "6", "7", "8"] }]);
 	assert.equal(many[0].choices.length, 6);
-	const qs = asAskQuestions(Array.from({ length: ASK_MAX_QUESTIONS + 3 }, (_, i) => `q${i}?`));
+	const qs = asAskQuestions(Array.from({ length: ASK_MAX_QUESTIONS + 3 }, (_, i) => ({ question: `q${i}?`, choices: ["a", "b"] })));
 	assert.equal(qs.length, ASK_MAX_QUESTIONS);
 });
 

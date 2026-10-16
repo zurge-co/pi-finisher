@@ -327,6 +327,31 @@ test("buildLongrunPlannerPrompt: demands ordered phases + runnable checks, embed
 	assert.match(prompt, /per-phase cost/i);
 	assert.match(prompt, /architecture seam|irreversible|baseline/i);
 	assert.doesNotMatch(prompt, /[0-9][–-]6 phases/);
+	// question policy (2026-10-16): the planner may surface a GOAL question instead of phases,
+	// but never an internal technical/detail question
+	assert.match(prompt, /OUTCOME ambiguous/);
+	assert.match(prompt, /"questions"/);
+	assert.match(prompt, /NEVER ask the human internal technical\/detail questions/);
+	assert.match(prompt, /freeText/);
+});
+
+test("parseLongrunPlan: questions instead of phases → goal question for the human (policy-validated)", () => {
+	// a goal question (product/UI outcome) with choices → surfaced, no phases
+	const ask = parseLongrunPlan(JSON.stringify({ questions: [{ question: "which flow should the user land on?", choices: ["dashboard", "inbox"] }] }));
+	assert.equal(ask.ok, true);
+	assert.deepEqual(ask.phases, []);
+	assert.deepEqual(ask.questions, [{ question: "which flow should the user land on?", choices: ["dashboard", "inbox"] }]);
+	// explicit freeText is the one legal choice-less shape
+	const free = parseLongrunPlan(JSON.stringify({ questions: [{ question: "what should the empty screen say?", freeText: true }] }));
+	assert.equal(free.questions[0].freeText, true);
+	// a bare string / choice-less question is rejected with the policy (never reaches the human)
+	const bare = parseLongrunPlan(JSON.stringify({ questions: ["which db should we use?"] }));
+	assert.equal(bare.ok, false);
+	assert.match(bare.error, /question policy violation/);
+	// questions ALONGSIDE phases are ignored — a real plan wins over a stray question key
+	const both = parseLongrunPlan(JSON.stringify({ questions: ["stray?"], phases: [{ title: "p", intent: "i", scope: ["src/"], criteria: [{ id: "c1", text: "t", check: "true" }] }] }));
+	assert.equal(both.ok, true);
+	assert.equal(both.phases.length, 1);
 });
 
 test("compilePhaseSpec: title/intent/provenance derive from the tracker; seeds keep origin", () => {

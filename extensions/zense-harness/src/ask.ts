@@ -1,6 +1,6 @@
 // zense-harness module: zense_ask pure helpers — question normalization, answer rendering, no-UI text (see AGENTS.md map)
 
-import { asClarifyQuestions, type ClarifyQuestion } from "./spec-draft.ts";
+import { asClarifyQuestions, scanClarifyQuestions, questionPolicyError, type ClarifyQuestion } from "./spec-draft.ts";
 
 // ----------------------------------------------------------------------------- zense_ask helpers (module scope — exported for unit tests)
 
@@ -15,8 +15,20 @@ export const ASK_MAX_QUESTIONS = 5;
 
 /** Normalize raw tool params → AskQuestion[]: delegates to the clarify normalizer (trim,
  *  drop empty questions, cap choices at 6 so the picker stays readable), then caps the
- *  question count. undefined when nothing usable remains. */
+ *  question count. undefined when nothing usable remains. Callers that must report WHY
+ *  questions were rejected use askQuestionScan instead. */
 export const asAskQuestions = (v: unknown): AskQuestion[] | undefined => asClarifyQuestions(v)?.slice(0, ASK_MAX_QUESTIONS);
+
+/** Normalize + police raw tool params → {questions, violations} (same scan as the requirements
+ *  clarify loop, so both paths report the identical QUESTION_POLICY feedback). */
+export const askQuestionScan = (v: unknown): { questions: AskQuestion[]; violations: string[] } => {
+	const { questions, violations } = scanClarifyQuestions(v);
+	return { questions: questions.slice(0, ASK_MAX_QUESTIONS), violations };
+};
+
+/** Error text for a zense_ask call whose questions violate QUESTION_POLICY — puts the policy
+ *  in front of the model on the next turn instead of letting the call through. */
+export const askPolicyError = (violations: string[]): string => `zense_ask rejected: ${questionPolicyError(violations)}`;
 
 /** One asked question + the human's answer; undefined = Esc/empty = skipped. */
 export interface AskAnswer {
