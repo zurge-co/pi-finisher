@@ -12,6 +12,10 @@ import {
 	buildReviewerPrompt,
 	gatherRepoFacts,
 	gitChangeSummary,
+	gitChangedSymbols,
+	gitDiffExcerpt,
+	parseCrossCheckItems,
+	mergeCrossCheck,
 	hasUnsubstitutedPlaceholder,
 	loadSpecExemplar,
 	modelMatchesPattern,
@@ -245,6 +249,9 @@ test("parseReviewerPacket: full schema ok + TL;DR extracted; missing sections re
 		"- eval PASS with probes",
 		"- safe to deploy",
 		"- extra line beyond 3 is truncated",
+		"## Cross-check",
+		"- You want A to show B when C → added renderB in src/a.ts",
+		"- When 1 happens, 2 disappears → removed the stale path in src/b.ts",
 		"## Intent vs Implementation",
 		"matched",
 		"## Risks",
@@ -259,10 +266,39 @@ test("parseReviewerPacket: full schema ok + TL;DR extracted; missing sections re
 	assert.deepEqual(parsed.missing, []);
 	assert.equal(parsed.tldr.split("\n").length, 3);
 	assert.match(parsed.tldr, /merged wave 2/);
+	assert.deepEqual(parsed.crossCheck, [
+		{ goal: "You want A to show B when C", evidence: "added renderB in src/a.ts" },
+		{ goal: "When 1 happens, 2 disappears", evidence: "removed the stale path in src/b.ts" },
+	]);
 	const bad = parseReviewerPacket("Some free text without headers at all");
 	assert.equal(bad.ok, false);
-	assert.deepEqual(bad.missing, ["TL;DR", "Intent vs Implementation", "Risks", "Rollback", "Human actions"]);
+	assert.deepEqual(bad.missing, ["TL;DR", "Cross-check", "Intent vs Implementation", "Risks", "Rollback", "Human actions"]);
 	assert.equal(bad.tldr, "");
+	assert.deepEqual(bad.crossCheck, []);
+});
+
+test("parseCrossCheckItems: arrows (→/->), bold, numbered bullets tolerated; a bullet without an arrow keeps the goal only", () => {
+	const text = ["## Cross-check", "- **A when B** → done in `f` at src/a.ts", "2. C -> removed in src/c.ts", "- D has no mapping"].join("\n");
+	assert.deepEqual(parseCrossCheckItems(text), [
+		{ goal: "A when B", evidence: "done in `f` at src/a.ts" },
+		{ goal: "C", evidence: "removed in src/c.ts" },
+		{ goal: "D has no mapping", evidence: "" },
+	]);
+	assert.deepEqual(parseCrossCheckItems("no section"), []);
+});
+
+test("mergeCrossCheck: every signed goal appears once; exact/near matches reuse evidence, unmapped goals are flagged", () => {
+	const goals = ["You want A to show B when C", "When 1 happens, 2 disappears"];
+	const parsed = [{ goal: "when 1 happens 2 disappears", evidence: "removed it in src/b.ts" }];
+	const merged = mergeCrossCheck(goals, parsed);
+	assert.deepEqual(merged, [
+		{ goal: goals[0], evidence: "" },
+		{ goal: goals[1], evidence: "removed it in src/b.ts" },
+	]);
+	// reviewer-only extra lines stay visible at the end
+	const extra = mergeCrossCheck([goals[0]], [{ goal: "bonus case", evidence: "added in src/z.ts" }]);
+	assert.equal(extra.length, 2);
+	assert.equal(extra[1].goal, "bonus case");
 });
 
 test("buildReviewerPrompt: carries eval evidence + git + flags/debt, defines strict section contract", () => {
@@ -285,6 +321,12 @@ test("buildReviewerPrompt: carries eval evidence + git + flags/debt, defines str
 	assert.match(p, /abc impl v2/);
 	assert.match(p, /never write "to be implemented"/);
 	assert.match(p, /## Human actions/);
+	assert.match(p, /## Cross-check/);
+	const withGoals = buildReviewerPrompt("i", undefined, [], [], [], "changed symbols:\n+ src/a.ts: export function renderB", "", undefined, undefined, ["You want A to show B when C"]);
+	assert.match(withGoals, /Cross-check cases \(the human's signed request, verbatim/);
+	assert.match(withGoals, /1\. You want A to show B when C/);
+	assert.match(withGoals, /EXACTLY one line per case above/);
+	assert.match(withGoals, /what was actually DONE/);
 	assert.match(buildReviewerPrompt("i", undefined, [], [], [], "", "Rollback"), /was rejected: Rollback/); // r5: feedback covers both schema and grounding
 });
 
@@ -384,6 +426,60 @@ test("gitChangeSummary: staged-but-uncommitted changes (pendingApply) still show
 		const s = gitChangeSummary(cwd, baseline);
 		assert.match(s, /applied\.txt/); // both porcelain and diffstat must see the staged change
 		assert.doesNotMatch(s, /commits since baseline/); // no new commits after baseline (apply-back never commits — by design)
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("gitChangedSymbols: reports real added function/class/const names with their files (reviewer can cite them)", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "zense-symbols-"));
+	try {
+		const git = (args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+		git(["init", "-q"]);
+		git(["config", "user.email", "t@t"]);
+		git(["config", "user.name", "t"]);
+		mkdirSync(join(cwd, "src"));
+		writeFileSync(join(cwd, "src", "a.ts"), "export const before = 1;\n");
+		git(["add", "-A"]);
+		git(["commit", "-q", "-m", "baseline"]);
+		const baseline = git(["rev-parse", "HEAD"]).trim();
+		writeFileSync(join(cwd, "src", "a.ts"), "export const before = 1;\nexport function renderB() {}\nconst helper = () => {};\n");
+		writeFileSync(join(cwd, "src", "b.ts"), "export interface Case {}\n");
+		git(["add", "-A"]);
+		const out = gitChangedSymbols(cwd, baseline);
+		assert.match(out, /changed symbols/);
+		assert.match(out, /\+ src\/a\.ts: export function renderB/);
+		assert.match(out, /\+ src\/a\.ts: const helper/);
+		assert.match(out, /\+ src\/b\.ts: export interface Case/);
+		assert.equal(gitChangedSymbols(cwd, "deadbeef"), ""); // bad ref → best-effort empty, never a throw
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("gitDiffExcerpt: verbatim added/removed lines + file paths (call sites and removals are evidence)", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "zense-diffex-"));
+	try {
+		const git = (args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+		git(["init", "-q"]);
+		git(["config", "user.email", "t@t"]);
+		git(["config", "user.name", "t"]);
+		mkdirSync(join(cwd, "src"));
+		writeFileSync(join(cwd, "src", "a.ts"), "export function oldPath() {}\n");
+		writeFileSync(join(cwd, "src", "b.ts"), "oldPath();\n");
+		git(["add", "-A"]);
+		git(["commit", "-q", "-m", "baseline"]);
+		const baseline = git(["rev-parse", "HEAD"]).trim();
+		writeFileSync(join(cwd, "src", "a.ts"), "export function newPath() {}\n");
+		writeFileSync(join(cwd, "src", "b.ts"), "newPath();\n");
+		git(["add", "-A"]);
+		const out = gitDiffExcerpt(cwd, baseline);
+		assert.match(out, /changed lines \(verbatim/);
+		assert.match(out, /file: src\/a\.ts/);
+		assert.match(out, /\+export function newPath/);
+		assert.match(out, /-export function oldPath/);
+		assert.match(out, /\+newPath\(\)/); // the call site in the other file is visible
+		assert.equal(gitDiffExcerpt(cwd, "deadbeef"), "");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -584,7 +680,10 @@ test("buildReviewResultText: TL;DR + counts + log hint; the failure branch carri
 	assert.match(okText, /all good/);
 	assert.match(okText, /trajectory flags: 2 · escalations: 1/);
 	assert.match(okText, /t-reviewer\.log/);
-	assert.ok(okText.length < 600, "the compact result must be shorter than the old packet slice(0,4000)");
+	assert.ok(okText.length < 900, "the compact result must be shorter than the old packet slice(0,4000)");
+	const withCross = buildReviewResultText({ ok: true, tlDr: "all good", trajectoryCount: 0, escalationCount: 0, logPath: "x.log", crossCheck: [{ goal: "A when B", evidence: "added f in src/a.ts" }] });
+	assert.match(withCross, /## Cross-check — your case → what was done/);
+	assert.match(withCross, /- A when B\n  → added f in src\/a\.ts/);
 	const errText = buildReviewResultText({ ok: false, tlDr: "", trajectoryCount: 0, escalationCount: 0, logPath: ".zense/subagents/t-reviewer.log", errorOutput: "exited code=1" });
 	assert.match(errText, /reviewer failed: exited code=1/);
 	assert.match(errText, /t-reviewer\.log/);
@@ -624,6 +723,25 @@ test("TDZ guard: probeSection is declared exactly once and always before the inc
 
 // ---------- review-decision modal text (2026-10-16): review ends in a DECISION — y=accept,
 //          n=close-only; the non-UI chat fallback (buildReviewResultText) stays unchanged
+
+test("buildReviewModalText: cross-check cases render goal → what was done; an unmapped case is flagged, never dropped", () => {
+	const md = buildReviewModalText({
+		tlDr: "done",
+		crossCheck: [
+			{ goal: "You want A to show B when C", evidence: "added renderB in src/a.ts" },
+			{ goal: "When 1 happens, 2 disappears", evidence: "" },
+		],
+		trajectory: [],
+		specDebt: [],
+		escalations: [],
+		canAccept: true,
+	});
+	assert.match(md, /## Cross-check — your case → what was done/);
+	assert.match(md, /\*\*You want A to show B when C\*\*/);
+	assert.match(md, /→ added renderB in src\/a\.ts/);
+	assert.match(md, /When 1 happens, 2 disappears/);
+	assert.match(md, /⚠ not mapped by the reviewer/);
+});
 
 test("buildReviewModalText: TL;DR + flags/debt/escalations render; y accept hint only when something is staged", () => {
 	const md = buildReviewModalText({

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { buildSpecChanges, groupSpecChanges, renderSpecChangesTui, renderSignOutcome, renderSpecMd, renderTrackerOutcomes } from "../extensions/zense-harness/index.ts";
+import { buildSpecChanges, groupSpecChanges, renderSpecChangesTui, renderSignOutcome, renderSpecMd, renderTrackerOutcomes, goalLines, sameGoalLines, decideSpecApproval, rejectionDirective } from "../extensions/zense-harness/index.ts";
 
 const baseSpec = (over = {}) => ({
 	version: 1,
@@ -209,32 +209,68 @@ test("renderSpecChangesTui: Other lines are neutral and land last, like the arch
 });
 
 
-// ---------- sign-time outcome rendering (2026-10-16): the sign dialog shows ONLY "what you'll
-//          get" + a file pointer — scope/criteria/spec debt live in .zense/spec.md
+// ---------- sign-time cross-check rendering (2026-10-18): the sign dialog shows the
+//          user-language goal CASES (one per line) + a file pointer — never the build plan
 
-test("renderSignOutcome: outcomes + .zense/spec.md pointer; technical sections can never leak", () => {
-	const md = renderSignOutcome(baseSpec({ outcomes: "คุณจะเข้าสู่ระบบได้รอบเดียว ไม่ต้องกรอกซ้ำ" }));
-	assert.match(md, /## What you'll get/);
-	assert.match(md, /คุณจะเข้าสู่ระบบได้รอบเดียว/);
+test("goalLines: crossCheck wins over legacy outcomes over intent; blanks dropped, intent capped", () => {
+	assert.deepEqual(goalLines({ crossCheck: [" A happens when B ", "  "], outcomes: "legacy", intent: "why" }), ["A happens when B"]);
+	assert.deepEqual(goalLines({ outcomes: "one\ntwo", intent: "why" }), ["one", "two"]);
+	assert.deepEqual(goalLines({ intent: "why\nthis" }), ["why", "this"]);
+	assert.deepEqual(goalLines({}), []);
+});
+
+test("sameGoalLines: whitespace/punctuation/order-insensitive; two empty lists are never 'unchanged'", () => {
+	assert.equal(sameGoalLines({ crossCheck: ["A when B", "C goes away"] }, { crossCheck: ["c goes away.", "  a   when b "] }), true);
+	assert.equal(sameGoalLines({ outcomes: "A when B" }, { crossCheck: ["a when b!"] }), true, "legacy outcomes fingerprint against new crossCheck");
+	assert.equal(sameGoalLines({ crossCheck: ["A"] }, { crossCheck: ["B"] }), false);
+	assert.equal(sameGoalLines({}, {}), false, "nothing to compare must ask for a signature");
+	assert.equal(sameGoalLines({ intent: "" }, { crossCheck: [] }), false);
+});
+
+test("decideSpecApproval: tracker > gate-off > goals-unchanged > ask; no UI stays unsigned", () => {
+	assert.deepEqual(decideSpecApproval({ signMode: "auto", gateEnabled: true, goalsUnchanged: false, hasUI: true, tui: true }), { kind: "auto", reason: "tracker" });
+	assert.deepEqual(decideSpecApproval({ gateEnabled: false, goalsUnchanged: false, hasUI: false, tui: false }), { kind: "auto", reason: "gate-off" });
+	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: true, hasUI: true, tui: true }), { kind: "auto", reason: "goals-unchanged" });
+	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: false, hasUI: true, tui: true }), { kind: "ask", mode: "tui" });
+	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: false, hasUI: true, tui: false }), { kind: "ask", mode: "select" });
+	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: false, hasUI: false, tui: false }), { kind: "unsigned", reason: "no-ui" });
+});
+
+test("rejectionDirective: every dialog's reason reaches the agent with a concrete next step", () => {
+	assert.match(rejectionDirective("spec", "B should mean something else", 3), /did NOT sign spec v3/);
+	assert.match(rejectionDirective("spec", "B should mean something else", 3), /call zense_spec again/);
+	assert.match(rejectionDirective("tracker", "split phase 2"), /call zense_longrun plan again/);
+	assert.match(rejectionDirective("review", "missing the empty state"), /staged change was left untouched/);
+	assert.match(rejectionDirective("gate", "fix the goal first"), /write is blocked/);
+	assert.match(rejectionDirective("spec", "  "), /\(no reason given\)/);
+});
+
+test("renderSignOutcome: cross-check cases + .zense/spec.md pointer; technical sections can never leak", () => {
+	const md = renderSignOutcome(baseSpec({ crossCheck: ["คุณต้องการให้ A มี B เกิดขึ้นเมื่อ C", "เมื่อ 1 แล้ว 2 จะหายไป"] }));
+	assert.match(md, /## Cross-check — what we understood you want/);
+	assert.match(md, /- คุณต้องการให้ A มี B เกิดขึ้นเมื่อ C/);
+	assert.match(md, /- เมื่อ 1 แล้ว 2 จะหายไป/);
 	assert.match(md, /\.zense\/spec\.md/, "the pointer must name the technical spec file");
-	// provably outcomes-only: technical content present on the spec must not appear
+	// provably cross-check-only: technical content present on the spec must not appear
 	assert.ok(!md.includes("src/auth"), "scope prefixes must not appear in the sign body");
 	assert.ok(!md.includes("npm test") && !md.includes("path exists:"), "raw checks must not appear");
 	assert.ok(!md.includes("verify UX by eye"), "spec debt must not appear");
 	assert.ok(!md.includes("Approach") && !md.includes("read auth code"), "approach steps must not appear");
 });
 
-test("renderSignOutcome: legacy spec without outcomes falls back to the intent text (no crash, still readable)", () => {
-	const md = renderSignOutcome(baseSpec());
-	assert.match(md, /users hit \/login twice/);
-	assert.ok(!md.includes("src/auth"), "the fallback must still never leak technical sections");
+test("renderSignOutcome: legacy spec without crossCheck falls back to outcomes lines then intent (no crash)", () => {
+	const legacy = renderSignOutcome(baseSpec({ outcomes: "one login, no repeat" }));
+	assert.match(legacy, /- one login, no repeat/);
+	const bare = renderSignOutcome(baseSpec());
+	assert.match(bare, /- users hit \/login twice/);
+	assert.ok(!bare.includes("src/auth"), "the fallback must still never leak technical sections");
 });
 
-test("renderSpecMd: 'What you'll get' section present only when outcomes exist (archive file keeps everything)", () => {
+test("renderSpecMd: Cross-check + legacy 'What you'll get' sections present only when their fields exist", () => {
+	assert.match(renderSpecMd(baseSpec({ crossCheck: ["A when B"] })), /## Cross-check \(what we understood you want\)/);
 	assert.match(renderSpecMd(baseSpec({ outcomes: "one login, no repeat" })), /## What you'll get/);
-	assert.ok(!renderSpecMd(baseSpec()).includes("What you'll get"));
-	// the archive file keeps the technical sections — the dialog is the outcomes-only surface, not the file
-	assert.match(renderSpecMd(baseSpec({ outcomes: "x" })), /## Acceptance criteria/);
+	assert.ok(!renderSpecMd(baseSpec()).includes("Cross-check"), "no crossCheck → no heading, legacy render unchanged");
+	assert.match(renderSpecMd(baseSpec({ crossCheck: ["x"] })), /## Acceptance criteria/, "archive keeps the technical sections");
 });
 
 const baseTracker = (over = {}) => ({
@@ -246,24 +282,26 @@ const baseTracker = (over = {}) => ({
 	status: "planning",
 	updatedAt: Date.now(),
 	phases: [
-		{ id: "p1", title: "store", intent: "token store", outcomes: "คุณจะล็อกอินครั้งเดียวแล้วคงอยู่ต่อได้", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "npm test" }], status: "pending" },
+		{ id: "p1", title: "store", intent: "token store", crossCheck: ["คุณจะล็อกอินครั้งเดียวแล้วคงอยู่ต่อได้"], scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "npm test" }], status: "pending" },
 		{ id: "p2", title: "login flow", intent: "oauth login first line", scope: ["src/login"], constraints: [], criteria: [{ id: "S2", text: "t2", check: "true" }], status: "pending" },
 	],
 	...over,
 });
 
-test("renderTrackerOutcomes: set summary + per-phase plain lines + tracker.md pointer; never scope/checks", () => {
-	const md = renderTrackerOutcomes(baseTracker({ outcomes: "ระบบล็อกอินใหม่ที่ปลอดภัยกว่าเดิม" }));
-	assert.match(md, /## What you'll get/);
-	assert.match(md, /ระบบล็อกอินใหม่ที่ปลอดภัยกว่าเดิม/);
-	assert.match(md, /- p1 “store”: คุณจะล็อกอินครั้งเดียวแล้วคงอยู่ต่อได้/, "per-phase outcomes line");
-	assert.match(md, /- p2 “login flow”: oauth login first line/, "a phase without outcomes falls back to its intent first line");
+test("renderTrackerOutcomes: set + per-phase cross-check groups + tracker.md pointer; never scope/checks", () => {
+	const md = renderTrackerOutcomes(baseTracker({ crossCheck: ["คุณต้องการให้ระบบล็อกอินทำงานครั้งเดียว", "เมื่อกลับมาอีกครั้งไม่ต้องกรอกซ้ำ"], outcomes: "legacy summary" }));
+	assert.match(md, /## Cross-check — what we understood you want/);
+	assert.match(md, /- คุณต้องการให้ระบบล็อกอินทำงานครั้งเดียว/);
+	assert.match(md, /- \*\*p1 “store”\*\*/);
+	assert.match(md, /  - คุณจะล็อกอินครั้งเดียวแล้วคงอยู่ต่อได้/, "p1 crossCheck line");
+	assert.match(md, /- \*\*p2 “login flow”\*\*/);
+	assert.match(md, /  - oauth login first line/, "a phase without crossCheck falls back to its intent first line");
 	assert.match(md, /\.zense\/long-running\/migrate-auth\/tracker\.md/, "pointer names the tracker file");
 	assert.ok(!md.includes("src/store") && !md.includes("src/login"), "scope paths must not leak");
 	assert.ok(!md.includes("npm test") && !md.includes("S1"), "criteria ids/checks must not leak");
 });
 
-test("renderTrackerOutcomes: no tracker-level outcomes → requirement intent leads (fallback, never a crash)", () => {
+test("renderTrackerOutcomes: no tracker-level crossCheck/outcomes → requirement intent leads (fallback, never a crash)", () => {
 	const md = renderTrackerOutcomes(baseTracker());
-	assert.match(md, /Move auth to oauth/);
+	assert.match(md, /- Move auth to oauth/);
 });

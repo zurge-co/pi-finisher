@@ -411,56 +411,60 @@ test("discoverLongrunTrackers: finds active trackers sorted by recency, skips do
 });
 
 
-// ---------- outcomes (2026-10-16): per-phase plain-language summaries lead the tracker sign
+// ---------- cross-check (2026-10-18): the user-language goal cases lead the tracker sign
 //          dialog + tracker.md; optional end-to-end so explicit agent-authored plans keep working
 
-test("buildLongrunPlannerPrompt: outcomes are REQUIRED per phase, request-language, jargon-free", () => {
+test("buildLongrunPlannerPrompt: crossCheck is REQUIRED per phase and top-level, request-language, jargon-free", () => {
 	const p = buildLongrunPlannerPrompt("Migrate auth", "move to oauth", "req doc");
-	assert.match(p, /"outcomes":"..."/);
-	assert.match(p, /outcomes \(top-level \+ per phase\): REQUIRED/);
+	assert.match(p, /"crossCheck":\["\.\.\."\]/);
+	assert.match(p, /crossCheck \(top-level \+ per phase\): REQUIRED/);
+	assert.match(p, /one goal CASE per line/);
 	assert.match(p, /same LANGUAGE as the requirement doc/i);
 });
 
-test("parseLongrunPlan: per-phase + top-level outcomes extracted; blank/absent normalize away (back-compat)", () => {
+test("parseLongrunPlan: per-phase + top-level crossCheck extracted/normalized; blank/absent drop (back-compat)", () => {
 	const parsed = parseLongrunPlan(JSON.stringify({
-		outcomes: "ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น",
+		crossCheck: ["ระบบล็อกอินใหม่ทำงานครั้งเดียว", "กลับมาแล้วไม่ต้องกรอกซ้ำ"],
 		phases: [
-			{ title: "a", intent: "ia", outcomes: "คุณจะล็อกอินครั้งเดียว", scope: ["src/a"], criteria: [{ id: "S1", text: "t", check: "true" }] },
-			{ title: "b", intent: "ib", outcomes: "   ", scope: ["src/b"], criteria: [{ id: "S2", text: "t", check: "true" }] },
+			{ title: "a", intent: "ia", crossCheck: ["คุณจะล็อกอินครั้งเดียว"], outcomes: "legacy a", scope: ["src/a"], criteria: [{ id: "S1", text: "t", check: "true" }] },
+			{ title: "b", intent: "ib", crossCheck: ["  ", "C\nand D"], scope: ["src/b"], criteria: [{ id: "S2", text: "t", check: "true" }] },
 		],
 	}));
 	assert.equal(parsed.ok, true);
-	assert.equal(parsed.outcomes, "ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น");
-	assert.equal(parsed.phases[0].outcomes, "คุณจะล็อกอินครั้งเดียว");
-	assert.equal(parsed.phases[1].outcomes, undefined, "blank outcomes drop to undefined, never an empty string");
+	assert.deepEqual(parsed.crossCheck, ["ระบบล็อกอินใหม่ทำงานครั้งเดียว", "กลับมาแล้วไม่ต้องกรอกซ้ำ"]);
+	assert.deepEqual(parsed.phases[0].crossCheck, ["คุณจะล็อกอินครั้งเดียว"]);
+	assert.equal(parsed.phases[0].outcomes, "legacy a", "legacy outcomes still parse");
+	assert.deepEqual(parsed.phases[1].crossCheck, ["C and D"], "blank case drops, embedded newline collapses");
 	const legacy = parseLongrunPlan(JSON.stringify({ phases: [{ title: "a", intent: "ia", scope: ["s"], criteria: [{ id: "S1", text: "t", check: "true" }] }] }));
 	assert.equal(legacy.ok, true);
-	assert.equal(legacy.outcomes, undefined);
-	assert.equal(legacy.phases[0].outcomes, undefined, "explicit agent-authored phase lists carry no outcomes — still valid");
+	assert.equal(legacy.crossCheck, undefined);
+	assert.equal(legacy.phases[0].crossCheck, undefined, "explicit agent-authored phase lists carry no crossCheck — still valid");
 });
 
-test("renderTrackerMd: 'What you'll get' leads when outcomes exist; per-phase 'You'll get' lines render; legacy trackers unchanged", () => {
-	const withOut = renderTrackerMd(mkTracker({
-		outcomes: "ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น",
+test("renderTrackerMd: cross-check section + per-phase cases render; legacy trackers unchanged", () => {
+	const withCases = renderTrackerMd(mkTracker({
+		crossCheck: ["ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น"],
 		phases: [
-			{ id: "p1", title: "store", intent: "token store", outcomes: "คุณจะล็อกอินครั้งเดียว", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "true" }], status: "pending" },
+			{ id: "p1", title: "store", intent: "token store", crossCheck: ["คุณจะล็อกอินครั้งเดียว"], scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "true" }], status: "pending" },
 			{ id: "p2", title: "login flow", intent: "oauth login", scope: ["src/login"], constraints: [], criteria: [{ id: "S2", text: "t2", check: "true" }], status: "pending" },
 		],
 	}));
-	assert.match(withOut, /## What you'll get/);
-	assert.match(withOut, /ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น/);
-	assert.match(withOut, /\*\*You'll get:\*\* คุณจะล็อกอินครั้งเดียว/);
+	assert.match(withCases, /## Cross-check — what we understood you want/);
+	assert.match(withCases, /ระบบล็อกอินใหม่ที่ปลอดภัยขึ้น/);
+	assert.match(withCases, /\*\*Cross-check:\*\*/);
+	assert.match(withCases, /- คุณจะล็อกอินครั้งเดียว/);
 	const legacy = renderTrackerMd(mkTracker());
-	assert.ok(!legacy.includes("What you'll get"), "no outcomes → no heading, render unchanged for old trackers");
+	assert.ok(!legacy.includes("Cross-check"), "no crossCheck → no heading, render unchanged for old trackers");
 });
 
-test("compilePhaseSpec: the phase's outcomes ride into the phase spec (a mid-set resume keeps showing what THIS phase delivers)", () => {
+test("compilePhaseSpec: the phase's crossCheck rides into the phase spec (resume + review keep the goal cases)", () => {
 	const t = mkTracker();
 	const legacy = compilePhaseSpec(t, t.phases[0]);
-	assert.equal(legacy.outcomes, undefined, "no outcomes on the phase → undefined, not empty");
-	const tOut = mkTracker({
-		phases: [{ id: "p1", title: "store", intent: "token store", outcomes: "คุณจะล็อกอินครั้งเดียว", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "true" }], status: "active" }],
+	assert.equal(legacy.crossCheck, undefined, "no crossCheck on the phase → undefined, not empty");
+	const tCases = mkTracker({
+		phases: [{ id: "p1", title: "store", intent: "token store", crossCheck: ["คุณจะล็อกอินครั้งเดียว"], outcomes: "legacy", scope: ["src/store"], constraints: [], criteria: [{ id: "S1", text: "t", check: "true" }], status: "active" }],
 	});
-	const withOut = compilePhaseSpec(tOut, tOut.phases[0]);
-	assert.equal(withOut.outcomes, "คุณจะล็อกอินครั้งเดียว");
+	const withCases = compilePhaseSpec(tCases, tCases.phases[0]);
+	assert.deepEqual(withCases.crossCheck, ["คุณจะล็อกอินครั้งเดียว"]);
+	assert.equal(withCases.outcomes, "legacy", "legacy outcomes still carried for old specs");
 });

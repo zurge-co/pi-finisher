@@ -125,30 +125,118 @@ export const renderSpecMd = (s: Spec): string =>
 	(s.changesFrom?.length
 		? `## Changes in v${s.version} (vs v${s.version - 1})\n${groupSpecChanges(s.changesFrom)}\n\n`
 		: "") +
+	(s.crossCheck?.length ? `## Cross-check (what we understood you want)\n${s.crossCheck.map((x) => `- ${x}`).join("\n")}\n\n` : "") +
 	(s.outcomes ? `## What you'll get\n${s.outcomes}\n\n` : "") +
 	`## Intent\n${s.intent}\n\n${s.approach?.length ? "## Approach\n" + s.approach.map((x) => `- ${x}`).join("\n") + "\n\n" : ""}## Scope\n${s.scope.map((x) => `- ${x}`).join("\n")}\n\n## Constraints\n${s.constraints.map((x) => `- ${x}`).join("\n")}\n\n## Acceptance criteria\n${s.criteria.map((c) => `- [ ] ${c.id}: ${c.text} *(check: ${c.check})*`).join("\n")}\n\n## Spec debt (human-verified only)\n${s.specDebt.map((x) => `- ${x}`).join("\n")}\n`;
 
-// ----- sign-time outcome rendering (2026-10-16): the sign dialog shows ONLY the plain-language
-//       "what you'll get" + a pointer to the technical file — the signer signs WHAT, the
-//       technical spec stays on disk for the agent/grader (machine contract untouched)
+// ----- sign-time cross-check rendering (2026-10-18): the sign dialog shows the user-language
+//       goal CASES (one per line) + a pointer to the technical file. The human reads this list
+//       to verify pi-zense understood the request, not to review the build plan.
 
-/** The sign dialog body for a regular spec: outcome summary (fallback: intent text for
- *  outcome-less legacy specs) + a pointer line naming the technical spec file. Provably free
- *  of the technical sections — it is built from outcomes/intent ONLY, so scope prefixes,
- *  criteria, raw checks and spec debt can never leak into the sign surface. */
-export const renderSignOutcome = (s: Spec): string =>
-	`## What you'll get\n\n${s.outcomes ?? (s.intent || "(the requirements agent did not summarize this — see the technical spec file)")}\n\n` +
-	`> Full technical spec (approach, scope, checks, constraints, spec debt): \`.zense/spec.md\``;
+/** Goal lines for any signed artifact: crossCheck first, then legacy outcomes lines, then the
+ *  intent's lines (so an old spec/tracker still shows something readable). Never pulls scope,
+ *  criteria, checks or spec debt — this is the sign/review surface, not the technical spec. */
+export const goalLines = (s: { crossCheck?: string[]; outcomes?: string; intent?: string }): string[] => {
+	const clean = (xs: string[]): string[] => xs.map((x) => x.trim()).filter(Boolean);
+	if (s.crossCheck?.length) {
+		const lines = clean(s.crossCheck);
+		if (lines.length) return lines;
+	}
+	if (s.outcomes?.trim()) {
+		const lines = clean(s.outcomes.split("\n"));
+		if (lines.length) return lines;
+	}
+	return clean((s.intent ?? "").split("\n")).slice(0, 8);
+};
 
-/** The tracker sign dialog body: the set-level outcome summary, one plain-language line per
- *  phase (fallback per phase: its intent first line) + a pointer to tracker.md. Same
- *  outcomes-only discipline as renderSignOutcome — never scope paths, criteria ids or checks. */
+/** Normalized goal fingerprint (order-insensitive, whitespace/punctuation-insensitive) used by
+ *  the no-re-sign rule: a re-spec/re-plan whose goal cases are unchanged needs no new human
+ *  signature. Two empty lists are NEVER "unchanged" (nothing to compare = not a carry-over). */
+export const sameGoalLines = (
+	a: { crossCheck?: string[]; outcomes?: string; intent?: string },
+	b: { crossCheck?: string[]; outcomes?: string; intent?: string },
+): boolean => {
+	const norm = (line: string): string => line.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+	const pack = (s: typeof a): string[] => [...new Set(goalLines(s).map(norm).filter(Boolean))].sort();
+	const A = pack(a);
+	const B = pack(b);
+	return A.length > 0 && A.length === B.length && A.every((x, i) => x === B[i]);
+};
+
+/** Approval decision for a committed spec (2026-10-18) — the ONE place that decides whether a
+ *  human signature prompt is needed:
+ *  - tracker signature (longrun phase compile) → auto, no dialog
+ *  - gate OFF → auto, no dialog (the human explicitly disabled all permission prompts)
+ *  - previous version approved + goal lines unchanged → auto (no re-approval for a stable goal)
+ *  - else ask (TUI overlay / plain select) or stay unsigned when there is no UI
+ *  The actual signing side effect stays approveCurrentSpec(), shared by every path. */
+export type SpecApprovalDecision =
+	| { kind: "auto"; reason: "tracker" | "gate-off" | "goals-unchanged" }
+	| { kind: "ask"; mode: "tui" | "select" }
+	| { kind: "unsigned"; reason: "no-ui" };
+
+export const decideSpecApproval = (opts: {
+	signMode?: "ask" | "auto";
+	gateEnabled: boolean;
+	goalsUnchanged: boolean;
+	hasUI: boolean;
+	tui: boolean;
+}): SpecApprovalDecision => {
+	if (opts.signMode === "auto") return { kind: "auto", reason: "tracker" };
+	if (!opts.gateEnabled) return { kind: "auto", reason: "gate-off" };
+	if (opts.goalsUnchanged) return { kind: "auto", reason: "goals-unchanged" };
+	if (opts.hasUI && opts.tui) return { kind: "ask", mode: "tui" };
+	if (opts.hasUI) return { kind: "ask", mode: "select" };
+	return { kind: "unsigned", reason: "no-ui" };
+};
+
+/** Agent-facing next step after a typed rejection (n + reason in a decision dialog). The
+ *  reason MUST reach the agent's context — closing the dialog silently was the user's pain
+ *  point ("I pressed n ... then had to abort and retype it"). Kept pure/testable; the TUI
+ *  wiring collects the reason via ctx.ui.input after the overlay closes. */
+export const rejectionDirective = (kind: "spec" | "tracker" | "review" | "gate", reason: string, version?: number): string => {
+	const why = reason.trim() || "(no reason given)";
+	const v = version !== undefined ? ` v${version}` : "";
+	if (kind === "spec")
+		return `The human did NOT sign spec${v}. Their reason: "${why}"\nRevise the spec (cross-check cases, scope or approach) to match this correction, then call zense_spec again — do not implement until it is signed.`;
+	if (kind === "tracker")
+		return `The human did NOT sign the longrun tracker${v}. Their reason: "${why}"\nAmend specs.md / the phase plan to match this correction, then call zense_longrun plan again — do not start phases.`;
+	if (kind === "review")
+		return `The human REJECTED the review. Their reason: "${why}"\nDo not treat the work as accepted: fix it or re-spec, then eval/review again. The staged change was left untouched (nothing discarded).`;
+	return `The human did not sign — this write is blocked. Their reason: "${why}"\nRevise the spec to match this correction, then ask for the signature again.`;
+};
+
+/** The sign dialog body for a regular spec: the goal cross-check (fallback: outcomes lines /
+ *  intent for legacy specs) + a pointer line naming the technical spec file. Provably free of
+ *  the technical sections — it is built from goalLines() ONLY, so scope prefixes, criteria,
+ *  raw checks and spec debt can never leak into the sign surface. */
+export const renderSignOutcome = (s: Spec): string => {
+	const goals = goalLines(s);
+	const body = goals.length
+		? goals.map((g) => `- ${g}`).join("\n")
+		: "- (the requirements agent did not summarize this — see the technical spec file)";
+	return (
+		`## Cross-check — what we understood you want\n\n${body}\n\n` +
+		`> Full technical spec (approach, scope, checks, constraints, spec debt): \`.zense/spec.md\``
+	);
+};
+
+/** The tracker sign dialog body: the set-level goal cases + one grouped block of goal cases per
+ *  phase (fallback per phase: its outcomes lines / intent first line) + a pointer to
+ *  tracker.md. Same cross-check-only discipline as renderSignOutcome — never scope paths,
+ *  criteria ids or checks. */
 export const renderTrackerOutcomes = (t: Tracker): string => {
+	const setGoals = goalLines(t);
+	const setBody = setGoals.length ? setGoals.map((g) => `- ${g}`).join("\n") : "- (no summary yet)";
 	const phaseLines = t.phases
-		.map((p) => `- ${p.id} “${p.title}”: ${p.outcomes ?? (p.intent || "").split("\n")[0]}`)
+		.map((p) => {
+			const pg = goalLines(p);
+			const body = pg.length ? pg.map((g) => `  - ${g}`).join("\n") : "  - (no summary yet)";
+			return `- **${p.id} “${p.title}”**\n${body}`;
+		})
 		.join("\n");
 	return (
-		`## What you'll get\n\n${t.outcomes ?? t.intent.split("\n")[0]}\n\n### By phase\n\n${phaseLines}\n\n` +
+		`## Cross-check — what we understood you want\n\n${setBody}\n\n### By phase\n\n${phaseLines}\n\n` +
 		`> Full technical plan (scope, checks, constraints per phase): \`.zense/long-running/${t.slug}/tracker.md\``
 	);
 };

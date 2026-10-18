@@ -24,6 +24,31 @@ export const AUTO_FIX_MAX_ROUNDS = 2;
  *  undefined/false keeps the v1 manual close/fail semantics forever. */
 export const autoLoopEnabled = (t: Tracker): boolean => t.auto === true;
 
+/** Tracker signature decision (2026-10-18) — the ONE place that decides whether the longrun
+ *  sign dialog is needed:
+ *  - gate OFF → auto-sign as AUTO (the human disabled every approval prompt)
+ *  - previously signed + goal cases unchanged → carry the previous mode, no re-sign
+ *  - else ask (TUI overlay / plain select) or stay unsigned when there is no UI
+ *  The signature side effects (approvedAt/status/auto/worktree) stay in index.ts. */
+export type TrackerSignDecision =
+	| { kind: "auto"; auto: boolean; reason: "gate-off" | "goals-unchanged" }
+	| { kind: "ask"; mode: "tui" | "select" }
+	| { kind: "unsigned"; reason: "no-ui" };
+
+export const decideTrackerSign = (opts: {
+	gateEnabled: boolean;
+	goalsUnchanged: boolean;
+	prevAuto?: boolean;
+	hasUI: boolean;
+	tui: boolean;
+}): TrackerSignDecision => {
+	if (!opts.gateEnabled) return { kind: "auto", auto: true, reason: "gate-off" };
+	if (opts.goalsUnchanged) return { kind: "auto", auto: opts.prevAuto ?? true, reason: "goals-unchanged" };
+	if (opts.hasUI && opts.tui) return { kind: "ask", mode: "tui" };
+	if (opts.hasUI) return { kind: "ask", mode: "select" };
+	return { kind: "unsigned", reason: "no-ui" };
+};
+
 export const digestPath = (cwd: string, slug: string): string => join(longrunDir(cwd, slug), "digest.md");
 
 /** FAIL round inside the auto loop: pointed re-drive against exactly the failed criteria.

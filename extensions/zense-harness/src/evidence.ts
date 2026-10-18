@@ -141,6 +141,58 @@ export const gitChangeSummary = (cwd: string, baseline?: string): string => {
 	return parts.join("\n\n").slice(0, 4_000);
 };
 
+/** Deterministic changed-symbol evidence for the reviewer (2026-10-18): the review dialog must
+ *  say what was DONE for each goal case, not only which files changed. Parse added lines from
+ *  the baseline diff and list real function/class/const names with their file — the reviewer
+ *  can then quote a symbol that actually exists (findUngroundedTokens checks it against this
+ *  exact text) instead of inventing one. Best-effort: no diff/no git → "". */
+export const gitChangedSymbols = (cwd: string, baseline?: string): string => {
+	const r = gitOk(["diff", baseline ?? "HEAD", "--unified=0", "--", ".", ":!.zense"], cwd);
+	if (!r.ok || !r.out.trim()) return "";
+	let file = "";
+	const seen = new Set<string>();
+	const out: string[] = [];
+	const symRx = /^\+\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/;
+	for (const line of r.out.split("\n")) {
+		if (line.startsWith("+++ b/")) {
+			file = line.slice(6).trim();
+			continue;
+		}
+		if (!line.startsWith("+") || line.startsWith("+++")) continue;
+		const m = symRx.exec(line);
+		if (!m) continue;
+		const key = `${file}:${m[1]}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(`+ ${file || "(unknown file)"}: ${line.slice(1).trim().slice(0, 160)}`);
+		if (out.length >= 40) break;
+	}
+	if (!out.length) return "";
+	return `changed symbols (added lines, from diff vs ${baseline ? baseline.slice(0, 8) : "HEAD"}):\n${out.join("\n")}`;
+};
+
+/** Verbatim changed-line excerpt for the reviewer (2026-10-18): the Cross-check mapping must
+ *  describe what was DONE — including call sites in other files and removals — not just name
+ *  a file. A compact diff excerpt (added/removed lines, no context, paths kept) gives the
+ *  reviewer grounded material while staying far smaller than a raw diff. Best-effort. */
+export const gitDiffExcerpt = (cwd: string, baseline?: string, maxLines = 80, maxChars = 4_000): string => {
+	const r = gitOk(["diff", baseline ?? "HEAD", "--unified=0", "--", ".", ":!.zense"], cwd);
+	if (!r.ok || !r.out.trim()) return "";
+	const out: string[] = [];
+	for (const line of r.out.split("\n")) {
+		if (line.startsWith("+++ b/")) {
+			out.push(`file: ${line.slice(6).trim()}`);
+			continue;
+		}
+		if (line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("@@")) continue;
+		if (!/^[+-]/.test(line) || !line.slice(1).trim()) continue;
+		out.push(line.slice(0, 200));
+		if (out.length >= maxLines) break;
+	}
+	if (!out.length) return "";
+	return `changed lines (verbatim, ${baseline ? `vs ${baseline.slice(0, 8)}` : "vs HEAD"}):\n${out.join("\n").slice(0, maxChars)}`;
+};
+
 export interface ProbeResult {
 	id: string;
 	status: "pass" | "fail" | "skipped"; // skipped = check not runnable (manual → human review; not forced pass/fail)

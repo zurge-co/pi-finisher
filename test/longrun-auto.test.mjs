@@ -10,6 +10,7 @@ import {
 	buildAutoFixPrompt,
 	buildCompactionCapsule,
 	buildLongrunDigest,
+	decideTrackerSign,
 	digestPath,
 	longrunBranch,
 	nextPendingPhase,
@@ -155,4 +156,17 @@ test("buildNextPhaseKickoff: self-sufficient — tells the fresh context to re-r
 	assert.match(kick, /never reconstruct state from memory/);
 	// a wrong-arity call must fail loudly, not silently — assert the throw so future refactors keep the (cwd, tracker, phase) shape
 	assert.throws(() => buildNextPhaseKickoff(t, nextPendingPhase(t)));
+});
+
+// ---------- tracker signature decision (2026-10-18): no human prompt when the goal is stable
+//          or the gate is OFF — a re-plan with the same cases carries the previous signature
+
+test("decideTrackerSign: gate OFF → AUTO; goals unchanged → previous mode; otherwise ask", () => {
+	assert.deepEqual(decideTrackerSign({ gateEnabled: false, goalsUnchanged: false, prevAuto: undefined, hasUI: false, tui: false }), { kind: "auto", auto: true, reason: "gate-off" });
+	assert.deepEqual(decideTrackerSign({ gateEnabled: true, goalsUnchanged: true, prevAuto: true, hasUI: true, tui: true }), { kind: "auto", auto: true, reason: "goals-unchanged" });
+	assert.deepEqual(decideTrackerSign({ gateEnabled: true, goalsUnchanged: true, prevAuto: false, hasUI: false, tui: false }), { kind: "auto", auto: false, reason: "goals-unchanged" }, "a MANUAL tracker stays MANUAL on a goal-stable re-plan");
+	assert.deepEqual(decideTrackerSign({ gateEnabled: true, goalsUnchanged: true, prevAuto: undefined, hasUI: true, tui: true }), { kind: "auto", auto: true, reason: "goals-unchanged" }, "first-ever signed mode defaults to AUTO");
+	assert.deepEqual(decideTrackerSign({ gateEnabled: true, goalsUnchanged: false, prevAuto: true, hasUI: true, tui: true }), { kind: "ask", mode: "tui" });
+	assert.deepEqual(decideTrackerSign({ gateEnabled: true, goalsUnchanged: false, prevAuto: true, hasUI: true, tui: false }), { kind: "ask", mode: "select" });
+	assert.deepEqual(decideTrackerSign({ gateEnabled: true, goalsUnchanged: false, prevAuto: true, hasUI: false, tui: false }), { kind: "unsigned", reason: "no-ui" });
 });

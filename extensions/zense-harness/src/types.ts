@@ -13,7 +13,8 @@ export interface Spec {
 	version: number;
 	title: string;
 	intent: string;
-	outcomes?: string;         // plain-language "what you'll get" shown to the signer in the sign dialog (request-language, no jargon); optional — older persisted specs lack this field and the dialog falls back to intent
+	outcomes?: string;         // plain-language "what you'll get" (legacy — the sign dialog now prefers crossCheck); optional so older persisted specs keep working
+	crossCheck?: string[];     // 2026-10-18: 1 goal per line in the user's language, e.g. "คุณต้องการให้ A มี B เมื่อ C" — the ENTIRE sign surface; the human verifies understanding case by case
 	approach?: string[];       // shown in .zense/spec.md (the sign dialog no longer inlines it); optional — older persisted specs lack this field
 	scope: string[];           // path globs the agent may touch
 	constraints: string[];
@@ -86,7 +87,8 @@ export interface TrackerPhase {
 	id: string;                  // "p1", "pre", … — unique within the tracker
 	title: string;
 	intent: string;
-	outcomes?: string;           // plain-language "what you'll get from this phase" (request-language) — shown in the tracker sign dialog; optional for back-compat
+	outcomes?: string;           // plain-language "what you'll get from this phase" (legacy fallback — prefer crossCheck)
+	crossCheck?: string[];       // user-language goal cases for THIS phase — shown in the tracker sign dialog and carried into the phase spec
 	scope: string[];
 	constraints: string[];
 	criteria: Criterion[];       // seed criteria — carried verbatim (same ids) into the compiled phase spec
@@ -107,7 +109,8 @@ export interface Tracker {
 	slug: string;                // requirement-name — directory + branch key
 	title: string;
 	intent: string;
-	outcomes?: string;           // plain-language "what you'll get" for the whole set (request-language) — merged from per-phase outcomes at plan time; optional for back-compat
+	outcomes?: string;           // plain-language "what you'll get" for the whole set (legacy fallback — prefer crossCheck)
+	crossCheck?: string[];       // user-language goal cases for the whole requirement — the tracker sign surface; also the goal fingerprint for no-re-sign
 	worktreeBranch: string;      // zense/longrun/<slug> — ONE worktree for the whole set (ADR-004)
 	status: "planning" | "active" | "done" | "abandoned";
 	auto?: boolean;              // v2: signed as autonomous — phases advance without a human gate; eval FAIL auto-fixes bounded by AUTO_FIX_MAX_ROUNDS (false/undefined = v1 manual gates)

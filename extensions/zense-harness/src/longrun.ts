@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { zenseDir, type Criterion, type Tracker, type TrackerPhase } from "./types.ts";
 import { gitOk } from "./worktree.ts";
 import { gitAddButZense, NOT_ZENSE } from "./pending-apply.ts";
-import { scanClarifyQuestions, questionPolicyError, type ClarifyQuestion } from "./spec-draft.ts";
+import { scanClarifyQuestions, questionPolicyError, asCaseLines, type ClarifyQuestion } from "./spec-draft.ts";
 
 // ----- paths / identity
 
@@ -76,8 +76,9 @@ export const renderTrackerMd = (t: Tracker): string => {
 		"",
 		t.intent || "(see specs.md)",
 		"",
-		// outcome-first render (2026-10-16): the plain-language summary leads the file too — the
-		// sign dialog points here, so this must be the readable plan, not just the machine contract
+		// cross-check (2026-10-18): the goal CASES lead the file too — the sign dialog points here,
+		// so this must be the readable list of what the human asked for
+		...(t.crossCheck?.length ? ["## Cross-check — what we understood you want", "", ...t.crossCheck.map((c) => `- ${c}`), ""] : []),
 		...(t.outcomes ? ["## What you'll get", "", t.outcomes, ""] : []),
 		"## Phases",
 		"",
@@ -86,6 +87,7 @@ export const renderTrackerMd = (t: Tracker): string => {
 		lines.push(`### ${icon(p.status)} ${p.id} — ${p.title}`);
 		if (p.intent) lines.push("", p.intent);
 		if (p.outcomes) lines.push("", `**You'll get:** ${p.outcomes}`);
+		if (p.crossCheck?.length) lines.push("", "**Cross-check:**", ...p.crossCheck.map((c) => `- ${c}`));
 		lines.push("", `- scope: ${p.scope.join(", ")}`);
 		if (p.constraints.length) lines.push(`- constraints: ${p.constraints.join("; ")}`);
 		if (p.criteria.length) lines.push(`- criteria: ${p.criteria.map((c) => c.id).join(", ")}`);
@@ -121,8 +123,10 @@ export interface LongrunPlanPhase {
 	id?: string;
 	title: string;
 	intent: string;
-	/** Plain-language "what you'll get from this phase" (request-language, no jargon) — shown
-	 *  in the tracker sign dialog; optional so explicit agent-authored phase lists keep working. */
+	/** Plain-language goal cases (2026-10-18): the human's request as short checkable lines —
+	 *  the tracker sign surface. Optional for back-compat; outcomes remains the fallback. */
+	crossCheck?: string[];
+	/** Legacy plain-language "what you'll get from this phase" (kept for back-compat). */
 	outcomes?: string;
 	scope: string[];
 	constraints?: string[];
@@ -137,7 +141,7 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 		specsMd ? `Requirement doc:\n${specsMd}` : "",
 		"",
 		"Return ONLY a JSON object (no fences, no commentary):",
-		`{"phases":[{"id":"p1","title":"...","intent":"...","outcomes":"...","scope":["path/prefix",...],"constraints":["..."],"criteria":[{"id":"P1C1","text":"observable outcome","check":"a single shell command that exits 0 when done"}]}], "outcomes":"..."}`,
+		`{"phases":[{"id":"p1","title":"...","intent":"...","crossCheck":["..."],"outcomes":"...","scope":["path/prefix",...],"constraints":["..."],"criteria":[{"id":"P1C1","text":"observable outcome","check":"a single shell command that exits 0 when done"}]}], "crossCheck":["..."], "outcomes":"..."}`,
 		"",
 		"Rules:",
 		"- prefer the FEWEST phases — the default is ONE phase; split only across a genuine boundary: an architecture seam, an irreversible decision, or a settled baseline a later phase must build on (never split just to keep phases small)",
@@ -146,7 +150,8 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 		"- pre-phase (id \"pre\") only when exploration/scaffolding genuinely precedes implementation",
 		"- every criterion's check must be a REAL runnable command (verify it would execute; no placeholders like <path>)",
 		"- criteria are the phase's signature — few but decisive (1–4 per phase)",
-		"- outcomes (top-level + per phase): REQUIRED. The plain-language \"what you'll get\" the human reads INSTEAD of the technical plan at signing — same LANGUAGE as the requirement doc, 1–3 short lines each, product outcomes only: what the human will be able to do/see. NEVER jargon, library names, file paths, shell commands or code. The top-level outcomes summarize the whole set; per-phase outcomes summarize that phase's contribution.",
+		"- crossCheck (top-level + per phase): REQUIRED. 2–6 SHORT lines, one goal CASE per line, same LANGUAGE as the requirement doc — the human reads this INSTEAD of the technical plan at signing and checks that you understood the request. Each line = one user-visible behavior (e.g. \"คุณต้องการให้ A มี B เมื่อ C\"). The top-level crossCheck summarizes the whole set; per-phase crossCheck lists that phase's cases. NEVER jargon, library names, file paths, shell commands or code.",
+		"- outcomes (top-level + per phase): OPTIONAL legacy plain-language summary (1–3 short lines) — crossCheck is the sign surface.",
 		"- scope entries are path prefixes the implementing agent may touch; keep them tight",
 		// question policy (2026-10-16): the planner's boundary decisions are internal technical
 		// calls — it must make them from the requirement doc, never bounce them to the human
@@ -157,7 +162,7 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 /** Parse a planner sub-agent's output into phase drafts. Accepts bare JSON or fenced JSON
  *  (models add ```json despite instructions — strip, don't punish). Structural errors get
  *  actionable messages: the caller retries with an explicit phases list. */
-export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[]; outcomes?: string; questions?: ClarifyQuestion[] } | { ok: false; error: string } => {
+export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[]; crossCheck?: string[]; outcomes?: string; questions?: ClarifyQuestion[] } | { ok: false; error: string } => {
 	const stripped = output.replace(/```(?:json)?\s*\n?/g, "").replace(/```/g, "");
 	const start = stripped.indexOf("{");
 	const end = stripped.lastIndexOf("}");
@@ -197,12 +202,17 @@ export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPla
 		const clean: LongrunPlanPhase = { ...p } as LongrunPlanPhase;
 		if (typeof p.outcomes === "string" && p.outcomes.trim()) clean.outcomes = p.outcomes.trim();
 		else delete clean.outcomes;
+		// crossCheck: same optionality/normalization as outcomes (one line per case, blanks drop)
+		const cases = asCaseLines(p.crossCheck);
+		if (cases) clean.crossCheck = cases;
+		else delete clean.crossCheck;
 		norm.push(clean);
 	}
-	// tracker-level outcomes: same optionality — the sign dialog falls back to the requirement
-	// intent when absent, so an old planner output or hand-written plan keeps working
+	// tracker-level crossCheck/outcomes: same optionality — the sign dialog falls back to the
+	// requirement intent when absent, so an old planner output or hand-written plan keeps working
 	const topOut = (parsed as { outcomes?: unknown }).outcomes;
-	return { ok: true, phases: norm, ...(typeof topOut === "string" && topOut.trim() ? { outcomes: topOut.trim() } : {}) };
+	const topCases = asCaseLines((parsed as { crossCheck?: unknown }).crossCheck);
+	return { ok: true, phases: norm, ...(topCases ? { crossCheck: topCases } : {}), ...(typeof topOut === "string" && topOut.trim() ? { outcomes: topOut.trim() } : {}) };
 };
 
 /** Build the phase's spec fields from the tracker entry (used by zense_longrun next →
@@ -211,11 +221,12 @@ export const compilePhaseSpec = (
 	t: Tracker,
 	phase: TrackerPhase,
 	extraCriteria: Criterion[] = [],
-): { title: string; intent: string; outcomes?: string; scope: string[]; constraints: string[]; criteria: Criterion[]; specDebt: string[]; provenance: string } => ({
+): { title: string; intent: string; crossCheck?: string[]; outcomes?: string; scope: string[]; constraints: string[]; criteria: Criterion[]; specDebt: string[]; provenance: string } => ({
 	title: `longrun(${t.slug}) ${phase.id} – ${phase.title}`,
 	intent: `${phase.intent}\n\n[longrun "${t.slug}" tracker v${t.version} — approved by the tracker's signature; review gate at phase end; worktree ${t.worktreeBranch}]`,
-	// the phase's plain-language outcome summary rides along into the phase spec — a re-sign
-	// or resume of a mid-set phase keeps showing the human what THIS phase delivers
+	// the phase's goal cases ride into the phase spec — a re-sign/resume/review of a mid-set
+	// phase keeps showing the human what THIS phase promised (and maps it at review time)
+	crossCheck: phase.crossCheck,
 	outcomes: phase.outcomes,
 	scope: phase.scope,
 	constraints: phase.constraints,

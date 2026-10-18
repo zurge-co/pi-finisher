@@ -60,7 +60,7 @@ export * from "./src/longrun-status.ts";
 // The original package import block (top of file) already covers every external the factory
 // body needs — the lines below are only the local src/ bindings the factory uses by name.
 import { zenseDir, type Criterion, type LongRunRef, type Spec, type State, type SubagentRun, type Tracker, type TrackerPhase, type Worktree as WorktreeT } from "./src/types.ts";
-import { buildSpecChanges, renderSignOutcome, renderSpecMd, renderTrackerOutcomes, syncApprovedSpecFiles, applyFullscreenDefault } from "./src/spec-changes.ts";
+import { buildSpecChanges, renderSignOutcome, renderSpecMd, renderTrackerOutcomes, syncApprovedSpecFiles, applyFullscreenDefault, goalLines, sameGoalLines, decideSpecApproval, rejectionDirective } from "./src/spec-changes.ts";
 import { rewritePathForWorktree, buildWorktreeCommand, gitOk, canReuseWorktree, createWorktree, ensureLongrunWorktree } from "./src/worktree.ts";
 import { loadSpecFromDisk, discoverResumeState, findSpecArchivePaths, discoverLongrunTrackers } from "./src/resume.ts";
 import {
@@ -72,15 +72,15 @@ import {
 import { longrunStatusText } from "./src/longrun-status.ts";
 import {
 	AUTO_FIX_MAX_ROUNDS, autoLoopEnabled, buildAutoFixPrompt, buildCompactionCapsule, buildLongrunDigest,
-	buildNextPhaseKickoff,
+	buildNextPhaseKickoff, decideTrackerSign,
 } from "./src/longrun-auto.ts";
 import { composeCommitMessage, PENDING_PATCH, PENDING_MSG, NOT_ZENSE, isGitRepo, uncommittedChanges, composeSnapshotMessage, snapshotUncommitted, applyWorktreeBack, discardPendingApply, acceptPendingApply } from "./src/pending-apply.ts";
 import { resetCycleState, takeContextBulletin, buildAcceptBulletin, buildReconcileBulletin, buildDiscardBulletin, freshState } from "./src/cycle.ts";
 import { parseSpecDraft, applyQualityGate, type ClarifyQuestion } from "./src/spec-draft.ts";
 import { SUBAGENT_EXCLUDE_TOOLS, subagentTimeout, zenseGlobalConfigDir, extDisplayLabel, listInstalledExtensions, subagentExtIncludes, writeSubagentExtIncludes, subagentStripFlagsAsync, modelMatchesPattern, PROVIDER_MISSING_RX, findProviderExtension, mergeExtInclude, diagnoseProviderMissing, buildProviderMissingGuidance, buildRequirementsPrompt } from "./src/subagent-config.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
-import { gatherRepoFacts, loadSpecExemplar, gitChangeSummary, CHECK_FORMAT_CONTRACT, runCheckProbes, lintSpecChecks } from "./src/evidence.ts";
-import { parseGraderOutput, buildGraderPrompt, buildCompactProbeSection, buildEvalResultText, buildReviewResultText, buildReviewModalText, COMMENT_DISCIPLINE_GUIDELINE, parseReviewerPacket, findUngroundedTokens, isLastEvalStale, buildReviewerPrompt, buildPendingApplyEvidencePrefix, type GradeParse, type EvalResultView } from "./src/eval-review.ts";
+import { gatherRepoFacts, loadSpecExemplar, gitChangeSummary, gitChangedSymbols, gitDiffExcerpt, CHECK_FORMAT_CONTRACT, runCheckProbes, lintSpecChecks } from "./src/evidence.ts";
+import { parseGraderOutput, buildGraderPrompt, buildCompactProbeSection, buildEvalResultText, buildReviewResultText, buildReviewModalText, mergeCrossCheck, COMMENT_DISCIPLINE_GUIDELINE, parseReviewerPacket, findUngroundedTokens, isLastEvalStale, buildReviewerPrompt, buildPendingApplyEvidencePrefix, type GradeParse, type EvalResultView } from "./src/eval-review.ts";
 import { firstAdrDenyViolation } from "./src/adr-deny.ts";
 import { fmtTok, subagentLogPath, runSubagent } from "./src/subagent-runner.ts";
 import { aggregateMemory, memorySummaryLines, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./src/memory.ts";
@@ -369,12 +369,15 @@ export default function (pi: ExtensionAPI) {
 			// follow-up /zense approve needed (TUI: full spec shown before signing; RPC: plain select)
 			const s = state.spec;
 			let choice: string | null | undefined;
+			let gateRejection: string | undefined;
 			if (s && ctx.mode === "tui") {
-				choice = await specSignDialog(ctx, s, `Zense gate: ${ev.toolName} is about to write code while spec v${s.version} is unsigned — read before signing`, [
+				const res = await specSignDialog(ctx, s, `Zense gate: ${ev.toolName} is about to write code while spec v${s.version} is unsigned — read before signing`, [
 					{ value: "sign", label: "🔏 Sign & approve the spec, then continue", description: "signing opens the gate; this write passes immediately" },
 					{ value: "override", label: "⚠️ Allow this once (override without signing)", description: "adds a trajectory flag" },
 					{ value: "block", label: "⛔ Block for now", description: "the agent waits for a signature / a fresh spec" },
 				]);
+				choice = res.picked;
+				gateRejection = res.reason;
 			} else {
 				choice = await ctx.ui.select(
 					`Zense gate: ${ev.toolName} is about to write code with an unsigned spec${s ? ` (v${s.version}: ${s.title} — full text at .zense/spec.md)` : " (no spec yet)"}`,
@@ -397,7 +400,7 @@ export default function (pi: ExtensionAPI) {
 			} else {
 				escalate("need-permission", "write blocked: spec unsigned", ctx);
 				return { block: true, reason: state.spec
-					? "Zense gate: the spec is not yet signed — pick 🔏 Sign in the next dialog, or ask the user to run /zense approve"
+					? "Zense gate: the spec is not yet signed — pick 🔏 Sign in the next dialog, or ask the user to run /zense approve" + (gateRejection ? `\n${rejectionDirective("gate", gateRejection, state.spec.version)}` : "")
 					: "Zense gate: there is no spec in the system at all — call zense_spec (recommended: action=compile_spec) to commit one first; the user can then sign from the dialog immediately. Pasting a spec in chat does not approve anything" };
 			}
 		}
@@ -592,14 +595,28 @@ export default function (pi: ExtensionAPI) {
 		return null;
 	};
 
-	const specSignDialog = (ctx: ExtensionContext, spec: Spec, question: string, items: SelectItem[]): Promise<string | null> =>
-		zenseCustom<string | null>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
+	/** n opens an optional reason box after the overlay closes (2026-10-18) — closing silently
+	 *  forced the human to abort the run and retype the correction in chat. Esc on this input
+	 *  keeps the quick no-reason close. */
+	const REJECT_WITH_REASON = "__zense_reject_reason__";
+	const askRejectReason = async (ctx: ExtensionContext, what: string): Promise<string | undefined> => {
+		try {
+			const reason = await ctx.ui.input(`✏️ ${what} — why not? (optional: type the correction so the agent fixes the right thing)`, "(Esc / empty = close without a reason)");
+			return reason?.trim() || undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	type SpecSignResult = { picked: string | null; reason?: string };
+
+	const specSignDialog = async (ctx: ExtensionContext, spec: Spec, question: string, items: SelectItem[]): Promise<SpecSignResult> => {
+		const picked = await zenseCustom<string | null>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const title = new Text(theme.fg("accent", theme.bold(`🔏 ${question}`)), 1, 0);
 			const hint = new Text(
 				theme.fg(
 					"warning",
-					`What you'll get — in plain language` +
+					`Cross-check — what we understood you want` +
 						(state.lastCompileLessons ? ` · 📚 fed ${state.lastCompileLessons} lessons from memory at compile time` : ""),
 				),
 				1,
@@ -663,7 +680,7 @@ export default function (pi: ExtensionAPI) {
 					if (items.length > 2) out.push(`  ${theme.fg("muted", `[o] ${items[1].label}`)}`);
 					const nLabel = (items.length > 2 ? items[2] : items[1])?.label ?? "Decide later";
 					out.push(`  ${theme.fg("muted", `[n] ${nLabel}`)}`);
-					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • space = read chat"), 1, 0).render(w));
+					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • n = not yet (type why) • space = read chat"), 1, 0).render(w));
 					out.push(...border.render(w));
 					return panelize(theme, out, w);
 				},
@@ -676,7 +693,8 @@ export default function (pi: ExtensionAPI) {
 					// (the gate/approve flow reads 'sign'/'override'/null)
 					if (data === "y") done(items[0].value);
 					else if (data === "o" && items.length > 2) done(items[1].value);
-					else if (data === "n" || matchesKey(data, Key.escape)) done(null);
+					else if (matchesKey(data, Key.escape)) done(null);
+					else if (data === "n") done(REJECT_WITH_REASON);
 					else {
 						const act = scrollKeyAction(data);
 						if (act === "top") offset = 0;
@@ -687,18 +705,22 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		});
+		if (picked === REJECT_WITH_REASON) return { picked: null, reason: await askRejectReason(ctx, "Not signing yet") };
+		return { picked };
+	};
 
 	/** Tracker sign dialog (2026-10-16) — outcome-first like specSignDialog: the signer reads
-	 *  "what you'll get" (set + per phase, plain language) and picks the loop mode in one
-	 *  place. Direct hotkeys (arrows stay free for scrolling): y = AUTO (phases run end-to-end,
-	 *  ONE review at the end), m = MANUAL (per-phase human gates), n/Esc = not yet. Returns
-	 *  "auto" | "manual" | null — null keeps the tracker in planning exactly like the old
-	 *  select's "Not yet" option. */
-	const trackerSignDialog = (ctx: ExtensionContext, t: Tracker): Promise<"auto" | "manual" | null> =>
-		zenseCustom<"auto" | "manual" | null>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
+	 *  the goal cross-check (set + per phase) and picks the loop mode in one place. Direct
+	 *  hotkeys (arrows stay free for scrolling): y = AUTO (phases run end-to-end, ONE review at
+	 *  the end), m = MANUAL (per-phase human gates), n = not yet + optional reason, Esc = quick
+	 *  close. Returns the chosen mode or { later, reason? } — later keeps the tracker in planning
+	 *  exactly like the old select's "Not yet" option. */
+	type TrackerSignResult = { mode: "auto" | "manual" | "later"; reason?: string };
+	const trackerSignDialog = async (ctx: ExtensionContext, t: Tracker): Promise<TrackerSignResult> => {
+		const picked = await zenseCustom<"auto" | "manual" | null | typeof REJECT_WITH_REASON>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const title = new Text(theme.fg("accent", theme.bold(`🔏 Sign longrun "${t.slug}" v${t.version}: ${t.title}?`)), 1, 0);
-			const hint = new Text(theme.fg("warning", `What you'll get — in plain language · one signature covers all ${t.phases.length} phase(s)`), 1, 0);
+			const hint = new Text(theme.fg("warning", `Cross-check — what we understood you want · one signature covers all ${t.phases.length} phase(s)`), 1, 0);
 			const md = new Markdown(renderTrackerOutcomes(t), 0, 0, {
 				heading: (h) => theme.fg("accent", theme.bold(h)),
 				link: (l) => theme.fg("accent", l),
@@ -740,8 +762,8 @@ export default function (pi: ExtensionAPI) {
 					out.push(...new Text(theme.fg("dim", range), 1, 0).render(w));
 					out.push(`  ${theme.fg("accent", theme.bold("[y] 🔏 Sign — AUTO loop: phases run end-to-end, ONE review at the end"))}`);
 					out.push(`  ${theme.fg("accent", "[m] 🔏 Sign — MANUAL: human review gate after every phase")}`);
-					out.push(`  ${theme.fg("muted", "[n] ✏️ Not yet (amend the plan first)")}`);
-					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • space = read chat"), 1, 0).render(w));
+					out.push(`  ${theme.fg("muted", "[n] ✏️ Not yet (amend the plan first — you can type why)")}`);
+					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • n = not yet (type why) • space = read chat"), 1, 0).render(w));
 					out.push(...border.render(w));
 					return panelize(theme, out, w);
 				},
@@ -753,7 +775,8 @@ export default function (pi: ExtensionAPI) {
 					// old ctx.ui.select produced
 					if (data === "y") done("auto");
 					else if (data === "m") done("manual");
-					else if (data === "n" || matchesKey(data, Key.escape)) done(null);
+					else if (matchesKey(data, Key.escape)) done(null);
+					else if (data === "n") done(REJECT_WITH_REASON);
 					else {
 						const act = scrollKeyAction(data);
 						if (act === "top") offset = 0;
@@ -764,26 +787,31 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		});
+		if (picked === REJECT_WITH_REASON) return { mode: "later", reason: await askRejectReason(ctx, "Not signing the tracker") };
+		return { mode: picked ?? "later" };
+	};
 
 	/** Review-decision modal (2026-10-16) — zense_review's result surface: the human reads the
 	 *  packet TL;DR + flags and decides in-place instead of reading chat text and firing
 	 *  zense_accept/zense_discard afterwards. y = accept (explicit human consent → the harness
 	 *  may commit the staged change on their behalf); n/Esc = close ONLY — the staged change and
-	 *  pendingApply are untouched (discard stays a separate, deliberate act). canAccept=false
-	 *  (nothing staged in main, e.g. mid-phase longrun) → y is inert, only n/Esc decide.
-	 *  Returns true only on an explicit y. */
-	const reviewModalDialog = (
+	 *  pendingApply are untouched (discard stays a separate, deliberate act). n additionally
+	 *  opens an optional reason box (2026-10-18) so a rejection carries the correction back to
+	 *  the agent; Esc is the quick no-reason close. canAccept=false (nothing staged in main,
+	 *  e.g. mid-phase longrun) → y is inert, only n/Esc decide. Returns accept only on y. */
+	type ReviewDecision = { accept: boolean; reason?: string };
+	const reviewModalDialog = async (
 		ctx: ExtensionContext,
-		packet: { tlDr: string; trajectory: string[]; specDebt: string[]; escalations: { kind: string; detail: string }[] },
+		packet: { tlDr: string; crossCheck?: { goal: string; evidence: string }[]; trajectory: string[]; specDebt: string[]; escalations: { kind: string; detail: string }[] },
 		canAccept: boolean,
 		logPath: string,
-	): Promise<boolean> =>
-		zenseCustom<boolean>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
+	): Promise<ReviewDecision> => {
+		const picked = await zenseCustom<boolean | null | typeof REJECT_WITH_REASON>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const title = new Text(theme.fg("accent", theme.bold("🔍 Review result — decide")), 1, 0);
-			const hint = new Text(theme.fg("warning", canAccept ? "read, then decide — [y] accepts and commits for you · [n] keeps everything as-is" : "nothing to accept here — [n] just closes; the work stays exactly as-is"), 1, 0);
+			const hint = new Text(theme.fg("warning", canAccept ? "read, then decide — [y] accepts and commits for you · [n] rejects with a reason (optional) · Esc just closes" : "nothing to accept here — [n] closes (optionally with a reason); the work stays exactly as-is"), 1, 0);
 			const md = new Markdown(
-				buildReviewModalText({ tlDr: packet.tlDr, trajectory: packet.trajectory, specDebt: packet.specDebt, escalations: packet.escalations, ...(state.pendingApply?.paths?.length ? { paths: state.pendingApply.paths } : {}), logPath, canAccept }),
+				buildReviewModalText({ tlDr: packet.tlDr, crossCheck: packet.crossCheck, trajectory: packet.trajectory, specDebt: packet.specDebt, escalations: packet.escalations, ...(state.pendingApply?.paths?.length ? { paths: state.pendingApply.paths } : {}), logPath, canAccept }),
 				0,
 				0,
 				{
@@ -829,9 +857,9 @@ export default function (pi: ExtensionAPI) {
 					// keys only — the decision framing (what y/n DO) lives in the md body from
 					// buildReviewModalText; duplicating full labels here would read twice
 					out.push(
-						`  ${canAccept ? theme.fg("accent", theme.bold("[y] accept")) : theme.fg("muted", "[y] (inert — nothing is staged in main this round)")}  ${theme.fg("muted", "[n] close — decide later")}`,
+						`  ${canAccept ? theme.fg("accent", theme.bold("[y] accept")) : theme.fg("muted", "[y] (inert — nothing is staged in main this round)")}  ${theme.fg("muted", "[n] reject/close — type why (optional)")}`,
 					);
-					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • space = read chat"), 1, 0).render(w));
+					out.push(...new Text(theme.fg("dim", "↑↓ line • ←→ page • g top • G bottom • n = type why (optional) • space = read chat"), 1, 0).render(w));
 					out.push(...border.render(w));
 					return panelize(theme, out, w);
 				},
@@ -839,10 +867,12 @@ export default function (pi: ExtensionAPI) {
 					cachedWidth = -1;
 				},
 				handleInput: (data: string) => {
-					// y = accept (only when something is staged — an inert y would read as consent), n/Esc
-					// = close only; the esc-guard still intercepts Esc first when focus slips
+					// y = accept (only when something is staged — an inert y would read as consent), Esc =
+					// close only, n = close + optional reason; the esc-guard still intercepts Esc first when
+					// focus slips
 					if (data === "y" && canAccept) done(true);
-					else if (data === "n" || matchesKey(data, Key.escape)) done(false);
+					else if (matchesKey(data, Key.escape)) done(null);
+					else if (data === "n") done(REJECT_WITH_REASON);
 					else {
 						const act = scrollKeyAction(data);
 						if (act === "top") offset = 0;
@@ -853,6 +883,9 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		});
+		if (picked === REJECT_WITH_REASON) return { accept: false, reason: await askRejectReason(ctx, "Rejecting the review") };
+		return { accept: picked === true };
+	};
 
 	/** ext-config: checkbox dialog picking the extensions a sub-agent will load — default
 	 *  all-unticked (the user opts in). Returns the array of ticked paths = to be loaded
@@ -1146,13 +1179,13 @@ export default function (pi: ExtensionAPI) {
 	 *  compile_spec (sub-agent-drafted) — identical behavior on both paths, no drift. */
 	const commitSpec = async (
 		ctx: ExtensionContext,
-		fields: { title?: string; intent?: string; outcomes?: string; approach?: string[]; scope?: string[]; constraints?: string[]; criteria?: Criterion[]; specDebt?: string[] },
+		fields: { title?: string; intent?: string; crossCheck?: string[]; outcomes?: string; approach?: string[]; scope?: string[]; constraints?: string[]; criteria?: Criterion[]; specDebt?: string[] },
 		source: "set" | "compile",
 		// longrun: the signed tracker IS the signature — no dialog; provenance recorded on the
 		// spec; baselineOverride pins git evidence to the phase start (longrun branch HEAD),
 		// not to main's HEAD (which never moves during a longrun — ADR-004)
 		opts?: { sign?: "ask" | "auto"; provenance?: string; baselineOverride?: string },
-	): Promise<{ version: number; signed: boolean; mdPath: string; changes?: string[]; lint?: string[] }> => {
+	): Promise<{ version: number; signed: boolean; mdPath: string; changes?: string[]; lint?: string[]; approvedHow?: string; rejection?: string }> => {
 		const version = (state.spec?.version ?? 0) + 1;
 		// deterministic commit-time check lint (one choke point for both action=set and
 		// compile_spec): spec-side broken checks (dead command/placeholder/unrunnable) must
@@ -1189,9 +1222,9 @@ export default function (pi: ExtensionAPI) {
 			version,
 			title: fields.title ?? "untitled",
 			intent: fields.intent ?? "",
-			// outcomes is optional at the type level but REQUIRED by the requirements prompt — a
-			// missing one means an agent-authored draft (action=set) or a legacy flow; the quality
-			// gate already noted the absence into specDebt for compile drafts
+			// crossCheck is the sign surface (2026-10-18): short goal cases in the request's language;
+			// outcomes stays as the legacy fallback for older flows/specs
+			...(fields.crossCheck?.length ? { crossCheck: fields.crossCheck } : {}),
 			...(fields.outcomes ? { outcomes: fields.outcomes } : {}),
 			approach: fields.approach ?? [],
 			scope: fields.scope ?? [],
@@ -1229,24 +1262,44 @@ export default function (pi: ExtensionAPI) {
 		copyFileSync(mdPath, join(zenseDir(ctx.cwd), "spec.md"));
 		state.specMdPath = mdPath;     // zense_eval appends its outcome to this file
 		state.specJsonPath = jsonPath;
-		// signing moment (zense/sign): ask for approval as soon as the spec is presented.
-		// The spec was archived to disk first — the dialog shows the full text to read before
-		// signing (TUI)
+		// signing moment (zense/sign): the ONE decision point (2026-10-18) — tracker signature,
+		// gate OFF and a goal-stable re-spec skip the dialog; only a changed goal asks a human.
+		// The spec was archived to disk first, so a rejection/sign always has a file to point at.
+		const goalsUnchanged = !!prevSpec?.approved && sameGoalLines(prevSpec, state.spec);
+		const decision = decideSpecApproval({
+			signMode: opts?.sign,
+			gateEnabled: state.gateEnabled,
+			goalsUnchanged,
+			hasUI: ctx.hasUI,
+			tui: ctx.mode === "tui",
+		});
 		let signed = false;
-		if (opts?.sign === "auto") {
-			state.spec.approvedBy = opts.provenance;
+		let approvedHow: string | undefined;
+		let rejection: string | undefined;
+		if (decision.kind === "auto") {
+			approvedHow = decision.reason;
+			if (decision.reason === "tracker") {
+				state.spec.approvedBy = opts?.provenance;
+				if (opts?.baselineOverride) state.baselineHead = opts.baselineOverride;
+				if (opts?.provenance) learn(ctx, `spec v${version} auto-approved by ${opts.provenance} (tracker signature)`);
+			} else if (decision.reason === "gate-off") {
+				state.spec.approvedBy = "gate-off";
+				learn(ctx, `spec v${version} auto-approved: gate OFF (no sign prompt)`);
+			} else {
+				state.spec.approvedBy = `goals-unchanged:v${prevSpec?.version ?? "?"}`;
+				learn(ctx, `spec v${version} auto-approved: goal cases unchanged from v${prevSpec?.version ?? "?"} (no re-sign)`);
+			}
 			signed = true;
 			approveCurrentSpec(ctx);
-			if (opts.baselineOverride) state.baselineHead = opts.baselineOverride;
-			if (opts.provenance) learn(ctx, `spec v${state.spec.version} auto-approved by ${opts.provenance} (tracker signature)`);
-		} else if (ctx.hasUI && ctx.mode === "tui") {
-			const choice = await specSignDialog(ctx, state.spec, `Sign spec v${version}: ${state.spec.title}?`, [
+		} else if (decision.kind === "ask" && decision.mode === "tui") {
+			const res = await specSignDialog(ctx, state.spec, `Sign spec v${version}: ${state.spec.title}?`, [
 				{ value: "sign", label: "🔏 Sign & approve — open the implementation gate", description: "a human signature = the agent may start implementing" },
 				{ value: "later", label: "✏️ Not yet (I want to amend the spec first)", description: "sign later with /zense approve" },
 			]);
-			signed = choice === "sign";
+			signed = res.picked === "sign";
+			rejection = res.reason;
 			if (signed) approveCurrentSpec(ctx);
-		} else if (ctx.hasUI) {
+		} else if (decision.kind === "ask") {
 			const choice = await ctx.ui.select(
 				`🔏 Sign spec v${version}: ${state.spec.title}? (full text at .zense/spec.md)`,
 				[
@@ -1256,10 +1309,12 @@ export default function (pi: ExtensionAPI) {
 			);
 			signed = !!choice && choice.startsWith("🔏");
 			if (signed) approveCurrentSpec(ctx);
+			else rejection = await askRejectReason(ctx, `Not signing spec v${version}`);
 		}
+		if (rejection) learn(ctx, `spec v${version} rejected at signing: ${rejection.slice(0, 300)}`);
 		persist();
 		updateWidget(ctx);
-		return { version, signed, mdPath, ...(state.spec.changesFrom?.length ? { changes: state.spec.changesFrom } : {}), ...(lintNotes.length ? { lint: lintNotes } : {}) };
+		return { version, signed, mdPath, ...(approvedHow ? { approvedHow } : {}), ...(rejection ? { rejection } : {}), ...(state.spec.changesFrom?.length ? { changes: state.spec.changesFrom } : {}), ...(lintNotes.length ? { lint: lintNotes } : {}) };
 	};
 
 	/** Suffix appended to zense_spec's tool result: a re-spec (v>=2) must also surface the
@@ -1280,13 +1335,15 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Compile/approve the structured spec: intent, scope, criteria, spec-debt",
 		promptGuidelines: [
 			"Use zense_spec before any implementation to write the spec; list unverifiable requirements under specDebt.",
-			"Prefer action=compile_spec: a read-only requirements sub-agent explores the repo, drafts machine-checkable criteria, asks the human clarifying questions if ambiguous, and commits the spec for signing in one step.",
+			"Pass crossCheck: 2–6 short user-language goal cases (one per line) — the human signs from that list, so it must mirror the request, not the technical plan.",
+			"Prefer action=compile_spec: a read-only requirements sub-agent explores the repo, drafts machine-checkable criteria, asks the human clarifying questions if ambiguous, and commits the spec for signing in one step. With the gate OFF (/zense gate off) no sign prompt appears and the spec is auto-approved.",
 			"A spec exists ONLY when committed via this tool — presenting it as chat text (pasting JSON/prose into the conversation) registers nothing, and /zense approve will then find 'No spec to approve'.",
 		],
 		parameters: Type.Object({
 			action: Type.Union([Type.Literal("set"), Type.Literal("compile_spec")] as const),
 			intent: Type.Optional(Type.String({ description: "What the user wants and why" })),
-			outcomes: Type.Optional(Type.String({ description: "Plain-language 'what you'll get' shown to the signer in the sign dialog — SAME language as the user's request, no jargon/file paths/shell commands. compile_spec drafts this for you; when action=set, write it yourself or the dialog falls back to the intent text" })),
+			crossCheck: Type.Optional(Type.Array(Type.String(), { description: "2–6 short user-language goal CASES, one per line (e.g. \"คุณต้องการให้ A มี B เมื่อ C\") — the sign dialog shows only this list; same language as the request, no jargon/file paths/shell commands. compile_spec drafts it for you" })),
+			outcomes: Type.Optional(Type.String({ description: "Legacy plain-language summary (the sign dialog now prefers crossCheck; kept for older flows)" })),
 			approach: Type.Optional(Type.Array(Type.String(), { description: "Planned work outline for the signer: main steps, files to create/modify, expected outcomes (presentational — not machine-checked)" })),
 			scope: Type.Optional(Type.Array(Type.String(), { description: "Path prefixes the agent may modify" })),
 			constraints: Type.Optional(Type.Array(Type.String())),
@@ -1313,7 +1370,7 @@ export default function (pi: ExtensionAPI) {
 				// not a git repo → this feature is fully off (no check/ask/warn) — a project without
 				// git has no baseline anyway
 				const preDirty = isGitRepo(ctx.cwd) ? uncommittedChanges(ctx.cwd) : [];
-				if (preDirty.length && ctx.hasUI) {
+				if (preDirty.length && ctx.hasUI && state.gateEnabled) {
 					persist(); updateWidget(ctx);
 					const preview = preDirty.slice(0, 10).join("\n") + (preDirty.length > 10 ? `\n… (+${preDirty.length - 10} more)` : "");
 					const choice = await ctx.ui.select(
@@ -1337,6 +1394,19 @@ export default function (pi: ExtensionAPI) {
 						state.trajectoryFlags.push(`spec compiled on a dirty main (${preDirty.length} uncommitted files)`);
 						learn(ctx, `flag: pre-spec dirty skip — compiled while main had ${preDirty.length} uncommitted change(s)`);
 						preSpecNote = ` ⚠️ main has ${preDirty.length} uncommitted change(s) (the human chose to skip) — baseline=HEAD does not cover them`;
+					}
+				} else if (preDirty.length && !state.gateEnabled) {
+					// gate OFF (2026-10-18): no permission prompt — the safe autonomous choice is to
+					// snapshot the pending work so the new spec's baseline (HEAD) covers it. A failed
+					// snapshot never blocks the compile; it is noted for the human instead.
+					const snap = snapshotUncommitted(ctx.cwd, composeSnapshotMessage(preDirty));
+					if (snap.ok) {
+						learn(ctx, `spec-compile: gate OFF — auto-snapshot ${preDirty.length} pending change(s) → ${snap.msg}`);
+						preSpecNote = ` 📦 gate OFF: auto-snapshotted ${preDirty.length} pending main change(s) before compiling`;
+					} else {
+						state.trajectoryFlags.push(`spec compiled on a dirty main (${preDirty.length} uncommitted files, gate OFF snapshot failed)`);
+						learn(ctx, `flag: gate OFF pre-spec snapshot failed: ${snap.msg}`);
+						preSpecNote = ` ⚠️ gate OFF: could not snapshot ${preDirty.length} uncommitted change(s) (${snap.msg}) — baseline=HEAD does not cover them`;
 					}
 				} else if (preDirty.length) {
 					// no UI to ask with — keep compiling, but flag it and warn in the result so the
@@ -1371,7 +1441,7 @@ export default function (pi: ExtensionAPI) {
 						return { content: [{ type: "text", text: `⏸ compile_spec cancelled by the user (Esc) — the requirements sub-agent was killed mid-run (log: ${relative(ctx.cwd, draft.logPath)}). The user interrupted on purpose — do NOT retry on your own; ask what they'd like instead` }], details: { cancelled: true, logPath: draft.logPath }, isError: true };
 					if (!draft.ok) return { content: [{ type: "text", text: `sub-agent failed: ${draft.output}` }], details: draft };
 					const parsed = parseSpecDraft(draft.output);
-					if (parsed.kind === "clarify" && !clarifyClosed && clarifyRounds < 4 && ctx.hasUI) {
+					if (parsed.kind === "clarify" && !clarifyClosed && clarifyRounds < 4 && ctx.hasUI && state.gateEnabled) {
 						// F: ask the human one question at a time (Esc/blank = skip) — unanswered
 						// questions go to specDebt, drafting continues conservatively
 						clarifyRounds++;
@@ -1394,7 +1464,7 @@ export default function (pi: ExtensionAPI) {
 						// genuinely can't ask (no UI / rounds exhausted / skipped) — questions go to
 						// specDebt, drafting continues conservatively
 						clarifyClosed = true;
-						learn(ctx, `spec-draft: clarify forfeited (${!ctx.hasUI ? "no UI" : "rounds exhausted"}) — questions → specDebt`);
+						learn(ctx, `spec-draft: clarify forfeited (${!state.gateEnabled ? "gate OFF" : !ctx.hasUI ? "no UI" : "rounds exhausted"}) — questions → specDebt`);
 						intent += `\n\nClarifying questions that could NOT be asked — list them in specDebt and draft the spec with conservative, explicit assumptions:\n${parsed.questions.map((q) => `- ${q.question}`).join("\n")}`;
 						continue;
 					}
@@ -1420,11 +1490,15 @@ export default function (pi: ExtensionAPI) {
 					// how many questions it asked, what the gate found
 					learn(ctx, `spec-compile: v${r.version} launches=${launches} clarify=${clarifyRounds} gate=[${gated.notes.join(",")}] check-lint=${r.lint?.length ?? 0} ${Date.now() - t0}ms signed=${r.signed}`);
 					const verb = r.signed
-						? "SIGNED 🔏 — human signature complete, implementation gate open"
-						: "NOT approved — sign later with /zense approve";
+						? r.approvedHow
+							? `SIGNED 🔏 — auto-approved (${r.approvedHow}), implementation gate open`
+							: "SIGNED 🔏 — human signature complete, implementation gate open"
+						: r.rejection
+							? "NOT approved"
+							: "NOT approved — sign later with /zense approve";
 					return {
-						content: [{ type: "text", text: `Spec v${r.version} compiled by requirements sub-agent → committed one-step, archived at ${r.mdPath} (latest copies: .zense/spec.{json,md}). ${verb}.${clarifyRounds ? ` clarify rounds: ${clarifyRounds}.` : ""}${gated.notes.length ? ` quality-gate: ${gated.notes.join(", ")} (details in specDebt).` : ""}${r.lint?.length ? ` check-lint: ${r.lint.length} check(s) the probe can't run — fix the check, then re-spec (details in specDebt).` : ""}` + changesText(r) + preSpecNote }],
-						details: { version: r.version, approved: r.signed, clarifyRounds, qualityGate: gated.notes, logPath: draft.logPath, ...(r.lint?.length ? { checkLint: r.lint } : {}) },
+						content: [{ type: "text", text: `Spec v${r.version} compiled by requirements sub-agent → committed one-step, archived at ${r.mdPath} (latest copies: .zense/spec.{json,md}). ${verb}.${clarifyRounds ? ` clarify rounds: ${clarifyRounds}.` : ""}${gated.notes.length ? ` quality-gate: ${gated.notes.join(", ")} (details in specDebt).` : ""}${r.lint?.length ? ` check-lint: ${r.lint.length} check(s) the probe can't run — fix the check, then re-spec (details in specDebt).` : ""}` + (r.rejection ? `\n\n${rejectionDirective("spec", r.rejection, r.version)}` : "") + changesText(r) + preSpecNote }],
+						details: { version: r.version, approved: r.signed, ...(r.approvedHow ? { approvedHow: r.approvedHow } : {}), ...(r.rejection ? { rejection: r.rejection } : {}), clarifyRounds, qualityGate: gated.notes, logPath: draft.logPath, ...(r.lint?.length ? { checkLint: r.lint } : {}) },
 					};
 				}
 				return { content: [{ type: "text", text: `compile_spec used all ${launches} launches and still only got clarify/error — make the intent clearer and call again` }], details: {}, isError: true };
@@ -1434,11 +1508,15 @@ export default function (pi: ExtensionAPI) {
 			const r = await commitSpec(ctx, params, "set");
 			if (r.lint?.length) learn(ctx, `spec-set: v${r.version} check-lint → ${r.lint.length} broken check(s) pushed to specDebt`);
 			const verb = r.signed
-				? "SIGNED 🔏 — human signature complete, implementation gate open"
-				: "NOT approved — sign later with /zense approve";
+				? r.approvedHow
+					? `SIGNED 🔏 — auto-approved (${r.approvedHow}), implementation gate open`
+					: "SIGNED 🔏 — human signature complete, implementation gate open"
+				: r.rejection
+					? "NOT approved"
+					: "NOT approved — sign later with /zense approve";
 			return {
-				content: [{ type: "text", text: `Spec v${r.version} archived at ${r.mdPath} (latest copies: .zense/spec.{json,md}). ${verb}.${r.lint?.length ? ` check-lint: ${r.lint.length} check(s) the probe can't run — fix the check, then re-spec (details in specDebt).` : ""}` + changesText(r) }],
-				details: { version: r.version, approved: r.signed, ...(r.lint?.length ? { checkLint: r.lint } : {}) },
+				content: [{ type: "text", text: `Spec v${r.version} archived at ${r.mdPath} (latest copies: .zense/spec.{json,md}). ${verb}.${r.lint?.length ? ` check-lint: ${r.lint.length} check(s) the probe can't run — fix the check, then re-spec (details in specDebt).` : ""}` + (r.rejection ? `\n\n${rejectionDirective("spec", r.rejection, r.version)}` : "") + changesText(r) }],
+				details: { version: r.version, approved: r.signed, ...(r.approvedHow ? { approvedHow: r.approvedHow } : {}), ...(r.rejection ? { rejection: r.rejection } : {}), ...(r.lint?.length ? { checkLint: r.lint } : {}) },
 			};
 		},
 	});
@@ -1783,10 +1861,17 @@ export default function (pi: ExtensionAPI) {
 			})();
 			if (humanEdited) learn(ctx, "review: files edited after apply (human edit during review) — noted in the packet");
 			const gitEvidencePrefix = buildPendingApplyEvidencePrefix(!!state.pendingApply, humanEdited);
+			// 2026-10-18: the review takes the signed goal cases back out and maps each one to what
+			// the implementation actually did — the reviewer gets the verbatim list plus deterministic
+			// changed-symbol evidence so it can name a real function/file instead of guessing.
+			const goals = state.spec ? goalLines(state.spec) : [];
+			const symbols = gitChangedSymbols(reviewRoot, state.baselineHead);
+			const diffExcerpt = gitDiffExcerpt(reviewRoot, state.baselineHead);
+			const gitEvidence = [(gitEvidencePrefix ? gitEvidencePrefix + "\n" : "") + gitChangeSummary(reviewRoot, state.baselineHead), symbols, diffExcerpt].filter(Boolean).join("\n\n");
 			let packetFeedback = "";
 			const packetInput = (): string =>
 				buildReviewerPrompt(state.spec?.intent ?? "(no spec)", state.lastEval, state.trajectoryFlags, state.spec?.specDebt ?? [], state.escalations,
-					(gitEvidencePrefix ? gitEvidencePrefix + "\n" : "") + gitChangeSummary(reviewRoot, state.baselineHead), packetFeedback, freshness, state.spec?.criteria);
+					gitEvidence, packetFeedback, freshness, state.spec?.criteria, goals);
 			let reviewer = await launchSubagent(ctx, "reviewer", packetInput(), undefined, sig);
 			// Esc killed the reviewer → stop before the retry/grounding chain spawns more sub-agents
 			if (!reviewer.ok && sig?.aborted)
@@ -1819,6 +1904,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			const packet = {
 				tlDr: packetParse.ok && packetParse.tldr ? packetParse.tldr : reviewer.output.slice(0, 900),
+				crossCheck: mergeCrossCheck(goals, packetParse.crossCheck),
 				trajectory: state.trajectoryFlags,
 				specDebt: state.spec?.specDebt ?? [],
 				escalations: state.escalations,
@@ -1829,19 +1915,27 @@ export default function (pi: ExtensionAPI) {
 			// entered the history permanently; the full packet still lives in details{} + the
 			// review card + the log
 			const reviewText = reviewer.ok
-				? buildReviewResultText({ ok: true, tlDr: packet.tlDr, trajectoryCount: packet.trajectory.length, escalationCount: packet.escalations.length, logPath: relative(ctx.cwd, reviewer.logPath) })
+				? buildReviewResultText({ ok: true, tlDr: packet.tlDr, crossCheck: packet.crossCheck, trajectoryCount: packet.trajectory.length, escalationCount: packet.escalations.length, logPath: relative(ctx.cwd, reviewer.logPath) })
 				: buildReviewResultText({ ok: false, tlDr: "", trajectoryCount: 0, escalationCount: 0, logPath: relative(ctx.cwd, reviewer.logPath), errorOutput: reviewer.output.slice(-2_000) });
 			// Review-decision modal (2026-10-16): a TUI session ends the review in a DECISION, not
 			// chat text — y = accept (explicit human consent → commit-on-behalf via the accept
 			// side's commitIfStaged path; the longrun branch inside acceptPending closes the
-			// tracker when this is the final apply); n/Esc = close only, staged change untouched.
-			// Non-TUI (RPC/print) keeps the chat-text result — the modal must never hang a headless
-			// session. A failed reviewer never opens the modal (nothing to decide on)
-			if (reviewer.ok && ctx.hasUI && ctx.mode === "tui") {
-				const accepted = await reviewModalDialog(ctx, packet, !!state.pendingApply, relative(ctx.cwd, reviewer.logPath));
-				if (accepted) {
+			// tracker when this is the final apply); n = close + optional reason (2026-10-18 — the
+			// reason becomes a rejection escalation + agent-facing directive), Esc = close only.
+			// gate OFF skips the modal (no permission prompts; the change stays staged for the
+			// manual /zense accept), and non-TUI (RPC/print) keeps the chat-text result. A failed
+			// reviewer never opens the modal (nothing to decide on)
+			if (reviewer.ok && ctx.hasUI && ctx.mode === "tui" && state.gateEnabled) {
+				const decision = await reviewModalDialog(ctx, packet, !!state.pendingApply, relative(ctx.cwd, reviewer.logPath));
+				if (decision.accept) {
 					const ar = acceptPending(ctx, true); // the human pressed y — that IS "commit it for me"
 					return { content: [{ type: "text", text: `${reviewText}\n\n${ar.text}` }], details: { ...packet, logPath: reviewer.logPath, acceptedViaModal: ar.ok } };
+				}
+				if (decision.reason) {
+					state.escalations.push({ kind: "rejected", detail: `review rejected: ${decision.reason}`, at: Date.now() });
+					learn(ctx, `review rejected by human: ${decision.reason.slice(0, 300)}`);
+					persist();
+					return { content: [{ type: "text", text: `${reviewText}\n\n${rejectionDirective("review", decision.reason)}` }], details: { ...packet, logPath: reviewer.logPath, rejected: true, rejectionReason: decision.reason } };
 				}
 			}
 			return { content: [{ type: "text", text: reviewText }], details: { ...packet, logPath: reviewer.logPath } };
@@ -2171,7 +2265,8 @@ export default function (pi: ExtensionAPI) {
 						id: Type.Optional(Type.String({ description: "stable id (p1, pre, …) — auto-assigned when omitted" })),
 						title: Type.String(),
 						intent: Type.String({ description: "what this phase delivers and why" }),
-						outcomes: Type.Optional(Type.String({ description: "plain-language 'what you'll get from this phase' for the human signer — same language as the request, no jargon/file paths/shell commands" })),
+						outcomes: Type.Optional(Type.String({ description: "legacy plain-language 'what you'll get from this phase' — crossCheck is preferred" })),
+						crossCheck: Type.Optional(Type.Array(Type.String(), { description: "2–6 short user-language goal cases for this phase (one per line) — shown in the tracker sign dialog and carried into the phase spec" })),
 						scope: Type.Array(Type.String()),
 						constraints: Type.Optional(Type.Array(Type.String())),
 						criteria: Type.Array(Type.Object({ id: Type.String(), text: Type.String(), check: Type.String({ description: CHECK_FORMAT_CONTRACT }) })),
@@ -2222,7 +2317,8 @@ export default function (pi: ExtensionAPI) {
 				// no explicit phases → the planner sub-agent drafts them from specs.md (the human
 				// signs the RESULT — the model never bypasses the tracker signature)
 				let planInput = p.phases;
-				let planOutcomes: string | undefined; // planner's set-level plain-language summary (2026-10-16) — leads the tracker sign dialog
+				let planOutcomes: string | undefined; // planner's set-level plain-language summary (legacy fallback)
+				let planCrossCheck: string[] | undefined; // 2026-10-18: planner's set-level goal cases — the tracker sign surface
 				if (!planInput?.length) {
 					let specsMd = "";
 					try { specsMd = readFileSync(join(longrunDir(ctx.cwd, t0.slug), "specs.md"), "utf8"); } catch { /* best-effort */ }
@@ -2236,28 +2332,46 @@ export default function (pi: ExtensionAPI) {
 					// the planner asked the human something instead of planning (goal ambiguity it cannot
 					// resolve itself): ask it through the SAME goal-only picker, feed answers back, re-run
 					if (parsed.questions?.length) {
-						if (!ctx.hasUI)
-							return say(`planner needs a human answer but this session has no UI (RPC/print):\n${parsed.questions.map((q) => `- ${q.question}`).join("\n")}\nAnswer in chat text (or pass an explicit phases list) and call plan again.`, { questions: parsed.questions }, true);
-						const answers: string[] = [];
-						for (const q of parsed.questions) {
-							const a = await askClarifyQuestion(ctx, q);
-							if (a === undefined) continue;
-							if (a.trim()) answers.push(`- Q: ${q.question}\n  A: ${a.trim()}`);
+						if (!state.gateEnabled) {
+							// gate OFF (2026-10-18): no human questions — re-run the planner with an explicit
+							// decision mandate so it returns phases instead of bouncing questions back
+							const specsMd2 = `${specsMd}\n\nDECISION MODE (gate OFF — no human is available to answer):\n${parsed.questions.map((q) => `- ${q.question}`).join("\n")}\nDecide each of these yourself with explicit, conservative assumptions and return phases, not questions.`;
+							const run2 = await launchSubagent(ctx, "planner", buildLongrunPlannerPrompt(t0.title, t0.intent, specsMd2), undefined, sig);
+							if (sig?.aborted) return say("⏸ plan cancelled (Esc) — do not retry on your own", {}, true);
+							if (!run2.ok) return say(`planner sub-agent failed: ${run2.output}\nalternative: call plan with an explicit phases list`, {}, true);
+							const parsed2 = parseLongrunPlan(run2.output);
+							if (!parsed2.ok || !parsed2.phases.length)
+								return say(`planner still did not return phases under gate OFF (${parsed2.ok ? "no phases" : parsed2.error})\nalternative: call plan with an explicit phases list`, {}, true);
+							planInput = parsed2.phases;
+							planOutcomes = parsed2.outcomes;
+							planCrossCheck = parsed2.crossCheck;
+							learn(ctx, `longrun ${t0.slug}: gate OFF — planner questions decided autonomously (${parsed.questions.length} question(s))`);
+						} else {
+							if (!ctx.hasUI)
+								return say(`planner needs a human answer but this session has no UI (RPC/print):\n${parsed.questions.map((q) => `- ${q.question}`).join("\n")}\nAnswer in chat text (or pass an explicit phases list) and call plan again.`, { questions: parsed.questions }, true);
+							const answers: string[] = [];
+							for (const q of parsed.questions) {
+								const a = await askClarifyQuestion(ctx, q);
+								if (a === undefined) continue;
+								if (a.trim()) answers.push(`- Q: ${q.question}\n  A: ${a.trim()}`);
+							}
+							learn(ctx, `longrun ${t0.slug}: planner asked ${parsed.questions.length} goal question(s), ${answers.length} answered`);
+							if (!answers.length) return say(`the planner's questions were all skipped — no answers to plan with. Either answer them (call plan again) or pass an explicit phases list.`, {}, true);
+							const specsMd2 = `${specsMd}\n\nHuman answers to the planner's goal questions (authoritative):\n${answers.join("\n")}`;
+							const run2 = await launchSubagent(ctx, "planner", buildLongrunPlannerPrompt(t0.title, t0.intent, specsMd2), undefined, sig);
+							if (sig?.aborted) return say("⏸ plan cancelled (Esc) — do not retry on your own", {}, true);
+							if (!run2.ok) return say(`planner sub-agent failed: ${run2.output}\nalternative: call plan with an explicit phases list`, {}, true);
+							const parsed2 = parseLongrunPlan(run2.output);
+							if (!parsed2.ok || parsed2.questions?.length)
+								return say(`planner output invalid after clarifying (${parsed2.ok ? "asked again" : parsed2.error})\nalternative: call plan with an explicit phases list (the raw draft is logged via /zense agents)`, {}, true);
+							planInput = parsed2.phases;
+							planOutcomes = parsed2.outcomes;
+							planCrossCheck = parsed2.crossCheck;
 						}
-						learn(ctx, `longrun ${t0.slug}: planner asked ${parsed.questions.length} goal question(s), ${answers.length} answered`);
-						if (!answers.length) return say(`the planner's questions were all skipped — no answers to plan with. Either answer them (call plan again) or pass an explicit phases list.`, {}, true);
-						const specsMd2 = `${specsMd}\n\nHuman answers to the planner's goal questions (authoritative):\n${answers.join("\n")}`;
-						const run2 = await launchSubagent(ctx, "planner", buildLongrunPlannerPrompt(t0.title, t0.intent, specsMd2), undefined, sig);
-						if (sig?.aborted) return say("⏸ plan cancelled (Esc) — do not retry on your own", {}, true);
-						if (!run2.ok) return say(`planner sub-agent failed: ${run2.output}\nalternative: call plan with an explicit phases list`, {}, true);
-						const parsed2 = parseLongrunPlan(run2.output);
-						if (!parsed2.ok || parsed2.questions?.length)
-							return say(`planner output invalid after clarifying (${parsed2.ok ? "asked again" : parsed2.error})\nalternative: call plan with an explicit phases list (the raw draft is logged via /zense agents)`, {}, true);
-						planInput = parsed2.phases;
-						planOutcomes = parsed2.outcomes;
 					} else {
 						planInput = parsed.phases;
 						planOutcomes = parsed.outcomes;
+						planCrossCheck = parsed.crossCheck;
 					}
 					learn(ctx, `longrun ${t0.slug}: planner drafted ${planInput.length} phases (${Date.now() - t0time}ms)`);
 				}
@@ -2265,30 +2379,45 @@ export default function (pi: ExtensionAPI) {
 					id: ph.id?.trim() || `p${i + 1}`,
 					title: ph.title,
 					intent: ph.intent,
-					...(ph.outcomes ? { outcomes: ph.outcomes } : {}), // plain-language phase outcome — shown in the tracker sign dialog
+					...(ph.crossCheck?.length ? { crossCheck: ph.crossCheck } : {}), // goal cases for this phase — the tracker sign surface + review mapping
+					...(ph.outcomes ? { outcomes: ph.outcomes } : {}), // legacy phase summary
 					scope: ph.scope,
 					constraints: ph.constraints ?? [],
 					criteria: ph.criteria,
 					status: "pending",
 				}));
-				// tracker-level outcomes: planner's set summary, or the merge of per-phase outcomes —
-				// the sign dialog leads with it (fallback: requirement intent, handled in the renderer)
+				// tracker-level goal cases: planner's set summary, or the merge of per-phase cases —
+				// the sign dialog leads with it (fallback: requirement intent, handled by the renderer)
+				const mergedCrossCheck = planCrossCheck ?? ([...new Set(phases.flatMap((p) => p.crossCheck ?? []))] as string[]);
 				const mergedOutcomes = planOutcomes ?? (phases.map((p) => p.outcomes).filter(Boolean).join("\n") || undefined);
-				const t: Tracker = { ...t0, phases, ...(mergedOutcomes ? { outcomes: mergedOutcomes } : {}), updatedAt: Date.now() };
+				const t: Tracker = { ...t0, phases, crossCheck: mergedCrossCheck.length ? mergedCrossCheck : undefined, outcomes: mergedOutcomes, updatedAt: Date.now() };
 				const errors = validateTracker(t);
 				if (errors.length) return say(`⛔ tracker invalid:\n${errors.map((e) => `- ${e}`).join("\n")}`, { errors }, true);
 				saveTracker(ctx.cwd, t); // write tracker.md first — the signer reads the full plan
 				let signed = false;
+				let rejection: string | undefined;
 				// v2 signing chooses the loop mode: AUTO = phases advance on eval PASS with the
-				// context hard-reset between them, ONE review at the end (recommended — the point
-				// of long-running mode); MANUAL = the v1 per-phase human review gates.
-				// Outcome-first dialog (2026-10-16): the signer reads "what you'll get" + picks the
-				// mode with y/m — the bare phase-id select survives only as the non-TUI fallback
-				if (ctx.hasUI && ctx.mode === "tui") {
-					const mode = await trackerSignDialog(ctx, t);
-					signed = mode !== null;
-					if (signed) t.auto = mode === "auto";
-				} else if (ctx.hasUI) {
+				// context hard-reset between them, ONE review at the end (recommended); MANUAL = the v1
+				// per-phase human review gates. 2026-10-18: gate OFF auto-signs AUTO, a re-plan whose
+				// goal cases are unchanged carries the previous signature — only a changed goal asks.
+				const trackerGoalsUnchanged = !!t0.approvedAt && sameGoalLines(t0, t);
+				const signDecision = decideTrackerSign({
+					gateEnabled: state.gateEnabled,
+					goalsUnchanged: trackerGoalsUnchanged,
+					prevAuto: t0.auto,
+					hasUI: ctx.hasUI,
+					tui: ctx.mode === "tui",
+				});
+				if (signDecision.kind === "auto") {
+					signed = true;
+					t.auto = signDecision.auto;
+					learn(ctx, `longrun ${t.slug}: tracker v${t.version} auto-signed (${signDecision.reason})`);
+				} else if (signDecision.kind === "ask" && signDecision.mode === "tui") {
+					const res = await trackerSignDialog(ctx, t);
+					signed = res.mode !== "later";
+					if (signed) t.auto = res.mode === "auto";
+					else rejection = res.reason;
+				} else if (signDecision.kind === "ask") {
 					const choice = await ctx.ui.select(
 						`🔏 Sign longrun tracker "${t.slug}" v${t.version}? ${phases.length} phase(s): ${phases.map((x) => x.id).join(", ")} — one signature covers all phases (full plan: .zense/long-running/${t.slug}/tracker.md)`,
 						[
@@ -2299,9 +2428,17 @@ export default function (pi: ExtensionAPI) {
 					);
 					signed = !!choice && choice.startsWith("🔏");
 					if (signed) t.auto = !choice?.startsWith("🔏 Sign — MANUAL");
+					else rejection = await askRejectReason(ctx, `Not signing tracker "${t.slug}"`);
 				}
-				if (!signed)
-					return say(`tracker "${t.slug}" saved unsigned (planning) — sign later: rerun plan, or /zense longrun sign ${t.slug}`, { signed });
+				if (!signed) {
+					if (rejection) {
+						// feed the correction into the next planner run: specs.md is the planner's only
+						// input, so a reason kept only in chat would be lost on an AUTO/resumed session
+						try { appendFileSync(join(longrunDir(ctx.cwd, t.slug), "specs.md"), `\n\n## Human feedback on tracker v${t.version} (not signed)\n${rejection}\n`); } catch { /* best-effort */ }
+						learn(ctx, `longrun ${t.slug}: tracker v${t.version} not signed — reason: ${rejection.slice(0, 300)}`);
+					}
+					return say(`tracker "${t.slug}" saved unsigned (planning) — sign later: rerun plan, or /zense longrun sign ${t.slug}` + (rejection ? `\n\n${rejectionDirective("tracker", rejection, t.version)}` : ""), { signed, ...(rejection ? { rejection } : {}) });
+				}
 				t.approvedAt = Date.now();
 				t.status = "active";
 				saveTracker(ctx.cwd, t);
@@ -2628,6 +2765,13 @@ export default function (pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_id, p, _s, _o, ctx) {
+			// gate OFF (2026-10-18): ALL human questions are disabled — no picker, no waiting. The
+			// agent must decide from the repo/context and record the assumption + specDebt instead.
+			if (!state.gateEnabled)
+				return {
+					content: [{ type: "text", text: "gate is OFF — human questions are disabled. Decide from the repo/context yourself, record the decision as an explicit assumption + specDebt entry, and proceed (no picker was opened)." }],
+					details: { gateOff: true, asked: 0 },
+				};
 			const { questions: qsAll, violations } = askQuestionScan(p.questions);
 			// policy rejection (2026-10-16): a choice-less / bare-string question never reaches the
 			// human — the model gets the policy back immediately and fixes it in the same turn
@@ -2884,19 +3028,35 @@ export default function (pi: ExtensionAPI) {
 					try { pi.sendUserMessage(kickoff, { deliverAs: "followUp" }); } catch { /* non-fatal: the user can nudge manually */ }
 				};
 				if (ctx.mode === "tui") {
-					const choice = await specSignDialog(ctx, state.spec, `Sign & approve spec v${state.spec.version}: ${state.spec.title}?`, [
+					const res = await specSignDialog(ctx, state.spec, `Sign & approve spec v${state.spec.version}: ${state.spec.title}?`, [
 						{ value: "sign", label: "🔏 Sign & approve — open the implementation gate", description: "a human signature = the agent may start implementing" },
-						{ value: "cancel", label: "Cancel (not signing yet)", description: "the spec stays pending — approve again anytime" },
+						{ value: "cancel", label: "Cancel (not signing yet — you can type why)", description: "the spec stays pending — the reason goes back to the agent" },
 					]);
-					if (choice === "sign" && approveCurrentSpec(ctx)) nudgeAgent();
+					if (res.picked === "sign" && approveCurrentSpec(ctx)) nudgeAgent();
+					else if (res.reason) {
+						learn(ctx, `spec v${state.spec.version} not signed via /zense approve — reason: ${res.reason.slice(0, 300)}`);
+						ctx.ui.notify(`✏️ not signed — sending your correction to the agent`, "warning");
+						const feedback = rejectionDirective("spec", res.reason, state.spec.version);
+						try { pi.sendUserMessage(feedback); } catch {
+							try { pi.sendUserMessage(feedback, { deliverAs: "followUp" }); } catch { /* non-fatal */ }
+						}
+					}
 				} else {
 					const ok = await ctx.ui.confirm("🔏 Sign & approve the spec?", `${state.spec.title} v${state.spec.version}\nIntent: ${state.spec.intent.slice(0, 300)}\n(full text at .zense/spec.md)`);
 					if (ok && approveCurrentSpec(ctx)) nudgeAgent();
 				}
 			} else if (sub === "gate") {
 				state.gateEnabled = rest[0] !== "off";
+				// gate OFF (2026-10-18): the current unsigned spec must not strand the agent behind a
+				// gate that will never ask again — sign it now (same side effect as the dialog's y).
+				const autoSigned = !state.gateEnabled && state.spec && !state.spec.approved ? (approveCurrentSpec(ctx), `\nspec v${state.spec.version} auto-approved — implementation gate open`) : "";
 				persist();
-				ctx.ui.notify(`Gate ${state.gateEnabled ? "ON" : "OFF"}`, state.gateEnabled ? "info" : "warning");
+				ctx.ui.notify(
+					state.gateEnabled
+						? "Gate ON — human signatures required: spec/longrun sign dialogs, clarify questions, zense_ask and the review decision modal are active again"
+						: `Gate OFF — no sign/approval prompts: specs and longrun trackers auto-sign (longrun = AUTO), clarify/planner questions and zense_ask are skipped (assumptions go to specDebt), and review never auto-commits (the change stays staged for /zense accept).${autoSigned}`,
+					state.gateEnabled ? "info" : "warning",
+				);
 			} else if (sub === "discard") {
 				// roll back the pending applied change (reverse patch) — the official undo path for
 				// an unhappy human review

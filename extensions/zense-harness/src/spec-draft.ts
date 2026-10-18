@@ -10,10 +10,12 @@ import { hasUnsubstitutedPlaceholder } from "./evidence.ts";
 export interface SpecDraft {
 	title: string;
 	intent: string;
-	/** Plain-language "what you'll get" for the human signer (request-language, no jargon/
-	 *  file paths/shell commands) — the ONLY thing the sign dialog shows. Optional at parse time
-	 *  (an absent summary is a quality-gate note, not a parse error — the dialog falls back to
-	 *  intent) so older sub-agent outputs and explicit agent-authored drafts keep working. */
+	/** 2026-10-18: the sign surface. 2–6 SHORT goal cases (one per line) in the request's
+	 *  language, each expressing one user-visible behavior the human asked for. Optional at
+	 *  parse time for back-compat; legacy `outcomes` remains the fallback. */
+	crossCheck?: string[];
+	/** Legacy plain-language summary kept for older specs/trackers — the sign dialog now
+	 *  prefers crossCheck. */
 	outcomes?: string;
 	approach: string[];
 	scope: string[];
@@ -64,6 +66,16 @@ export type DraftParse =
 
 const asStringArray = (v: unknown): string[] | undefined =>
 	Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : undefined;
+
+/** Normalize goal cases: one line each (embedded newlines collapse to spaces), trimmed, blanks
+ *  dropped. Shared by the requirements parser and the longrun planner parser so both sign
+ *  surfaces receive the same shape. */
+export const asCaseLines = (v: unknown): string[] | undefined => {
+	const arr = asStringArray(v);
+	if (!arr) return undefined;
+	const lines = arr.map((x) => x.replace(/\s*\n+\s*/g, " ").trim()).filter(Boolean);
+	return lines.length ? lines : undefined;
+};
 
 /** Normalize + police raw clarify questions → ClarifyScan. Accepted shapes: {question,
  *  choices:[…]} (capped at MAX_CLARIFY_CHOICES) and {question, freeText:true} (product/UI
@@ -162,11 +174,13 @@ export const parseSpecDraft = (text: string): DraftParse => {
 		if (!check) return { kind: "error", error: `criteria[${i}].check is empty or not a string` };
 		criteria.push({ id: typeof c.id === "string" && c.id.trim() ? c.id.trim() : `c${i + 1}`, text: ctext, check });
 	}
+	const crossCheck = asCaseLines(o.crossCheck);
 	return {
 		kind: "spec",
 		draft: {
 			title: typeof o.title === "string" && o.title.trim() ? o.title.trim() : "untitled",
 			intent: typeof o.intent === "string" ? o.intent : "",
+			...(crossCheck ? { crossCheck } : {}),
 			outcomes: typeof o.outcomes === "string" && o.outcomes.trim() ? o.outcomes.trim() : undefined,
 			approach: asStringArray(o.approach) ?? [],
 			scope: asStringArray(o.scope) ?? [],
@@ -246,18 +260,33 @@ export const hasOutcomeJargon = (text: string): string[] => {
 export const applyQualityGate = (cwd: string, draft: SpecDraft): { draft: SpecDraft; notes: string[] } => {
 	const notes: string[] = [];
 	const extraDebt: string[] = [];
-	// outcome-summary gates (2026-10-16): absent → the sign dialog falls back to the intent
-	// text (still readable, but the signer deserves the dedicated summary); jargon → the signer
-	// pain point this field exists to fix, so it goes to human review instead of silently
-	// rendering command soup in the sign dialog
-	if (!draft.outcomes) {
-		extraDebt.push("quality-gate: no plain-language outcomes summary — the sign dialog will show the intent text instead; ask the requirements agent for one (request-language, no jargon)");
-		notes.push("outcomes-missing");
+	// cross-check gates (2026-10-18): the goal CASES are the sign surface now. Missing cases →
+	// fall back to intent (still readable, but the signer deserves the dedicated list); jargon /
+	// overlong lines → human review instead of silently rendering command soup. `outcomes` stays
+	// as the legacy fallback and is checked with the same heuristic.
+	const cases = draft.crossCheck?.length ? draft.crossCheck : undefined;
+	if (!cases) {
+		const legacy = draft.outcomes?.trim();
+		if (!legacy) {
+			extraDebt.push("quality-gate: no cross-check cases — the sign dialog will show the intent text; ask the requirements agent for 2–6 short user-language goal cases (\"you want … when …\")");
+			notes.push("cross-check-missing");
+		} else {
+			const jargon = hasOutcomeJargon(legacy);
+			if (jargon.length) {
+				extraDebt.push(`quality-gate: legacy outcomes summary contains technical tokens (${jargon.join(", ")}) — rewrite it as short plain-language cases before signing`);
+				notes.push("outcomes-jargon");
+			}
+		}
 	} else {
-		const jargon = hasOutcomeJargon(draft.outcomes);
+		const long = cases.filter((c) => c.length > 240);
+		if (long.length) {
+			extraDebt.push("quality-gate: cross-check case(s) longer than 240 characters — split them into one short line per behavior so the signer can scan them");
+			notes.push("cross-check-long");
+		}
+		const jargon = [...new Set(cases.flatMap((c) => hasOutcomeJargon(c)))];
 		if (jargon.length) {
-			extraDebt.push(`quality-gate: outcomes summary contains technical tokens (${jargon.join(", ")}) — rewrite it in plain language before signing`);
-			notes.push("outcomes-jargon");
+			extraDebt.push(`quality-gate: cross-check cases contain technical tokens (${jargon.join(", ")}) — rewrite them in plain language before signing`);
+			notes.push("cross-check-jargon");
 		}
 	}
 	if (!draft.scope.length) {

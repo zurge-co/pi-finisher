@@ -134,13 +134,25 @@ export const buildEvalResultText = (v: EvalResultView): string => {
 	return out.join("\n");
 };
 
+/** The human's goal case mapped to what the implementation actually did (2026-10-18). The
+ *  review dialog renders this list item by item — it is the answer to "did you build what I
+ *  asked for?". evidence empty = the reviewer did not map it (rendered as a warning). */
+export interface CrossCheckItem {
+	goal: string;
+	evidence: string;
+}
+
 /** Render zense_review's result text — previously the whole reviewer.output.slice(0,4_000);
  *  now TL;DR + counts + log path (the full packet lives in details{} and the
- *  zense-review-packet card in the transcript). */
-export const buildReviewResultText = (opts: { ok: boolean; tlDr: string; trajectoryCount: number; escalationCount: number; logPath: string; errorOutput?: string }): string =>
-	opts.ok
-		? `✅ Review packet ready — open the review card in the transcript\n\n${opts.tlDr}\n\ntrajectory flags: ${opts.trajectoryCount} · escalations: ${opts.escalationCount}\n\n🧪 the full packet (every section) is in the log: ${opts.logPath} — read it yourself if needed`
-		: `reviewer failed: ${opts.errorOutput ?? "(no output)"}\n\n🧪 log: ${opts.logPath}`;
+ *  zense-review-packet card in the transcript). crossCheck (2026-10-18) carries the
+ *  goal → what-was-done mapping into the non-TUI/chat fallback too. */
+export const buildReviewResultText = (opts: { ok: boolean; tlDr: string; trajectoryCount: number; escalationCount: number; logPath: string; errorOutput?: string; crossCheck?: CrossCheckItem[] }): string => {
+	if (!opts.ok) return `reviewer failed: ${opts.errorOutput ?? "(no output)"}\n\n🧪 log: ${opts.logPath}`;
+	const cross = opts.crossCheck?.length
+		? `\n\n## Cross-check — your case → what was done\n${opts.crossCheck.map((c) => `- ${c.goal}\n  → ${c.evidence || "⚠ not mapped by the reviewer"}`).join("\n")}`
+		: "";
+	return `✅ Review packet ready — open the review card in the transcript\n\n${opts.tlDr}${cross}\n\ntrajectory flags: ${opts.trajectoryCount} · escalations: ${opts.escalationCount}\n\n🧪 the full packet (every section) is in the log: ${opts.logPath} — read it yourself if needed`;
+};
 
 /** Review-decision modal body (2026-10-16): the review packet ends as a DECISION, not chat
  *  text — the human reads the TL;DR + flags and decides in-place. y accepts (explicit human
@@ -151,6 +163,7 @@ export const buildReviewResultText = (opts: { ok: boolean; tlDr: string; traject
  *  hotkey is withheld rather than shown-disabled (no dead keys in the dialog). */
 export const buildReviewModalText = (opts: {
 	tlDr: string;
+	crossCheck?: CrossCheckItem[];
 	trajectory: string[];
 	specDebt: string[];
 	escalations: { kind: string; detail: string }[];
@@ -163,6 +176,12 @@ export const buildReviewModalText = (opts: {
 		"",
 		opts.tlDr || "(no summary)",
 		"",
+		// 2026-10-18: the purpose cross-check comes back HERE, item by item — each case the human
+		// signed off at purpose time is followed by what the implementation actually did for it.
+		// An unmapped case is shown as a warning, never silently dropped.
+		opts.crossCheck?.length
+			? `## Cross-check — your case → what was done\n${opts.crossCheck.map((c) => `- **${c.goal}**\n  → ${c.evidence || "⚠ not mapped by the reviewer"}`).join("\n")}`
+			: "",
 		opts.trajectory.length ? `⚠️ trajectory flags:\n${opts.trajectory.map((f) => `- ${f}`).join("\n")}` : "",
 		opts.escalations.length ? `🚨 escalations:\n${opts.escalations.map((e) => `- ${e.kind}: ${e.detail}`).join("\n")}` : "",
 		opts.specDebt.length ? `📋 spec debt (human-verified only):\n${opts.specDebt.map((d) => `- ${d}`).join("\n")}` : "",
@@ -190,13 +209,60 @@ export const COMMENT_DISCIPLINE_GUIDELINE = [
 	"- Applies to NEW code and lines you touch. Do not delete or rewrite existing decision-recording comments.",
 ].join("\n");
 
-const REVIEW_SECTIONS = ["TL;DR", "Intent vs Implementation", "Risks", "Rollback", "Human actions"] as const;
+const REVIEW_SECTIONS = ["TL;DR", "Cross-check", "Intent vs Implementation", "Risks", "Rollback", "Human actions"] as const;
 
 export interface PacketParse {
 	ok: boolean;
 	missing: string[];
 	tldr: string;
+	crossCheck: CrossCheckItem[];
 }
+
+/** Parse the `## Cross-check` section: one bullet per goal case, shaped `goal → what was done`.
+ *  Tolerates `->`, markdown bold, numbered bullets and extra prose; a bullet without an arrow
+ *  keeps the whole text as the goal and marks the evidence empty (rendered as "not mapped"). */
+export const parseCrossCheckItems = (text: string): CrossCheckItem[] => {
+	const m = text.match(/^##\s*Cross-check\s*$/im);
+	if (m?.index === undefined) return [];
+	const rest = text.slice(m.index + m[0].length);
+	const next = rest.search(/^##\s/m);
+	const body = next === -1 ? rest : rest.slice(0, next);
+	const out: CrossCheckItem[] = [];
+	for (const raw of body.split("\n")) {
+		const line = raw.trim();
+		const bullet = line.match(/^[-*]\s+(.*)$/) ?? line.match(/^\d+[.)]\s+(.*)$/);
+		if (!bullet) continue;
+		const item = bullet[1].replace(/\*\*/g, "").trim();
+		if (!item) continue;
+		const arrow = item.indexOf("→") >= 0 ? item.indexOf("→") : item.indexOf("->");
+		const arrowLen = arrow >= 0 ? (item[arrow] === "→" ? 1 : 2) : 0;
+		const goal = (arrow >= 0 ? item.slice(0, arrow) : item).trim();
+		const evidence = (arrow >= 0 ? item.slice(arrow + arrowLen) : "").trim();
+		if (goal) out.push({ goal, evidence });
+	}
+	return out;
+};
+
+/** Merge the packet's mapping with the signed goal list so EVERY case the human approved is
+ *  rendered exactly once (2026-10-18): exact/near text matches reuse the reviewer's evidence;
+ *  unmatched goals get an empty evidence ("not mapped"); reviewer-only extra lines are kept at
+ *  the end instead of being dropped. */
+export const mergeCrossCheck = (goals: string[], items: CrossCheckItem[]): CrossCheckItem[] => {
+	const norm = (s: string): string => s.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+	const used = new Set<number>();
+	const merged = goals.map((goal) => {
+		let idx = items.findIndex((it, i) => !used.has(i) && norm(it.goal) === norm(goal));
+		if (idx < 0)
+			idx = items.findIndex((it, i) => !used.has(i) && (norm(it.goal).includes(norm(goal)) || norm(goal).includes(norm(it.goal))));
+		if (idx < 0) return { goal, evidence: "" };
+		used.add(idx);
+		return { goal, evidence: items[idx].evidence };
+	});
+	items.forEach((it, i) => {
+		if (!used.has(i)) merged.push(it);
+	});
+	return merged;
+};
 
 /** W2: validate the reviewer packet against its fixed schema — the old raw 900-char slice
  *  waved packets with no TL;DR through. ok requires every section; missing drives retry
@@ -210,7 +276,7 @@ export const parseReviewerPacket = (text: string): PacketParse => {
 		const next = rest.search(/^##\s/m);
 		tldr = (next === -1 ? rest : rest.slice(0, next)).trim().split("\n").filter((l) => l.trim()).slice(0, 3).join("\n");
 	}
-	return { ok: missing.length === 0, missing, tldr };
+	return { ok: missing.length === 0, missing, tldr, crossCheck: parseCrossCheckItems(text) };
 };
 
 /** r4 (2026-09-02): hallucination detector for packets — extract tokens that "claim to be
@@ -266,6 +332,7 @@ export const buildReviewerPrompt = (
 	feedback: string,
 	freshness?: { specVersion?: number; head?: string }, // spec version + tree SHA (HEAD^{tree}) of the tree under review
 	criteria?: { id?: string; text: string; check?: string }[], // r2: verbatim criteria (instead of bare id=verdict)
+	goals: string[] = [], // 2026-10-18: the signed cross-check cases — the reviewer maps each one to what was DONE
 ): string => {
 	const stale = isLastEvalStale(lastEval, freshness);
 	const ev = stale ? undefined : lastEval;
@@ -286,13 +353,16 @@ export const buildReviewerPrompt = (
 	`\n- Spec debt (human-verified): ${specDebt.length ? specDebt.join(" | ") : "(none)"}` +
 	`\n- Escalations: ${escalations.length ? escalations.map((e) => `${e.kind}: ${e.detail.slice(0, 80)}`).join(" | ") : "(none)"}` +
 	(gitSummary ? `\n- Git evidence:\n${gitSummary}` : "") +
+	(goals.length ? `\n- Cross-check cases (the human's signed request, verbatim — do NOT rewrite the goal text):\n${goals.map((g, i) => `  ${i + 1}. ${g}`).join("\n")}` : "") +
 	`\n- Pipeline tools (for referencing only): zense_spec, zense_adr, zense_eval, zense_review\n\n` +
 	`GROUNDING CONTRACT (hard rules):\n` +
 	`- Every commit hash, file path, line number, identifier, env-var name and config key you mention MUST be copied VERBATIM from the Evidence block above — never invent or reconstruct one from memory.\n` +
+	`- The Git evidence lists changed symbols with their files: cite those for the Cross-check section instead of guessing what the code does.\n` +
 	`- Anything not present in the Evidence is NOT a fact: omit it, or move it to "Human actions" phrased as an open question.\n` +
 	`- The TL;DR must state the eval verdict exactly as recorded and must not contradict per-criteria verdicts, trajectory flags or escalations.\n\n` +
 	`Produce an incident-report-style review packet with EXACTLY these section headers (one per line):\n` +
 	`## TL;DR\n(max 3 lines — the 90-second answer for a human deciding whether to deploy)\n` +
+	`## Cross-check\n${goals.length ? `(EXACTLY one line per case above, in the same order: \`- <case text verbatim> → <what was actually DONE to achieve it: behavior + symbol/function name + file path copied from the Git evidence; if the case is not implemented write NOT FOUND — why>\`)` : "(no cross-check cases in the spec — write \"(none)\")"}\n` +
 	`## Intent vs Implementation\n## Risks\n(name up to 3 spots the human MUST eyeball — file:line copied verbatim from the Evidence, or omit the line number)\n` +
 	`## Rollback\n(concrete commands, e.g. git revert <hash> / files to restore — no vague advice)\n` +
 	`## Human actions\n(follow-ups only a human can do: spec debt, unanswered questions)\n` +

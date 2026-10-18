@@ -18,7 +18,11 @@ import {
 const GOOD_SPEC = {
 	title: "Fix login redirect",
 	intent: "users hit /login twice",
-	outcomes: "หลังเข้าสู่ระบบ คุณจะถึงหน้าที่ต้องการได้ทันทีโดยไม่ต้องเข้าสู่ระบบซ้ำ", // plain-language, request-language (2026-10-16)
+	crossCheck: [
+		"คุณต้องการให้เข้าสู่ระบบครั้งเดียวแล้วถึงหน้าที่ต้องการได้ทันที",
+		"เมื่อกลับมาใช้งานอีกครั้ง ระบบจะไม่ถามรหัสผ่านซ้ำ",
+	], // user-language goal cases (2026-10-18) — the sign surface
+	outcomes: "หลังเข้าสู่ระบบ คุณจะถึงหน้าที่ต้องการได้ทันทีโดยไม่ต้องเข้าสู่ระบบซ้ำ", // legacy summary
 	scope: ["src/auth"],
 	constraints: ["no new deps"],
 	criteria: [
@@ -162,16 +166,16 @@ test("applyQualityGate: empty scope and non-machine checks are forced into specD
 			],
 			specDebt: [],
 		});
-		// outcomes gate (2026-10-16): no plain-language summary → the sign dialog falls back to
-		// intent, the gate notes it + forces human review
-		assert.deepEqual(gated.notes, ["outcomes-missing", "empty-scope", "manual-check:c2"]);
+		// cross-check gate (2026-10-18): no goal cases → the sign dialog falls back to intent,
+		// the gate notes it + forces human review
+		assert.deepEqual(gated.notes, ["cross-check-missing", "empty-scope", "manual-check:c2"]);
 		assert.equal(gated.draft.specDebt.length, 3);
-		assert.ok(gated.draft.specDebt.some((d) => d.includes("outcomes summary")));
+		assert.ok(gated.draft.specDebt.some((d) => d.includes("cross-check cases")));
 		// a scope pointing at a nonexistent path → the quality gate catches it (a typo'd scope is toothless)
 		const ghost = applyQualityGate(dir, { ...gated.draft, scope: ["ghost/path-xyz"], specDebt: [] });
 		assert.ok(ghost.notes.some((n) => n.startsWith("scope-missing:ghost/path-xyz")));
 		assert.ok(ghost.draft.specDebt.some((d) => d.includes("ghost/path-xyz")));
-		assert.match(gated.draft.specDebt[0], /outcomes summary/);
+		assert.match(gated.draft.specDebt[0], /cross-check cases/);
 		assert.match(gated.draft.specDebt[1], /scope/);
 		assert.match(gated.draft.specDebt[2], /c2/);
 		assert.equal(gated.draft.criteria.length, 2); // criteria untouched, only flagged
@@ -292,9 +296,17 @@ test("applyQualityGate: unsubstituted placeholder in check → specDebt + notes 
 });
 
 
-// ---------- outcomes (2026-10-16): the plain-language "what you'll get" the signer reads
+// ---------- cross-check cases (2026-10-18): the user-language goal list the signer reads
+test("parseSpecDraft: crossCheck parsed + trimmed, embedded newlines collapsed, blanks dropped; absent stays undefined", () => {
+	const withCases = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, crossCheck: ["  A when B  ", "C\nand D", "  "] }));
+	assert.equal(withCases.kind, "spec");
+	assert.deepEqual(withCases.draft.crossCheck, ["A when B", "C and D"]);
+	const legacy = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, crossCheck: [] }));
+	assert.equal(legacy.kind, "spec");
+	assert.equal(legacy.draft.crossCheck, undefined, "empty crossCheck must normalize to undefined, never an empty array");
+});
 
-test("parseSpecDraft: outcomes parsed + trimmed; absent outcomes stay undefined (back-compat with legacy outputs)", () => {
+test("parseSpecDraft: legacy outcomes still parsed + trimmed; absent outcomes stay undefined (back-compat)", () => {
 	const withOut = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, outcomes: "  คุณจะได้หน้าล็อกอินที่เข้าได้ทันที  " }));
 	assert.equal(withOut.kind, "spec");
 	assert.equal(withOut.draft.outcomes, "คุณจะได้หน้าล็อกอินที่เข้าได้ทันที");
@@ -311,21 +323,25 @@ test("hasOutcomeJargon: clean request-language text passes; backticks, file name
 	assert.ok(hasOutcomeJargon("grep -q x y && echo ok").includes("shell command"));
 });
 
-test("applyQualityGate: jargon in outcomes is forced into specDebt (the signer must not read command soup)", () => {
+test("applyQualityGate: jargon in cross-check cases is forced into specDebt (the signer must not read command soup)", () => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-draft-"));
 	try {
-		const gated = applyQualityGate(dir, { ...GOOD_SPEC, outcomes: "adds `src/auth/guard.ts` and runs npm test" });
-		assert.ok(gated.notes.includes("outcomes-jargon"));
+		const gated = applyQualityGate(dir, { ...GOOD_SPEC, crossCheck: ["adds `src/auth/guard.ts` and runs npm test"] });
+		assert.ok(gated.notes.includes("cross-check-jargon"));
 		assert.ok(gated.draft.specDebt.some((d) => d.includes("technical tokens")));
+		const long = applyQualityGate(dir, { ...GOOD_SPEC, crossCheck: ["x".repeat(241)] });
+		assert.ok(long.notes.includes("cross-check-long"));
+		assert.ok(long.draft.specDebt.some((d) => d.includes("240 characters")));
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("buildRequirementsPrompt: outcomes are REQUIRED, request-language, jargon-free (the sign dialog shows only this)", () => {
+test("buildRequirementsPrompt: crossCheck is REQUIRED, request-language, one case per line (the sign surface)", () => {
 	const p = buildRequirementsPrompt("fix the login flow", []);
-	assert.match(p, /"outcomes": string/, "the draft JSON contract must carry outcomes");
-	assert.match(p, /outcomes: REQUIRED/);
+	assert.match(p, /"crossCheck": string\[\]/, "the draft JSON contract must carry crossCheck");
+	assert.match(p, /crossCheck: REQUIRED/);
 	assert.match(p, /SAME LANGUAGE as the Request/i);
+	assert.match(p, /one goal CASE per line/);
 	assert.match(p, /NEVER use jargon/);
 });

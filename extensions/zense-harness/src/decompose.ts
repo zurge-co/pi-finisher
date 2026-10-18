@@ -73,9 +73,10 @@ export const parsePlannerSubtasks = (text: string): PlannerSubtask[] => {
 export const mergeSubtaskDrafts = (title: string, intent: string, drafts: { subtask: string; draft: SpecDraft }[]): SpecDraft => ({
 	title,
 	intent,
-	// outcomes: concatenate each subtask's plain-language summary (blank line between) — the
-	// signer reads ONE merged "what you'll get", not one per subtask; deduped so a shared
-	// outcome stated by two subagents appears once
+	// crossCheck: same merge discipline as outcomes — the signer reads ONE case list for the
+	// whole decomposed requirement, deduped so a shared goal stated by two subtasks appears once
+	crossCheck: [...new Set(drafts.flatMap((d) => d.draft.crossCheck ?? []))],
+	// outcomes: legacy summary kept for back-compat (the sign surface prefers crossCheck)
 	outcomes: [...new Set(drafts.map((d) => d.draft.outcomes).filter(Boolean))].join("\n\n") || undefined,
 	approach: drafts.flatMap((d) => d.draft.approach.map((a) => `[${d.subtask}] ${a}`)),
 	scope: [...new Set(drafts.flatMap((d) => d.draft.scope))],
