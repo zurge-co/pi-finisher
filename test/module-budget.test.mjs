@@ -33,3 +33,15 @@ test("the budget is a real bound: a synthetic file just over it is rejected", ()
 	assert.equal(countLines(atLimit), HYGIENE_MAX_LINES);
 	assert.ok(countLines(over) > HYGIENE_MAX_LINES);
 });
+
+test("shell scripts keep their shebang and stay executable (a comment stripper must never eat line 1)", async () => {
+	const { existsSync, statSync } = await import("node:fs");
+	const scripts = walk(join(here, "scripts")).filter((f) => f.endsWith(".sh"));
+	assert.ok(scripts.length > 0, "expected at least one release script");
+	for (const f of scripts) {
+		const first = readFileSync(f, "utf8").split("\n")[0];
+		assert.match(first, /^#!\//, `${f} must start with a shebang`);
+		assert.ok((statSync(f).mode & 0o111) !== 0, `${f} must stay executable`);
+	}
+	assert.ok(existsSync(join(here, "scripts", "release.sh")));
+});
