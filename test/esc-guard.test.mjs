@@ -189,65 +189,6 @@ test("source: the shared picker unlocks peek only while its filter is empty", ()
 //      pinned as source greps: the sign dialog shows ONLY the cross-check cases, n asks for a
 //      reason, and non-UI sessions keep the chat-text fallback.
 
-test("source: specSignDialog renders only the cross-check — no technical spec, no Changes; n asks why", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
-	const i = src.indexOf("const specSignDialog");
-	assert.ok(i > 0, "specSignDialog must exist");
-	const body = src.slice(i, src.indexOf("const trackerSignDialog"));
-	assert.match(body, /renderSignOutcome/, "the dialog body must come from renderSignOutcome (cross-check cases only)");
-	assert.match(body, /Confirm ONCE — the agent then works until every case holds \(no further gate\)/);
-	assert.match(body, /goalCases\(spec\)/, "the dialog must list the goal cases from the spec (cross-check outcomes, legacy outcomes, else intent)");
-	assert.match(body, /askRejectReason/, "n must open the optional reason box");
-	assert.match(body, /done\(REJECT_WITH_REASON\)/, "n returns the reject sentinel");
-	assert.match(body, /matchesKey\(data, Key\.escape\).*done\(null\)/, "Esc must stay a quick no-reason close");
-	assert.ok(!body.includes("renderSpecMd"), "the full technical spec must not render in the sign dialog");
-	assert.ok(!body.includes("renderSpecChangesTui"), "the Changes section must not render in the sign dialog");
-});
 
-test("source: tracker sign is a cross-check dialog (y=AUTO, m=MANUAL, n=not yet + reason); plan flow uses the decision", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
-	const i = src.indexOf("const trackerSignDialog");
-	assert.ok(i > 0);
-	const body = src.slice(i, src.indexOf("const reviewModalDialog"));
-	assert.match(body, /renderTrackerOutcomes/, "the tracker sign body must come from renderTrackerOutcomes");
-	assert.match(body, /done\("auto"\)/);
-	assert.match(body, /done\("manual"\)/);
-	assert.match(body, /done\(REJECT_WITH_REASON\)/);
-	assert.match(body, /askRejectReason/);
-	assert.match(body, /matchesKey\(data, Key\.escape\).*done\(null\)/);
-	assert.ok(src.includes("const res = await trackerSignDialog(ctx, t)"), "the plan flow must sign via the dialog");
-	assert.ok(src.includes("decideTrackerSign({"), "the plan flow must decide gate-off/goals-unchanged before asking");
-});
 
-test("source: zense_review ends in a decision modal — y=accept, n=reason, Esc=close-only, gate OFF skips it", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
-	const i = src.indexOf("const reviewModalDialog");
-	assert.ok(i > 0);
-	const body = src.slice(i, src.indexOf("const extConfigDialog"));
-	assert.match(body, /buildReviewModalText/, "the modal body must come from the pure builder");
-	assert.match(body, /if \(data === "y" && canAccept\) done\(true\)/, "y only counts as consent when something is staged");
-	assert.match(body, /done\(REJECT_WITH_REASON\)/, "n opens the reason box");
-	assert.match(body, /done\(null\)/, "Esc closes without discarding");
-	assert.match(body, /askRejectReason/);
-	const rev = src.slice(src.indexOf('name: "zense_review"'));
-	assert.match(rev, /reviewModalDialog\(ctx, packet/, "the review tool must open the modal after the packet");
-	assert.match(rev, /ctx\.hasUI && ctx\.mode === "tui" && state\.gateEnabled/, "the modal must be TUI-only AND gate-gated");
-	assert.match(rev, /acceptPending\(ctx, true\)/, "y routes to the accept side's commit-on-behalf path");
-	assert.match(rev, /rejectionDirective\("review"/, "a typed rejection reaches the agent");
-	assert.ok(!rev.slice(0, rev.indexOf("zense_discard")).includes("discardPendingApply"), "review must never discard on its own");
-});
 
-test("source: gate OFF disables every human prompt (spec/tracker auto-sign, clarify/planner/zense_ask/pre-spec dirty/review)", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/index.ts"), "utf8");
-	assert.match(src, /decideSpecApproval\(\{/, "commitSpec uses the one approval decision");
-	assert.match(src, /decideTrackerSign\(\{/, "longrun plan uses the tracker-sign decision");
-	assert.match(src, /sameGoalLines\(prevSpec, state\.spec\)/, "goal-stable re-specs are detected");
-	assert.match(src, /sameGoalLines\(t0, t\)/, "goal-stable tracker re-plans are detected");
-	assert.match(src, /clarifyClosed && clarifyRounds < 4 && ctx\.hasUI && state\.gateEnabled/, "clarify questions honor gate OFF");
-	assert.match(src, /parsed\.questions\?\.length\) \{\s*if \(!state\.gateEnabled\)/, "planner questions are decided autonomously under gate OFF");
-	assert.match(src, /preDirty\.length && !state\.gateEnabled/, "gate OFF auto-snapshots a dirty main instead of asking");
-	assert.match(src, /human questions are disabled[\s\S]{0,400}?gateOff: true/, "zense_ask refuses under gate OFF");
-	assert.match(src, /auto-approved: gate OFF|gate OFF \(no sign prompt\)/, "a spec committed under gate OFF is auto-signed");
-	assert.match(src, /Gate OFF — no sign\/approval prompts/, "/zense gate off explains the mode");
-	assert.match(src.slice(src.indexOf('name: "zense_review"')), /state\.gateEnabled/, "review checks gateEnabled");
-});

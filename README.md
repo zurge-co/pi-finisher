@@ -1,72 +1,105 @@
 # pi-zense
 
-> **Spec-gated, human-signed SDLC harness for pi.** Human attention is the scarcest resource in AI-driven development — pi-zense concentrates it at exactly two gates: **signing the spec** and **reviewing the result**. Everything in between is automated.
+> **Goal-confirm autonomous runner for pi.** You state the goal and confirm it once; the harness
+> then spends every resource you have — many models at once, no token or cost ceiling — until the
+> result is *proven*, and reports once at the end.
 
-"Zense" is Thai for **"sign"** — every run ships under a human signature.
+"Zense" is a pun on the Thai word for *sign*: the signature moved from "approve every step" to
+"confirm the goal once".
 
-## What you get
+## The one loop
 
-- **Spec as a contract** — a requirements sub-agent drafts machine-checkable acceptance criteria (probed for real, not guessed); nothing gets written to your repo until you 🔏 sign — right in the dialog, full spec rendered inline.
-- **Isolated sub-agents per phase** — compile, grade, and review each run in clean `pi -p` contexts; watch them live with `ctrl+_`.
-- **Worktree-per-session** — after signing, work happens in an auto-created `git worktree`; open two pi sessions in the same repo and they never clobber each other.
-- **Dual eval** — deterministic probes + a grader sub-agent judge every criterion; trajectory heuristics catch reward hacking (test edits, out-of-scope writes, retry storms).
-- **Human-in-command merge** — on eval PASS, work is **squashed and applied to `main` staged-but-uncommitted**. You review the staged diff, then `accept` or `discard` — the harness never auto-commits on `main`.
-- **Memory that feeds back** — every flag, escalation, and verdict becomes a lesson that shapes the next spec.
-- **zense theme** — a dark theme on the Zense design system (green → lime → gold over near-black).
-- **Long-running mode** — a requirement too big for one cycle becomes a **signed tracker**: you sign the whole phase plan once (choosing AUTO or MANUAL). AUTO runs every phase end-to-end **with no per-phase interruption**: eval PASS checkpoints and advances on its own, eval FAIL gets a bounded auto-fix, and between phases the context is **hard-reset deterministically** (capsule-only compaction — no LLM tail dragging 20k tokens along). `main` stays untouched until every phase is done; then you review **exactly once**: the staged whole-set diff plus a generated `digest.md` (per phase: intent/goal, signed criteria + verdicts, files changed + why). MANUAL keeps per-phase review gates. Resume by requirement-name anytime (`/zense longrun resume`), across sessions.
-
-## Install
-
-```bash
-pi install git:github.com/zurge-co/pi-zense   # git
-pi install npm:pi-zense                       # npm (when published)
-pi -e ./pi-zense                              # try without installing
+```
+goal (confirmed once)
+   └─ zense_goal ──► zense_swarm explore / code   (N agents at once, one model per ladder slot)
+                     zense_swarm verify           (verifiers must RUN commands)
+                     goal driver                  (evidence-gated rounds, fixed → verify → …)
+   └─► ONE report: every case + its evidence, or an honest "not proven"
 ```
 
-Theme (optional): `/settings` → theme → `zense`.
+- **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
+  click between the goal and the result.
+- **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
+- **Evidence or it did not happen.** A case with no executed command is `UNVERIFIED`, never `PASS`.
+  The loop is bounded: identical evidence stops it, rounds are counted.
+- **Five models in parallel.** `priority1..priority5` in `.zense/models.json` are the slots; the
+  harness uses as many as you set, all at the same time.
 
 ## Quick start
 
 ```text
-1. Tell the agent what to build       → it compiles a spec with checkable criteria
-2. 🔏 Sign in the dialog (gate #1)    → read the spec inline, then sign or send back
-3. Let it run                         → widget shows phase/turns/tokens; ctrl+_ to watch sub-agents
-4. Review the packet (gate #2)        → TL;DR first, spec-debt and trajectory flags highlighted
-5. Commit & `/zense accept` — or `/zense discard` to reverse-apply the patch exactly
+1. Tell the agent the goal                 → zense_goal confirms it once (no approval later)
+2. Let it run                              → the widget shows every live agent side by side
+3. Read the report                         → per case: PASS / FAIL / UNVERIFIED + the commands run
 ```
 
-If the agent tries to write code before the spec is signed, a 3-choice dialog stops it: 🔏 sign & continue / ⚠ one-off override / ⛔ block.
+## What you can call
 
-## Human cheat sheet
+| Tool | What it does |
+|---|---|
+| `zense_goal` | The single confirmation. Then the driver owns the run: rounds, evidence, fix-or-stop. |
+| `zense_swarm` | `explore` (read-only fan-out), `verify` (independent verifiers), `code` (one git worktree + branch per slice, merged back deterministically, overlapping paths never merged silently). |
+| `zense_ask` | Multiple-choice picker — only for a goal/UI question the agent genuinely cannot decide. |
 
-You only have two real jobs (🔏 sign, 📋 review). Everything else:
+## Watching it run
 
-| Command | When | What it does |
-|---|---|---|
-| `/zense approve` | sign later, if you skipped the dialog | sign the current spec |
-| `/zense status` | anytime | phase, gate, flags, pending apply |
-| `ctrl+_` / `/zense agents` | while sub-agents run | live tail of grader/reviewer runs |
-| `/zense accept` | after review & commit | close the pending apply, log post-review edits as lessons |
-| `/zense discard` | review says no | reverse-apply the stored patch, restoring exact pre-apply state |
-| `/zense gate on\|off` | emergency | toggle the spec gate |
-| `/zense memory` | anytime | grouped lesson summary (`json` = raw) |
-| `/zense distill` | anytime | compact `.zense`: confirm y/n (impact summary) → read-only distiller sub-agent condenses all of `memory.jsonl` into one lesson set (same JSONL format, parser untouched) → deletes `specs/` + `subagents/` history; never touches `adr/`, configs, or current spec; aborts without deleting if distillation fails |
+Every concurrent agent gets its own row in the widget — tag, model, slot, elapsed time and live
+tail — so five agents look like five lines, not five keypresses:
+
+```
+ZENSE ▸ IMPLEMENTATION · turns 12 · tok 84k · 🧪 5 agents live
+AGENTS ▸ 5 running
+SWA   ▶ swarm   s1 provider/a  42s  fixing the scheduler bound…
+SWA2  ▶ swarm   s2 provider/b  41s  reading src/swarm.ts…
+GRAD  ▶ grader              12s  running probes
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/zense status` | phase, worktree, turns/tokens, flags, escalations |
+| `/zense surface` | what this build exposes: tools, commands, ladder, concurrency, ceiling (none) |
+| `/zense models` | pick the model ladder slots (priority 1–5) |
+| `ctrl+_` / `/zense agents` | live tail of the running sub-agents |
+| `/zense memory` | grouped lesson summary (`json` = raw) |
+| `/zense distill` | compact `memory.jsonl` into one lesson set (aborts without deleting on failure) |
+| `/zense resume` | continue a run found on disk |
+
+## Configuration
+
+`.zense/models.json`
+
+```json
+{ "priority": ["anthropic/claude-sonnet", "openai/gpt-5", "google/gemini-pro"] }
+```
+
+`.zense/config.json`
+
+```json
+{ "swarmConcurrency": 5, "subagentTimeoutMs": { "default": 1200000 } }
+```
+
+Unset slots are simply not used; there is no ceiling key anywhere — if one is present it is
+reported as ignored, never obeyed.
+
+## Rules the harness enforces on the result
+
+- **No comments in code** (line or block); a load-bearing reason must carry
+  `zense-hygiene-allow: <why>`. Violations come straight back to the same turn.
+- **A file stays at or under 500 lines** — split it instead of growing past that.
+- **Tests are proof, not coverage** — a test that would pass with the logic broken is worse than none.
 
 ## Files
 
 ```
 pi-zense/
-├── package.json                  # pi manifest
-├── extensions/
-│   └── zense-harness/ index.ts, README.md   # the harness (full docs here)
-└── themes/
-    └── zense.json                # Zense dark theme
+├── package.json                     # pi manifest
+├── extensions/zense-harness/
+│   ├── index.ts                     # pi wiring: hooks, tools, commands, TUI
+│   └── src/                         # pure helpers (goal driver, swarm, verify loop, panel, …)
+├── test/                            # node:test suites
+└── themes/                          # Zense dark theme
 ```
 
-Per-project runtime artifacts (spec archive, ADRs, memory) live under each repo's `.zense/` — spec-as-code, diffable and auditable. Long-running requirements add `.zense/long-running/<slug>/` (`specs.md`, signed `tracker.md`/`tracker.json`, per-phase closure summaries).
-
-Long-running cheat sheet (agent drives via `zense_longrun`, human via `/zense longrun`): `init` → `plan` (planner sub-agent may draft phases; you sign once, AUTO or MANUAL) → AUTO: `next` ⟶ implement ⟵ eval (PASS auto-advances with a hard context reset, FAIL auto-fixes bounded) … until the set completes → one `digest.md` + staged whole-set diff for your single review/commit. MANUAL: `next` ⟶ eval/review → `close`/`fail` per phase. `abandon` removes the whole set's worktree; `main` was never touched.
-
-## License
-
-MIT
+Theme (optional): `/settings` → theme → `zense`.

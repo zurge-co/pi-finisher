@@ -88,13 +88,6 @@ const readZenseJson = (cwd: string, name: string): Record<string, unknown> => re
 export const readModelLadder = (cwd: string): string[] =>
 	[...ladderPatterns(readZenseJson(cwd, "models.json")), ...ladderPatterns(readZenseJson(cwd, "config.json"))].filter((m, i, all) => all.indexOf(m) === i).slice(0, SWARM_LADDER_MAX);
 
-export const COST_CEILING_KEYS = ["maxTokens", "budget", "costLimit", "tokenCeiling", "maxCost"] as const;
-
-export const costCeilingsConfigured = (cwd: string): string[] => {
-	const merge = { ...readZenseJson(cwd, "models.json"), ...readZenseJson(cwd, "config.json") };
-	return COST_CEILING_KEYS.filter((k) => merge[k] !== undefined);
-};
-
 export const readSwarmConcurrency = (cwd: string, fallback = SWARM_DEFAULT_CONCURRENCY): number => {
 	const raw = readZenseJson(cwd, "config.json").swarmConcurrency;
 	const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;

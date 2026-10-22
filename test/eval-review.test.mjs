@@ -164,19 +164,6 @@ test("CHECK_FORMAT_CONTRACT + requirements prompt: contract markers (sh -c / pat
 	assert.ok(p.includes(CHECK_FORMAT_CONTRACT.slice(0, 120)), "prompt must embed CHECK_FORMAT_CONTRACT");
 });
 
-test("zense_spec schema: criteria.check description uses CHECK_FORMAT_CONTRACT (single source of truth)", async () => {
-	const { readFileSync } = await import("node:fs");
-	const { join, dirname } = await import("node:path");
-	const { fileURLToPath } = await import("node:url");
-	const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "zense-harness", "index.ts"), "utf8");
-	assert.match(src, /check:\s*Type\.String\(\{ description: CHECK_FORMAT_CONTRACT \}\)/, "the schema must reference the same contract blob");
-	// commitSpec (the choke point of both set and compile) must run lint before state.spec is built
-	const i = src.indexOf("const commitSpec");
-	const j = src.indexOf("pi.registerTool", i);
-	assert.ok(j > i, "registerTool after commitSpec not found");
-	assert.ok(src.slice(i, j).includes("lintSpecChecks"), "commitSpec must wire lintSpecChecks");
-	assert.ok(src.slice(i, src.indexOf("state.spec = {", i)).includes("lintSpecChecks"), "lint must run before state.spec is created");
-});
 
 test("SUBAGENT_EXCLUDE_TOOLS: grader and reviewer are read-only like requirements", () => {
 	for (const role of ["requirements", "grader", "reviewer"]) assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS[role], ["write", "edit"]);
@@ -703,22 +690,6 @@ test("COMMENT_DISCIPLINE_GUIDELINE: covers all 5 mandatory rules and stays short
 // TDZ guard (2026-09-08): zense_eval's inconclusive branch once crashed "Cannot access
 // 'probeSection' before initialization" because it was declared after the branch — the bug
 // survived because no test covered that error path
-test("TDZ guard: probeSection is declared exactly once and always before the inconclusive branch", async () => {
-	const { readFileSync } = await import("node:fs");
-	const { join, dirname } = await import("node:path");
-	const { fileURLToPath } = await import("node:url");
-	const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "zense-harness", "index.ts"), "utf8");
-	const decl = [...src.matchAll(/const probeSection = buildCompactProbeSection\(probes\)/g)];
-	assert.equal(decl.length, 1, "probeSection must be declared exactly once");
-	const branch = src.indexOf("if (!grade.ok || !parsed || !parsed.overall)");
-	assert.ok(branch > 0, "inconclusive branch not found (renamed?)");
-	assert.ok(decl[0].index < branch, "probeSection must be declared before the inconclusive branch (TDZ regression)");
-	// evalView had the same bug once (inconclusive used evalView.logPath before its declaration) — no use before const evalView
-	const lines = src.split("\n");
-	const evalViewDecl = lines.findIndex((l) => l.includes("const evalView"));
-	const prematureUse = lines.findIndex((l, i) => l.includes("evalView.logPath") && i < evalViewDecl);
-	assert.equal(prematureUse, -1, "evalView.logPath used before its declaration (TDZ regression)");
-});
 
 
 // ---------- review-decision modal text (2026-10-16): review ends in a DECISION — y=accept,
@@ -768,4 +739,14 @@ test("buildReviewModalText: nothing staged → the accept hotkey is withheld, no
 	assert.ok(!md.includes("[y] accept"), "y must not read as an option when nothing can be accepted");
 	assert.match(md, /nothing is staged in main/);
 	assert.match(md, /\[n\] close/);
+});
+
+test("the eval/review graders staying on disk are still wired as read-only judging roles", async () => {
+	const { SUBAGENT_EXCLUDE_TOOLS, buildGraderPrompt, parseGraderOutput } = await import("../extensions/zense-harness/index.ts");
+	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.grader, ["write", "edit"], "the grader role may judge but never fix");
+	const prompt = buildGraderPrompt({ intent: "x", scope: [], criteria: [{ id: "c1", text: "holds", check: "npm test" }], specDebt: [] }, [], [], "");
+	assert.match(prompt, /c1/);
+	const parsed = parseGraderOutput("c1: PASS: npm test exited 0\nOVERALL: PASS", [{ id: "c1", text: "holds", check: "npm test" }]);
+	assert.equal(parsed.overall, "PASS");
+	assert.equal(parsed.perCriteria.c1, "PASS");
 });

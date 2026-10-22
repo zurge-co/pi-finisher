@@ -82,12 +82,12 @@ test("longrunStatusText: progress reflects done count only", () => {
 
 // regression guards: the footer entry must be wired into the existing updateWidget closure
 // (string-level dedupe), re-exported for tests, and cleared by pi's session reset
+
 test("index.ts wires the longrun status bar via updateWidget with dedupe", () => {
 	const src = readFileSync(new URL("../extensions/zense-harness/index.ts", import.meta.url), "utf8");
 	assert.ok(src.includes('export * from "./src/longrun-status.ts"'), "module re-exported from the entry point");
 	assert.ok(src.includes('setStatus("zense-longrun", status)'), "footer entry set under the zense-longrun key");
 	assert.ok(/const updateWidget[\s\S]{0,1600}?setStatus\("zense-longrun"/.test(src), "setStatus lives inside updateWidget");
 	assert.ok(src.includes("lastLongrunStatus"), "string-level dedupe exists");
-	// zense_longrun's say closure refreshes (via updateWidget) → all actions covered
-	assert.ok(/const say = .*?\{\s*updateWidget\(ctx\);/s.test(src), "zense_longrun say closure refreshes");
+	assert.ok(/longrunStatusText\(ctx\.cwd, state\.longRun, state\.phase\)/.test(src), "the status line is derived from the live tracker state");
 });
