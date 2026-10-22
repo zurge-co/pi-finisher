@@ -57,6 +57,7 @@ export * from "./src/code-hygiene.ts";
 export * from "./src/goal-confirm.ts";
 export * from "./src/agent-panel.ts";
 export * from "./src/swarm-code.ts";
+export * from "./src/verify-loop.ts";
 export * from "./src/ask.ts";
 export * from "./src/longrun.ts";
 export * from "./src/longrun-auto.ts";
@@ -94,6 +95,7 @@ import { readModelLadder, readSwarmConcurrency, runSwarm, effectiveLadder, swarm
 import { CODE_HYGIENE_GUIDELINE, buildCodeRulesPrompt, formatHygieneViolations, isHygieneChecked, scanSource, type HygieneViolation } from "./src/code-hygiene.ts";
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./src/agent-panel.ts";
 import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./src/swarm-code.ts";
+import { MAX_VERIFY_ROUNDS, advanceLoop, buildFixPrompt, buildReport, freshVerifyLoop, judgeCase, nextVerifyRound, renderVerifyReport } from "./src/verify-loop.ts";
 import { buildGoalConfirmPrompt, goalCases, goalGate } from "./src/goal-confirm.ts";
 import { askQuestionScan, askPolicyError, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
 
@@ -2990,7 +2992,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Fan out parallel sub-agents across the model priority ladder (explore / verify / code in isolated worktrees)",
 		promptGuidelines: [
 			"Use zense_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
-			"Use zense_swarm verify to prove the result against reality: each verifier runs real commands and ends with VERDICT: PASS/FAIL. A failing verdict means the goal is not done — fix and verify again.",
+			"Use zense_swarm verify to prove the result against reality: each verifier must RUN commands and end with VERDICT: PASS/FAIL. A claim with no executed command is UNVERIFIED, never PASS. The loop is bounded — fix the real cause and call verify again; identical evidence stops it.",
 			"Use zense_swarm code when the change splits into independent slices: each coder gets its own worktree, so give every slice its scope and let them all run at once. Slices that need the same file must be one slice — overlapping paths are blocked and reported, never merged silently.",
 			"Decide library/layout/approach yourself — do not ask the human.",
 		],
@@ -3045,12 +3047,17 @@ export default function (pi: ExtensionAPI) {
 				.join("\n\n");
 			learn(ctx, `swarm ${p.mode}: ${swarmSummaryLine(results)} — ladder ${ladder.join(" > ")} (${source})${notes}`);
 			if (p.mode === "verify") {
-				const verdicts = results.map((r) => `${r.id}: ${/VERDICT:\s*PASS/i.test(r.output) ? "PASS" : /VERDICT:\s*FAIL/i.test(r.output) ? "FAIL" : "UNVERIFIED"}`);
-				const allPass = results.length > 0 && results.every((r) => r.ok && /VERDICT:\s*PASS/i.test(r.output));
+				const report = buildReport(results.map((r) => judgeCase(r.id, r.output, r.ok ? {} : { exitCode: 1 })));
+				const loop = state.verifyLoop ?? freshVerifyLoop();
+				const decision = nextVerifyRound(loop, report);
+				state.verifyLoop = advanceLoop(loop, report);
+				persist();
+				learn(ctx, `verify: ${report.allPass ? "PASS" : "not verified"} round ${state.verifyLoop.round}/${MAX_VERIFY_ROUNDS} — ${report.cases.map((c) => `${c.caseId}:${c.verdict}`).join(", ")}`);
+				const fix = decision.kind === "retry" ? buildFixPrompt(report, decision.round, MAX_VERIFY_ROUNDS) : decision.kind === "stop" ? `⛔ verify stopped (${decision.halt ? "bound" : "no new evidence"}): ${decision.reason}` : "";
 				return {
-					content: [{ type: "text", text: `${allPass ? "✅ verified" : "❌ NOT verified"} — ${swarmSummaryLine(results)}\n${verdicts.join("\n")}\n\n${body}` }],
-					details: { mode: p.mode, allPass, verdicts, results },
-					...(allPass ? {} : { isError: true }),
+					content: [{ type: "text", text: [renderVerifyReport(report, state.verifyLoop), fix, "", body].filter(Boolean).join("\n") }],
+					details: { mode: p.mode, report, decision, results },
+					...(report.allPass ? {} : { isError: true }),
 				};
 			}
 			return {

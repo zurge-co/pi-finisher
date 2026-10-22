@@ -47,6 +47,7 @@ export interface State {
 	worktreeLeaveNotified?: boolean; // dedupe: notify "unmerged worktree" once per creation
 	pendingApply?: PendingApply;    // change staged into main after eval PASS, awaiting human commit (ADR-003)
 	contextBulletin?: string;      // one-shot cycle-closure message pinned to the next turn's system prompt (consumed then cleared) — so the agent knows the human accepted/discarded/committed
+	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> }; // p3: bounded closed-loop verification (survives across tool calls so the bound is real)
 	hygieneViolations?: HygieneViolationRef[]; // latest code-rule violations from the tool_result check (cleared when a write comes back clean)
 }
 
