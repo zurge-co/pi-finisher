@@ -1823,7 +1823,7 @@ prove it with real commands (zense_swarm mode=verify or your own runs); no furth
 			// (they have dedicated /zense:ext-config:<role> commands), and actions (all/none/
 			// on/off) are second-level args of ext-config-show which pi can't positionally
 			// separate → including them would conjure phantom subcommands at position 1
-			["status", "resume", "agents", "distill", "memory", "models", "ext-config-show", "surface"]
+			["status", "resume", "accept", "discard", "agents", "distill", "memory", "models", "ext-config-show", "surface"]
 				.filter((s) => s.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {

@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	APPLY_BACK_COMMANDS,
 	RETIRED_COMMANDS,
 	RETIRED_TOOLS,
 	SURFACE_COMMANDS,
@@ -34,7 +35,11 @@ test("the agent-facing surface is exactly the three goal tools, and the retired 
 	assert.equal(isLiveTool("bash"), false);
 	const overlap = SURFACE_COMMANDS.filter((c) => RETIRED_COMMANDS.includes(c));
 	assert.deepEqual(overlap, [], "no command may be both live and retired");
-	for (const c of ["approve", "gate", "accept", "discard", "longrun"]) assert.ok(RETIRED_COMMANDS.includes(c));
+	for (const c of ["approve", "gate", "longrun"]) assert.ok(RETIRED_COMMANDS.includes(c));
+	for (const c of APPLY_BACK_COMMANDS) {
+		assert.ok(SURFACE_COMMANDS.includes(c), `${c} still exists in the browser, so it must be declared live`);
+		assert.equal(RETIRED_COMMANDS.includes(c), false, `${c} is not retired`);
+	}
 });
 
 test("config keeps only what the goal path needs and reports cost keys instead of honouring them", () => {
