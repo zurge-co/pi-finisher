@@ -241,6 +241,7 @@ export const buildCodeRulesPrompt = (): string =>
 		`- A file you create or rewrite must stay at or under ${HYGIENE_MAX_LINES} lines; split it instead of growing past that.`,
 		"- Tests are proof, not coverage. Write the few that establish a real property — a bound holds for every input, an ordering is total, a boundary is exact, an invariant survives a transformation — and skip whatever only re-states the code. A test that would still pass if the logic were wrong is worse than no test.",
 		"- Prefer one property that must hold over many examples that merely happen to: name the property in the test, assert the law, not the screenplay.",
+		"- A test with no assertion, a tautology (assert(true), assert.equal(x, x)) or nothing but existence/type checks is REJECTED by the harness — it can never fail, so it is filler. Delete it or assert a real law.",
 		"- Code rules never override a result: they are how the code must be written, not what it may do.",
 	].join("\n");
 

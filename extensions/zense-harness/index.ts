@@ -42,6 +42,8 @@ export * from "./src/memory.ts";
 export * from "./src/models.ts";
 export * from "./src/swarm.ts";
 export * from "./src/code-hygiene.ts";
+export * from "./src/test-quality.ts";
+export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
 export * from "./src/agent-panel.ts";
 export * from "./src/swarm-code.ts";

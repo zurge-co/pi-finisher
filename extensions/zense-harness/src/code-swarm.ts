@@ -2,7 +2,8 @@ import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { formatHygieneViolations, isHygieneChecked, scanSource, type HygieneViolation } from "./code-hygiene.ts";
+import { formatHygieneViolations } from "./code-hygiene.ts";
+import { analyzeTestFile, formatTestFindings, isTestFile } from "./test-quality.ts";
 import { costCeilingKeysPresent } from "./goal-run.ts";
 import { type LaunchSubagent, type Learn, type HarnessContext } from "./kit.ts";
 import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./swarm-code.ts";
@@ -103,6 +104,18 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 					if (violations.length) {
 						learn(ctx, `swarm code: slice ${plan.id} broke the code rules — handed back to a coder (${violations.length} violation(s))`);
 						return { ok: false, output: `your slice broke the code rules — fix these in your checkout, then report FILES: again\n${formatHygieneViolations(violations)}` };
+					}
+					const weakTests = changed.filter(isTestFile).flatMap((rel) => {
+						const abs = join(plan.worktreeDir, rel);
+						try {
+							return existsSync(abs) ? analyzeTestFile(readFileSync(abs, "utf8"), rel) : [];
+						} catch {
+							return [];
+						}
+					});
+					if (weakTests.length) {
+						learn(ctx, `swarm code: slice ${plan.id} wrote ${weakTests.length} filler test(s) — handed back`);
+						return { ok: false, output: `your slice added tests that can never fail — delete them or assert a real law, then report FILES: again\n${formatTestFindings(weakTests)}` };
 					}
 					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
 					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output });
