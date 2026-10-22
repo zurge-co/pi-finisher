@@ -52,6 +52,10 @@ export * from "./src/adr-deny.ts";
 export * from "./src/subagent-runner.ts";
 export * from "./src/memory.ts";
 export * from "./src/models.ts";
+export * from "./src/swarm.ts";
+export * from "./src/code-hygiene.ts";
+export * from "./src/goal-confirm.ts";
+export * from "./src/agent-panel.ts";
 export * from "./src/ask.ts";
 export * from "./src/longrun.ts";
 export * from "./src/longrun-auto.ts";
@@ -85,6 +89,10 @@ import { firstAdrDenyViolation } from "./src/adr-deny.ts";
 import { fmtTok, subagentLogPath, runSubagent } from "./src/subagent-runner.ts";
 import { aggregateMemory, memorySummaryLines, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./src/memory.ts";
 import { readModelsConfig, resolveModelPattern, writeModelsConfig, availableModelChoices, panelize } from "./src/models.ts";
+import { readModelLadder, readSwarmConcurrency, runSwarm, effectiveLadder, swarmSlots, swarmSummaryLine, buildFanOutPrompt, costCeilingsConfigured, SWARM_ROUTING_GUIDELINE, type FanOutArgs } from "./src/swarm.ts";
+import { CODE_HYGIENE_GUIDELINE, buildCodeRulesPrompt, formatHygieneViolations, isHygieneChecked, scanSource, type HygieneViolation } from "./src/code-hygiene.ts";
+import { panelLines, panelTickMs, streamTail, type PanelRun } from "./src/agent-panel.ts";
+import { buildGoalConfirmPrompt, goalCases, goalGate } from "./src/goal-confirm.ts";
 import { askQuestionScan, askPolicyError, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
 
 // ----------------------------------------------------------------------------- extension
@@ -201,29 +209,42 @@ export default function (pi: ExtensionAPI) {
 	const updateWidget = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		const s = state.spec;
-		const run = activeRun();
+		const live = panelLines(state.subagentRuns as PanelRun[], { width: Math.max(60, (ctx.ui as any).terminalWidth ?? 110) });
 		const line =
 			`ZENSE ▸ ${state.phase.toUpperCase()} · spec: ${s ? (s.approved ? "✅v" + s.version : "⏳unapproved") : "—"}` +
 			` · turns ${state.turnsUsed} · tok ${fmtTok(state.tokensUsed)}` +
-			(run ? ` · 🧪 ${run.role} ▶ ${Math.round((Date.now() - (run.startedAt ?? run.at)) / 1000)}s (ctrl+_ live · Esc cancels)` : "") +
+			(live.length > 1 ? ` · 🧪 ${live.length - 1} agents live` : "") +
 			(state.worktree ? ` · 🌳 ${basename(state.worktree.root)}` : "") +
 			(state.pendingApply ? ` · ⏳staged v${state.pendingApply.specVersion}` : "") +
 			(state.trajectoryFlags.length ? ` · ⚠ ${state.trajectoryFlags.length} traj-flags` : "") +
+			(state.hygieneViolations?.length ? ` · 🧹 ${state.hygieneViolations.length} code-rule` : "") +
 			(state.escalations.length ? ` · 🚨 ${state.escalations.length}` : "");
-		// longrun status bar (2026-09-24): the compact tracker/phase/cycle line lives in the
-		// footer via ctx.ui.setStatus — wired HERE (not a separate closure) so every existing
-		// updateWidget call site (session_start, sub-agent tick, zense_longrun's say, the AUTO
-		// eval-PASS self-advance) refreshes it for free. Same string-level dedupe as the
-		// widget: the 2s sub-agent tick must not rewrite the footer entry; a longrunStatusText
-		// of undefined CLEARS the entry so a stale line never lingers
 		const status = longrunStatusText(ctx.cwd, state.longRun, state.phase);
 		if (status !== lastLongrunStatus) {
 			lastLongrunStatus = status;
 			ctx.ui.setStatus("zense-longrun", status);
 		}
-		if (line === lastWidget) return; // same content → don't rebuild the component (prevents dock relayout)
-		lastWidget = line;
-		ctx.ui.setWidget("zense", [line]);
+		const text = [line, ...live].join("\n");
+		if (text === lastWidget) return;
+		lastWidget = text;
+		ctx.ui.setWidget("zense", text.split("\n"));
+	};
+
+	const ticker: { timer?: ReturnType<typeof setInterval>; ctx?: ExtensionContext; period?: number } = {};
+
+	const rescheduleTicker = (ctx: ExtensionContext) => {
+		ticker.ctx = ctx;
+		const liveCount = state.subagentRuns.filter((r) => r.status === "running").length;
+		const want = liveCount ? panelTickMs(liveCount) : undefined;
+		if (ticker.timer && want === ticker.period) return;
+		if (ticker.timer) clearInterval(ticker.timer);
+		ticker.timer = undefined;
+		ticker.period = want;
+		if (!want) return;
+		ticker.timer = setInterval(() => {
+			if (ticker.ctx) updateWidget(ticker.ctx);
+			rescheduleTicker(ticker.ctx as ExtensionContext);
+		}, want);
 	};
 
 	/** Redirect main-agent tool calls into the worktree (mutates event.input) — the agent
@@ -298,14 +319,21 @@ export default function (pi: ExtensionAPI) {
 		task: string,
 		onChunk?: (chunk: string) => void,
 		signal?: AbortSignal, // pi agent-turn signal (Esc) — threaded into runSubagent so the user can cancel mid-run
+		modelOverride?: string, // swarm slot model — wins over .zense/models.json role mapping (parallel models in one fan-out)
 	): Promise<{ ok: boolean; output: string; logPath: string }> => {
 		const logPath = subagentLogPath(ctx.cwd, role);
 		const mainModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
-		const modelPattern = resolveModelPattern(ctx.cwd, role, mainModel);
+		const modelPattern = modelOverride ?? resolveModelPattern(ctx.cwd, role, mainModel);
 		const run: SubagentRun = { role, ok: false, summary: "", at: Date.now(), startedAt: Date.now(), logPath, status: "running" };
 		state.subagentRuns.push(run);
+		rescheduleTicker(ctx);
 		updateWidget(ctx);
-		const tick = setInterval(() => updateWidget(ctx), 2_000); // keeps the elapsed counter moving in the widget
+		// live tail per run (2026-10-22): the fan-out panel shows every agent side by side, so each
+		// run keeps its own last streamed line instead of only the caller's onChunk copy
+		const runChunk = (chunk: string) => {
+			run.streamTail = streamTail(chunk);
+			onChunk?.(chunk);
+		};
 		try {
 			// use the worktree root as cwd when one is active → grader/reviewer run/test what was actually changed
 			const subCwd = state.worktree?.root ?? ctx.cwd;
@@ -313,7 +341,7 @@ export default function (pi: ExtensionAPI) {
 			// B: per-role timeout — built-in map + agent-visible knob .zense/config.json (subagentTimeoutMs);
 			// subCwd first, then ctx.cwd (a worktree has no .zense of its own → config lives in the main repo)
 			const stripFlags = await subagentStripFlagsAsync(role, subCwd, ctx.cwd);
-			const r0 = await runSubagent(role, task, subCwd, subagentTimeout(role, subCwd, ctx.cwd), onChunk, logPath, modelPattern, SUBAGENT_EXCLUDE_TOOLS[role], stripFlags, signal);
+			const r0 = await runSubagent(role, task, subCwd, subagentTimeout(role, subCwd, ctx.cwd), runChunk, logPath, modelPattern, SUBAGENT_EXCLUDE_TOOLS[role], stripFlags, signal);
 			// provider-missing diagnosis (2026-09-17, pure fn diagnoseProviderMissing): silent
 			// fallback (usedModel has a different provider than the pattern) / hard error (stderr
 			// matches PROVIDER_MISSING_RX) → heal
@@ -328,6 +356,7 @@ export default function (pi: ExtensionAPI) {
 			run.ok = r.ok;
 			run.summary = r.output.slice(0, 300);
 			run.status = r.ok ? "done" : "failed";
+			run.streamTail = undefined;
 			if (r.usedModel) run.model = r.usedModel;
 			// verify the actually-run model matches the config — pi can fall back to its default
 			// silently when a pattern won't resolve (unknown provider/id → no error, lands on the
@@ -339,7 +368,7 @@ export default function (pi: ExtensionAPI) {
 			if (!r.ok) learn(ctx, `sub-agent failed: ${role} — ${r.output.split("\n")[0].slice(0, 160)}`);
 			return r;
 		} finally {
-			clearInterval(tick);
+			rescheduleTicker(ctx);
 			persist();
 			updateWidget(ctx);
 		}
@@ -425,12 +454,53 @@ export default function (pi: ExtensionAPI) {
 		applyRedirect(ev, ctx);
 	});
 
+	// ----- code hygiene (goal-confirm rewrite, 2026-10-22): the code rules the human asked for
+	//       are enforced HERE, not merely asked for in the prompt — every write/edit of a code
+	//       file is re-scanned and the violation text is appended to the tool result, so the
+	//       same turn sees what is wrong and rewrites it (no human gate in between).
+
+	const applyHygieneCheck = (ev: any, ctx: ExtensionContext): { content?: any[]; isError?: boolean } | undefined => {
+		const name = ev.toolName;
+		if (name !== "write" && name !== "edit") return undefined;
+		const path = (ev.input as { path?: string })?.path;
+		if (typeof path !== "string" || !path) return undefined;
+		const abs = resolve(ctx.cwd, path);
+		if (state.worktree && abs.startsWith(resolve(state.worktree.root))) return undefined;
+		if (!isHygieneChecked(abs)) return undefined;
+		let text: string;
+		try {
+			text = readFileSync(abs, "utf8");
+		} catch {
+			return undefined;
+		}
+		const scan = scanSource(text, relative(ctx.cwd, abs) || abs);
+		if (!scan.violations.length) {
+			if (state.hygieneViolations) {
+				state.hygieneViolations = undefined;
+				persist();
+				updateWidget(ctx);
+			}
+			return undefined;
+		}
+		state.hygieneViolations = scan.violations;
+		const report = formatHygieneViolations(scan.violations);
+		learn(ctx, `code-hygiene: ${scan.violations.length} violation(s) in ${relative(ctx.cwd, abs)}`);
+		persist();
+		updateWidget(ctx);
+		const content = Array.isArray(ev.content) ? [...ev.content] : [];
+		content.push({ type: "text", text: `\n⚠ code-hygiene: ${report}\nfix the file you just wrote (the harness re-checks every write/edit — no human will ok it for you)` });
+		return { content, isError: true };
+	};
+
+	pi.on("tool_result", async (ev, ctx) => applyHygieneCheck(ev, ctx));
+
 	// ----- M (comment discipline): guideline appended to the system prompt only during
 	// implementation (the system prompt ships every turn — pay for it only while code is
 	// actually being written; leaving implementation removes it again)
 	pi.on("before_agent_start", async (event, ctx) => {
 		let sp = event.systemPrompt;
 		if (state.phase === "implementation") sp += "\n\n" + COMMENT_DISCIPLINE_GUIDELINE;
+		sp += "\n\n" + CODE_HYGIENE_GUIDELINE + "\n\n" + SWARM_ROUTING_GUIDELINE;
 		// cycle-closure bulletin (2026-09-17): one-shot — consumed and persisted at once so it
 		// never rides every turn; sendUserMessage is avoided on purpose (it always triggers a new
 		// turn = a wasted LLM call + a surprise at session open)
@@ -613,15 +683,17 @@ export default function (pi: ExtensionAPI) {
 		const picked = await zenseCustom<string | null>(ctx, OVERLAY_LG, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const title = new Text(theme.fg("accent", theme.bold(`🔏 ${question}`)), 1, 0);
+			const cases = goalCases(spec);
 			const hint = new Text(
 				theme.fg(
 					"warning",
-					`Cross-check — what we understood you want` +
+					`Confirm ONCE — the agent then works until every case holds (no further gate)` +
 						(state.lastCompileLessons ? ` · 📚 fed ${state.lastCompileLessons} lessons from memory at compile time` : ""),
 				),
 				1,
 				0,
 			);
+			const caseBlock = new Text(cases.map((c, i) => theme.fg("customMessageText", `  ${i + 1}. ${c}`)).join("\n"), 1, 0);
 			// outcome-first sign dialog (2026-10-16): the signer reads WHAT they get, not how —
 			// the technical spec (approach/scope/checks/spec debt/Changes) lives in .zense/spec.md,
 			// named by the pointer line in the body. renderSignOutcome builds from outcomes/intent
@@ -664,7 +736,7 @@ export default function (pi: ExtensionAPI) {
 					offset = Math.max(0, Math.min(offset, maxOffset()));
 					const h = bodyRows();
 					const out: string[] = [];
-					out.push(...border.render(w), ...title.render(w), ...hint.render(w));
+					out.push(...border.render(w), ...title.render(w), ...hint.render(w), ...caseBlock.render(w));
 					const slice = lines.slice(offset, offset + h);
 					for (const ln of slice) out.push("  " + ln);
 					for (let i = slice.length; i < h; i++) out.push(""); // keep the dialog height steady
@@ -1133,6 +1205,8 @@ export default function (pi: ExtensionAPI) {
 	 *  /zense approve */
 	const approveCurrentSpec = (ctx: ExtensionContext) => {
 		if (!state.spec) return false;
+		const cases = goalCases(state.spec);
+		learn(ctx, `goal confirmed once on spec v${state.spec.version} — ${cases.length} case(s), no further approval in this run: ${cases.slice(0, 3).join(" | ").slice(0, 240)}`);
 		state.spec.approved = true;
 		state.spec.approvedAt = Date.now();
 		state.phase = "implementation";
@@ -2785,6 +2859,92 @@ export default function (pi: ExtensionAPI) {
 				answers.push({ question: q.question, answer: await askClarifyQuestion(ctx as ExtensionContext, q) }); // Esc/skip resolves undefined per question — never aborts the rest
 			learn(ctx as ExtensionContext, `zense_ask: ${qs.length} question(s), ${answers.filter((a) => a.answer === undefined).length} skipped`);
 			return { content: [{ type: "text", text: formatAskAnswers(answers) }], details: { answers } };
+		},
+	});
+
+	// ----- zense_swarm: parallel fan-out. explore = read-only research/verify slices running at
+	//       the same time on the configured priority ladder (one model per slot, capped by
+	//       swarmConcurrency); coding / goal-driving / per-worktree isolation arrive in later
+	//       phases, so `mode: "code"` is refused here rather than half-done.
+
+	pi.registerTool({
+		name: "zense_swarm",
+		label: "Zense Swarm",
+		description:
+			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .zense/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands. No token/cost ceiling. mode=code is not available yet.",
+		promptSnippet: "Fan out parallel read-only sub-agents across the model priority ladder (explore / verify)",
+		promptGuidelines: [
+			"Use zense_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
+			"Use zense_swarm verify to prove the result against reality: each verifier runs real commands and ends with VERDICT: PASS/FAIL. A failing verdict means the goal is not done — fix and verify again.",
+			"Never use the swarm to write code yet (mode=code is refused). Decide library/layout/approach yourself — do not ask the human.",
+		],
+		parameters: Type.Object({
+			mode: Type.Union([Type.Literal("explore"), Type.Literal("verify")] as const),
+			goal: Type.Optional(Type.String({ description: "the outcome the whole fan-out serves (verifiers judge against exactly this)" })),
+			subtasks: Type.Array(
+				Type.Object({
+					id: Type.String({ description: "short stable id, unique within the call (e.g. s1)" }),
+					instruction: Type.String({ description: "self-contained slice: that worker sees only this text" }),
+				}),
+				{ description: "1–8 independent slices — they run concurrently, so none may depend on another" },
+			),
+			maxAttempts: Type.Optional(Type.Integer({ description: "attempts per slice before it counts as failed (default 2)" })),
+		}),
+		async execute(_id, p, sig, _on, ctx) {
+			if (!p.subtasks.length) return { content: [{ type: "text", text: "zense_swarm: subtasks must contain at least one slice" }], details: {}, isError: true };
+			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `zense_swarm: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
+			const ids = new Set<string>();
+			for (const s of p.subtasks) {
+				if (!s.id.trim() || ids.has(s.id)) return { content: [{ type: "text", text: `zense_swarm: subtask id "${s.id}" is empty or duplicated` }], details: {}, isError: true };
+				ids.add(s.id);
+			}
+			const mainPattern = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+			const { ladder, source } = effectiveLadder(ctx.cwd, mainPattern);
+			const slots = swarmSlots(ladder);
+			if (!slots.length)
+				return {
+					content: [{ type: "text", text: "zense_swarm: no model to run — set priority1..priority5 in .zense/models.json (each a pi model pattern like \"provider/model\"), or run the swarm from a session whose model resolves; it uses as many slots as are set" }],
+					details: { missingLadder: true },
+					isError: true,
+				};
+			const concurrency = readSwarmConcurrency(ctx.cwd, slots.length);
+			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}) };
+			const results = await runSwarm(
+				fan.subtasks.map((s) => ({ id: s.id, payload: s })),
+				{
+					slots,
+					concurrency,
+					maxAttempts: p.maxAttempts ?? 2,
+					run: async (task, slot, attempt) => {
+						if (sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
+						const before = state.subagentRuns.length;
+						const pending = launchSubagent(ctx, "swarm", buildFanOutPrompt(fan, task.payload!, attempt), undefined, sig, slot.model);
+						const started = state.subagentRuns[before];
+						if (started) started.slotId = slot.id;
+						const r = await pending;
+						return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
+					},
+				},
+			);
+			const failed = results.filter((r) => !r.ok);
+			const body = results
+				.map((r) => `## ${r.id} ${r.ok ? "✓" : "✗"}${r.model ? ` [${r.model}]` : ""}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ""}\n${r.output.trim() || "(no output)"}`)
+				.join("\n\n");
+			learn(ctx, `swarm ${p.mode}: ${swarmSummaryLine(results)} — ladder ${ladder.join(" > ")} (${source})${costCeilingsConfigured(ctx.cwd).length ? ` ⚠ ignored ceiling key(s): ${costCeilingsConfigured(ctx.cwd).join(", ")}` : ""}`);
+			if (p.mode === "verify") {
+				const verdicts = results.map((r) => `${r.id}: ${/VERDICT:\s*PASS/i.test(r.output) ? "PASS" : /VERDICT:\s*FAIL/i.test(r.output) ? "FAIL" : "UNVERIFIED"}`);
+				const allPass = results.length > 0 && results.every((r) => r.ok && /VERDICT:\s*PASS/i.test(r.output));
+				return {
+					content: [{ type: "text", text: `${allPass ? "✅ verified" : "❌ NOT verified"} — ${swarmSummaryLine(results)}\n${verdicts.join("\n")}\n\n${body}` }],
+					details: { mode: p.mode, allPass, verdicts, results },
+					...(allPass ? {} : { isError: true }),
+				};
+			}
+			return {
+				content: [{ type: "text", text: `${swarmSummaryLine(results)} (concurrency ${concurrency})\n\n${body}${failed.length ? `\n\n⚠ ${failed.length} slice(s) failed — re-run just those slices or do them yourself` : ""}` }],
+				details: { mode: p.mode, concurrency, results },
+				...(failed.length ? { isError: true } : {}),
+			};
 		},
 	});
 

@@ -195,7 +195,8 @@ test("source: specSignDialog renders only the cross-check — no technical spec,
 	assert.ok(i > 0, "specSignDialog must exist");
 	const body = src.slice(i, src.indexOf("const trackerSignDialog"));
 	assert.match(body, /renderSignOutcome/, "the dialog body must come from renderSignOutcome (cross-check cases only)");
-	assert.match(body, /Cross-check — what we understood you want/);
+	assert.match(body, /Confirm ONCE — the agent then works until every case holds \(no further gate\)/);
+	assert.match(body, /goalCases\(spec\)/, "the dialog must list the goal cases from the spec (cross-check outcomes, legacy outcomes, else intent)");
 	assert.match(body, /askRejectReason/, "n must open the optional reason box");
 	assert.match(body, /done\(REJECT_WITH_REASON\)/, "n returns the reject sentinel");
 	assert.match(body, /matchesKey\(data, Key\.escape\).*done\(null\)/, "Esc must stay a quick no-reason close");

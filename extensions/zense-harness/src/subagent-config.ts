@@ -24,6 +24,8 @@ export const SUBAGENT_EXCLUDE_TOOLS: Record<string, string[]> = {
 	reviewer: ["write", "edit"],
 	// distiller reads only memory.jsonl and returns JSON — no writes/commands at all (the harness rewrites the file itself after validation)
 	distiller: ["write", "edit", "bash"],
+	// swarm-explore: parallel read-only fan-out (p2) — same isolation as requirements
+	swarm: ["write", "edit"],
 };
 
 /** M (2026-09-08): per-role boot strip flags — every sub-agent launch otherwise pays pi's full
@@ -37,6 +39,8 @@ export const SUBAGENT_STRIP_FLAGS: Record<string, string[]> = {
 	requirements: ["--no-themes", "--no-prompt-templates"],
 	// planner, like requirements: may need repo skills/extensions context while decomposing
 	planner: ["--no-themes", "--no-prompt-templates"],
+	// swarm: explore/fan-out workers need the same repo context as requirements
+	swarm: ["--no-themes", "--no-prompt-templates"],
 	grader: ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"],
 	reviewer: ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"],
 	distiller: ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"],
@@ -53,6 +57,8 @@ export const SUBAGENT_TIMEOUT_MS: Record<string, number> = {
 	requirements: 600_000,
 	// planner only reads the intent + skims the layout before decomposing — much lighter than requirements
 	planner: 300_000,
+	// swarm workers run in parallel — a per-worker limit, not a whole-fan-out budget
+	swarm: 600_000,
 	grader: 600_000,
 	reviewer: 480_000,
 	distiller: 300_000,

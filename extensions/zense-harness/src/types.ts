@@ -47,6 +47,14 @@ export interface State {
 	worktreeLeaveNotified?: boolean; // dedupe: notify "unmerged worktree" once per creation
 	pendingApply?: PendingApply;    // change staged into main after eval PASS, awaiting human commit (ADR-003)
 	contextBulletin?: string;      // one-shot cycle-closure message pinned to the next turn's system prompt (consumed then cleared) — so the agent knows the human accepted/discarded/committed
+	hygieneViolations?: HygieneViolationRef[]; // latest code-rule violations from the tool_result check (cleared when a write comes back clean)
+}
+
+export interface HygieneViolationRef {
+	path: string;
+	kind: "comment" | "length" | "exempt-without-reason";
+	line?: number;
+	detail: string;
 }
 export interface SubagentRun {
 	role: string;
@@ -59,6 +67,8 @@ export interface SubagentRun {
 	status?: "running" | "done" | "failed";
 	retried?: boolean;           // provider-missing heal: this run was retried once with '-e <provider ext>'
 	autoIncluded?: boolean;      // provider-missing heal: retry succeeded → persist path merged into the role's include list
+	streamTail?: string;         // last streamed output of a live run — the fan-out panel shows every agent side by side
+	slotId?: string;             // swarm slot (priority rung) this run was launched on
 }
 /** Active per-session worktree: every main-agent tool call is redirected here
  *  (by mutating event.input); on eval PASS the work is applied back to main as
