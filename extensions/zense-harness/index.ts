@@ -56,6 +56,7 @@ export * from "./src/swarm.ts";
 export * from "./src/code-hygiene.ts";
 export * from "./src/goal-confirm.ts";
 export * from "./src/agent-panel.ts";
+export * from "./src/swarm-code.ts";
 export * from "./src/ask.ts";
 export * from "./src/longrun.ts";
 export * from "./src/longrun-auto.ts";
@@ -65,7 +66,7 @@ export * from "./src/longrun-status.ts";
 // body needs — the lines below are only the local src/ bindings the factory uses by name.
 import { zenseDir, type Criterion, type LongRunRef, type Spec, type State, type SubagentRun, type Tracker, type TrackerPhase, type Worktree as WorktreeT } from "./src/types.ts";
 import { buildSpecChanges, renderSignOutcome, renderSpecMd, renderTrackerOutcomes, syncApprovedSpecFiles, applyFullscreenDefault, goalLines, sameGoalLines, decideSpecApproval, rejectionDirective } from "./src/spec-changes.ts";
-import { rewritePathForWorktree, buildWorktreeCommand, gitOk, canReuseWorktree, createWorktree, ensureLongrunWorktree } from "./src/worktree.ts";
+import { rewritePathForWorktree, buildWorktreeCommand, gitOk, canReuseWorktree, createWorktree, ensureLongrunWorktree, excludeFromGitStatus } from "./src/worktree.ts";
 import { loadSpecFromDisk, discoverResumeState, findSpecArchivePaths, discoverLongrunTrackers } from "./src/resume.ts";
 import {
 	allPhasesDone, appendSpecsLog, buildContextCapsule, checkpointCommit, droppedSeedIds, findPhase, healToBranch,
@@ -89,9 +90,10 @@ import { firstAdrDenyViolation } from "./src/adr-deny.ts";
 import { fmtTok, subagentLogPath, runSubagent } from "./src/subagent-runner.ts";
 import { aggregateMemory, memorySummaryLines, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./src/memory.ts";
 import { readModelsConfig, resolveModelPattern, writeModelsConfig, availableModelChoices, panelize } from "./src/models.ts";
-import { readModelLadder, readSwarmConcurrency, runSwarm, effectiveLadder, swarmSlots, swarmSummaryLine, buildFanOutPrompt, costCeilingsConfigured, SWARM_ROUTING_GUIDELINE, type FanOutArgs } from "./src/swarm.ts";
+import { readModelLadder, readSwarmConcurrency, runSwarm, effectiveLadder, swarmSlots, swarmSummaryLine, buildFanOutPrompt, costCeilingsConfigured, SWARM_ROUTING_GUIDELINE, type FanOutArgs, type SwarmSlot, type SwarmTask } from "./src/swarm.ts";
 import { CODE_HYGIENE_GUIDELINE, buildCodeRulesPrompt, formatHygieneViolations, isHygieneChecked, scanSource, type HygieneViolation } from "./src/code-hygiene.ts";
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./src/agent-panel.ts";
+import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, type SliceOutcome, type SlicePlan } from "./src/swarm-code.ts";
 import { buildGoalConfirmPrompt, goalCases, goalGate } from "./src/goal-confirm.ts";
 import { askQuestionScan, askPolicyError, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
 
@@ -311,6 +313,107 @@ export default function (pi: ExtensionAPI) {
 		}
 		learn(ctx, `provider missing: ${role} needs "${patternProvider}" but can't heal — ${hit ? (alreadyIncluded ? "extension already included, still falling back (suspect auth)" : "extension ambiguous/unusable") : "no provider extension found"}`);
 		return { ...r0, ok: false, output: `${buildProviderMissingGuidance(role, patternProvider, { hit, alreadyIncluded })}\n---\n${r0.output}` };
+	};
+
+	const gitIn = (repo: string, args: string[]): { ok: boolean; out: string } => {
+		const r = gitOk(args, repo);
+		return { ok: r.ok, out: r.out.trim() };
+	};
+
+	const workerWorktree = (repo: string, dir: string, branch: string): boolean => {
+		mkdirSync(dirname(dir), { recursive: true });
+		const have = gitIn(repo, ["rev-parse", "--verify", "-q", branch]).ok;
+		const add = have ? gitIn(repo, ["worktree", "add", dir, branch]) : gitIn(repo, ["worktree", "add", dir, "-b", branch]);
+		if (add.ok) excludeFromGitStatus(repo, join(zenseDir(repo), "worktree"));
+		return add.ok;
+	};
+
+	const dropWorkerWorktree = (repo: string, dir: string, branch: string): void => {
+		gitIn(repo, ["worktree", "remove", "--force", dir]);
+		gitIn(repo, ["branch", "-D", branch]);
+	};
+
+	const sliceDiff = (repo: string, dir: string, paths: string[]): string => {
+		const files = paths.length ? paths : ["."];
+		const tracked = gitIn(dir, ["diff", "HEAD", "--", ...files]);
+		return tracked.ok ? tracked.out : "";
+	};
+
+	const applySlice = (repo: string, diff: string): { ok: boolean; msg: string } => {
+		if (!diff.trim()) return { ok: true, msg: "no changes" };
+		try {
+			execFileSync("git", ["apply", "--3way", "-"], { cwd: repo, input: diff, stdio: ["pipe", "pipe", "pipe"] });
+			return { ok: true, msg: "applied" };
+		} catch (e: any) {
+			return { ok: false, msg: (e?.stderr?.toString() ?? e?.message ?? String(e)).split("\n")[0] };
+		}
+	};
+
+	const runCodeSwarm = async (
+		ctx: ExtensionContext,
+		slices: { id: string; instruction: string; scope?: string[] }[],
+		opts: { slots: SwarmSlot[]; concurrency: number; maxAttempts: number; goal?: string; sig?: AbortSignal; ladder: string[]; source: string; notes: string },
+	): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown>; isError?: boolean }> => {
+		let plans: SlicePlan[];
+		try {
+			plans = planSlices(slices, join(zenseDir(ctx.cwd), "worktree", "swarm"), new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
+		} catch (e) {
+			return { content: [{ type: "text", text: `zense_swarm code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
+		}
+		const outcomes: SliceOutcome[] = [];
+		const byPlan = new Map(plans.map((pl) => [pl.id, pl]));
+		const tasks = slices.map((sl) => ({ id: sl.id, payload: sl }));
+		const results = await runSwarm(tasks, {
+			slots: opts.slots,
+			concurrency: opts.concurrency,
+			maxAttempts: opts.maxAttempts,
+			run: async (task, slot, attempt) => {
+				const plan = byPlan.get(task.id)!;
+				if (opts.sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
+				if (!workerWorktree(ctx.cwd, plan.worktreeDir, plan.branch)) return { ok: false, output: `could not create the worker worktree ${plan.worktreeDir} (branch ${plan.branch})` };
+				const prompt = buildCodeWorkerPrompt(task.payload!, { worktreeDir: plan.worktreeDir, scopes: plan.scopes, ...(opts.goal ? { goal: opts.goal } : {}) });
+				const before = state.subagentRuns.length;
+				const pending = launchSubagent(ctx, "swarm", prompt, undefined, opts.sig, slot.model);
+				const started = state.subagentRuns[before];
+				if (started) started.slotId = `${slot.id}·${plan.id}`;
+				const r = await pending;
+				try {
+					if (!r.ok) return { ok: false, output: `${r.output}\n(log: ${r.logPath})` };
+					const reported = parseWorkerFiles(r.output);
+					const changed = reported.length ? reported : gitIn(plan.worktreeDir, ["diff", "--name-only", "HEAD"]).out.split("\n").filter(Boolean);
+					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
+					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output });
+					return { ok: true, output: r.output };
+				} finally {
+					dropWorkerWorktree(ctx.cwd, plan.worktreeDir, plan.branch);
+				}
+			},
+		});
+		const mergePlan = planMerge(outcomes);
+		const applied: string[] = [];
+		const failedApplies: string[] = [];
+		for (const step of mergePlan.steps) {
+			if (!step.apply) continue;
+			const o = outcomes.find((x) => x.id === step.id)!;
+			const res = applySlice(ctx.cwd, o.diff ?? "");
+			if (res.ok) applied.push(o.id);
+			else failedApplies.push(`${o.id}: ${res.msg}`);
+		}
+		const failed = results.filter((r) => !r.ok);
+		learn(ctx, `swarm code: ${outcomes.length}/${results.length} coder(s) produced work — merge ${applied.length} applied, ${mergePlan.blocked.length} blocked, ${failedApplies.length} apply-failed — ladder ${opts.ladder.join(" > ")} (${opts.source})${opts.notes}`);
+		const lines = [
+			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ code swarm finished with issues" : "✅ code swarm merged"}: ${applied.length}/${results.length} slice(s) applied`,
+			mergeReport(mergePlan, outcomes),
+		];
+		if (failed.length) lines.push(`failed coder(s): ${failed.map((f) => f.id).join(", ")}`);
+		if (failedApplies.length) lines.push(`apply failed (resolve by hand): ${failedApplies.join(" · ")}`);
+		if (mergePlan.overlaps.length) lines.push("overlapping slices were NOT merged — split the work so each file has one owner, or merge those by hand");
+		lines.push("leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under .zense/worktree/swarm/");
+		return {
+			content: [{ type: "text", text: lines.join("\n") }],
+			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, results },
+			...(failed.length || mergePlan.blocked.length || failedApplies.length ? { isError: true } : {}),
+		};
 	};
 
 	const launchSubagent = async (
@@ -2871,20 +2974,22 @@ export default function (pi: ExtensionAPI) {
 		name: "zense_swarm",
 		label: "Zense Swarm",
 		description:
-			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .zense/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands. No token/cost ceiling. mode=code is not available yet.",
-		promptSnippet: "Fan out parallel read-only sub-agents across the model priority ladder (explore / verify)",
+			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .zense/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands; mode=code gives every slice its OWN git worktree + branch so coders write in parallel without touching each other, then merges back in deterministic slice-id order and refuses to merge silently when two slices touched the same path. No token/cost ceiling.",
+		promptSnippet: "Fan out parallel sub-agents across the model priority ladder (explore / verify / code in isolated worktrees)",
 		promptGuidelines: [
 			"Use zense_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
 			"Use zense_swarm verify to prove the result against reality: each verifier runs real commands and ends with VERDICT: PASS/FAIL. A failing verdict means the goal is not done — fix and verify again.",
-			"Never use the swarm to write code yet (mode=code is refused). Decide library/layout/approach yourself — do not ask the human.",
+			"Use zense_swarm code when the change splits into independent slices: each coder gets its own worktree, so give every slice its scope and let them all run at once. Slices that need the same file must be one slice — overlapping paths are blocked and reported, never merged silently.",
+			"Decide library/layout/approach yourself — do not ask the human.",
 		],
 		parameters: Type.Object({
-			mode: Type.Union([Type.Literal("explore"), Type.Literal("verify")] as const),
+			mode: Type.Union([Type.Literal("explore"), Type.Literal("verify"), Type.Literal("code")] as const),
 			goal: Type.Optional(Type.String({ description: "the outcome the whole fan-out serves (verifiers judge against exactly this)" })),
 			subtasks: Type.Array(
 				Type.Object({
-					id: Type.String({ description: "short stable id, unique within the call (e.g. s1)" }),
+					id: Type.String({ description: "short stable id, unique within the call (e.g. s1) — used verbatim in the worker's worktree and branch, so lowercase letters/digits/-/_ only" }),
 					instruction: Type.String({ description: "self-contained slice: that worker sees only this text" }),
+					scope: Type.Optional(Type.Array(Type.String(), { description: "repo-relative paths this slice may touch — two slices sharing a path are a conflict, so split differently" })),
 				}),
 				{ description: "1–8 independent slices — they run concurrently, so none may depend on another" },
 			),
@@ -2908,29 +3013,25 @@ export default function (pi: ExtensionAPI) {
 					isError: true,
 				};
 			const concurrency = readSwarmConcurrency(ctx.cwd, slots.length);
+			const notes = costCeilingsConfigured(ctx.cwd).length ? ` ⚠ ignored ceiling key(s): ${costCeilingsConfigured(ctx.cwd).join(", ")}` : "";
+			const runOne = <T,>(promptFor: (task: SwarmTask<T>, attempt: number) => string) => async (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => {
+				if (sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
+				const before = state.subagentRuns.length;
+				const pending = launchSubagent(ctx, "swarm", promptFor(task, attempt), undefined, sig, slot.model);
+				const started = state.subagentRuns[before];
+				if (started) started.slotId = slot.id;
+				const r = await pending;
+				return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
+			};
+			if (p.mode === "code") return await runCodeSwarm(ctx, p.subtasks, { slots, concurrency, maxAttempts: p.maxAttempts ?? 2, goal: p.goal, sig, ladder, source, notes });
 			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}) };
-			const results = await runSwarm(
-				fan.subtasks.map((s) => ({ id: s.id, payload: s })),
-				{
-					slots,
-					concurrency,
-					maxAttempts: p.maxAttempts ?? 2,
-					run: async (task, slot, attempt) => {
-						if (sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
-						const before = state.subagentRuns.length;
-						const pending = launchSubagent(ctx, "swarm", buildFanOutPrompt(fan, task.payload!, attempt), undefined, sig, slot.model);
-						const started = state.subagentRuns[before];
-						if (started) started.slotId = slot.id;
-						const r = await pending;
-						return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
-					},
-				},
-			);
+			const tasks = fan.subtasks.map((s) => ({ id: s.id, payload: s }));
+			const results = await runSwarm(tasks, { slots, concurrency, maxAttempts: p.maxAttempts ?? 2, run: runOne((task, attempt) => buildFanOutPrompt(fan, task.payload!, attempt)) });
 			const failed = results.filter((r) => !r.ok);
 			const body = results
 				.map((r) => `## ${r.id} ${r.ok ? "✓" : "✗"}${r.model ? ` [${r.model}]` : ""}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ""}\n${r.output.trim() || "(no output)"}`)
 				.join("\n\n");
-			learn(ctx, `swarm ${p.mode}: ${swarmSummaryLine(results)} — ladder ${ladder.join(" > ")} (${source})${costCeilingsConfigured(ctx.cwd).length ? ` ⚠ ignored ceiling key(s): ${costCeilingsConfigured(ctx.cwd).join(", ")}` : ""}`);
+			learn(ctx, `swarm ${p.mode}: ${swarmSummaryLine(results)} — ladder ${ladder.join(" > ")} (${source})${notes}`);
 			if (p.mode === "verify") {
 				const verdicts = results.map((r) => `${r.id}: ${/VERDICT:\s*PASS/i.test(r.output) ? "PASS" : /VERDICT:\s*FAIL/i.test(r.output) ? "FAIL" : "UNVERIFIED"}`);
 				const allPass = results.length > 0 && results.every((r) => r.ok && /VERDICT:\s*PASS/i.test(r.output));

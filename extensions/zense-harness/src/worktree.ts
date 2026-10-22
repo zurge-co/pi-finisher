@@ -94,7 +94,7 @@ export const ensureLongrunWorktree = (cwd: string, slug: string, branch: string)
 
 /** Keep zense-created dirs (e.g. .zense/worktree/) out of main's git status — best-effort
  *  append to .git/info/exclude (local-only, never touches tracked user files). */
-const excludeFromGitStatus = (cwd: string, absPath: string): void => {
+export const excludeFromGitStatus = (cwd: string, absPath: string): void => {
 	try {
 		const top = gitOk(["rev-parse", "--show-toplevel"], cwd);
 		if (!top.ok) return;
