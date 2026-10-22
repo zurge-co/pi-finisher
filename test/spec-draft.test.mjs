@@ -21,13 +21,13 @@ const GOOD_SPEC = {
 	crossCheck: [
 		"คุณต้องการให้เข้าสู่ระบบครั้งเดียวแล้วถึงหน้าที่ต้องการได้ทันที",
 		"เมื่อกลับมาใช้งานอีกครั้ง ระบบจะไม่ถามรหัสผ่านซ้ำ",
-	], // user-language goal cases (2026-10-18) — the sign surface
-	outcomes: "หลังเข้าสู่ระบบ คุณจะถึงหน้าที่ต้องการได้ทันทีโดยไม่ต้องเข้าสู่ระบบซ้ำ", // legacy summary
+	],
+	outcomes: "หลังเข้าสู่ระบบ คุณจะถึงหน้าที่ต้องการได้ทันทีโดยไม่ต้องเข้าสู่ระบบซ้ำ",
 	scope: ["src/auth"],
 	constraints: ["no new deps"],
 	criteria: [
 		{ id: "c1", text: "login test passes", check: "npm test" },
-		{ text: "guard exists", check: "path exists: src/auth/guard.ts" }, // missing id → auto c2
+		{ text: "guard exists", check: "path exists: src/auth/guard.ts" },
 	],
 	specDebt: [],
 };
@@ -43,11 +43,9 @@ test("extractJsonObject: tolerates plain JSON, fences and surrounding prose", ()
 test("parseSpecDraft: valid spec (plain/fenced) → kind spec with normalized ids and defaults", () => {
 	const parsed = parseSpecDraft(JSON.stringify(GOOD_SPEC));
 	assert.equal(parsed.kind, "spec");
-	assert.equal(parsed.draft.criteria[1].id, "c2"); // id auto-assign
-	const fenced = parseSpecDraft("here's the draft:\n```json\n" + JSON.stringify({ title: "T", criteria: [{ text: "x", check: "npm test" }] }) + "\n```");
+	assert.equal(parsed.draft.criteria[1].id, "c2"); 	const fenced = parseSpecDraft("here's the draft:\n```json\n" + JSON.stringify({ title: "T", criteria: [{ text: "x", check: "npm test" }] }) + "\n```");
 	assert.equal(fenced.kind, "spec");
-	assert.deepEqual(fenced.draft.scope, []); // missing array → []
-	assert.equal(fenced.draft.title, "T");
+	assert.deepEqual(fenced.draft.scope, []); 	assert.equal(fenced.draft.title, "T");
 });
 
 test("parseSpecDraft: approach normalize — missing/invalid → [], valid array → kept", () => {
@@ -56,12 +54,8 @@ test("parseSpecDraft: approach normalize — missing/invalid → [], valid array
 	assert.deepEqual(withApproach.draft.approach, ["add approach field to Spec/SpecDraft", "wire prompt contract + renderSpecMd", "npm test green"]);
 	const missing = parseSpecDraft(JSON.stringify(GOOD_SPEC));
 	assert.equal(missing.kind, "spec");
-	assert.deepEqual(missing.draft.approach, []); // missing → []
-	const invalid = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, approach: 42 }));
-	assert.deepEqual(invalid.draft.approach, []); // invalid → []
-	// the clarify/error contract holds: clarify wins only when no criteria exist (a policy-valid
-	// question, i.e. one carrying choices)
-	assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ question: "q", choices: ["a", "b"] }], approach: ["x"] })).kind, "clarify");
+	assert.deepEqual(missing.draft.approach, []); 	const invalid = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, approach: 42 }));
+	assert.deepEqual(invalid.draft.approach, []); 			assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ question: "q", choices: ["a", "b"] }], approach: ["x"] })).kind, "clarify");
 });
 
 test("buildRequirementsPrompt: JSON contract includes approach (presentational, not a machine-checked criterion)", () => {
@@ -81,18 +75,15 @@ test("parseSpecDraft: clarify shape (questions only) → kind clarify; questions
 		{ question: "which env?", choices: ["dev", "prod"] },
 		{ question: "which db?", choices: ["sqlite", "pg"] },
 	]);
-	// with criteria present it's a real draft, not a clarification
-	const withCriteria = parseSpecDraft(JSON.stringify({ questions: [{ question: "q", choices: ["a"] }], ...GOOD_SPEC }));
+		const withCriteria = parseSpecDraft(JSON.stringify({ questions: [{ question: "q", choices: ["a"] }], ...GOOD_SPEC }));
 	assert.equal(withCriteria.kind, "spec");
 });
 
 test("parseSpecDraft: clarify questions normalize — choices shape, freeText marker, junk skipped, cap 5", () => {
-	// the sub-agent attaches choices for quick human picking
-	const withChoices = parseSpecDraft(JSON.stringify({ questions: [{ question: "pick env?", choices: ["dev", "prod"] }] }));
+		const withChoices = parseSpecDraft(JSON.stringify({ questions: [{ question: "pick env?", choices: ["dev", "prod"] }] }));
 	assert.equal(withChoices.kind, "clarify");
 	assert.deepEqual(withChoices.questions, [{ question: "pick env?", choices: ["dev", "prod"] }]);
-	// both legal shapes may mix in one array: choices + explicit freeText (product/UI, no options)
-	const mixed = parseSpecDraft(JSON.stringify({ questions: [
+		const mixed = parseSpecDraft(JSON.stringify({ questions: [
 		{ question: "what should the empty state look like?", freeText: true },
 		{ question: "with choice?", choices: ["a"] },
 	] }));
@@ -101,29 +92,21 @@ test("parseSpecDraft: clarify questions normalize — choices shape, freeText ma
 		{ question: "what should the empty state look like?", choices: [], freeText: true },
 		{ question: "with choice?", choices: ["a"] },
 	]);
-	// items without a real question are skipped (not questions at all)
-	assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ foo: 1 }] })).kind, "error");
-	// the cap of 5 stays (keeps dialogs short)
-	const many = parseSpecDraft(JSON.stringify({ questions: Array.from({ length: 6 }, (_, i) => ({ question: `q${i}?`, choices: ["a", "b"] })) }));
+		assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ foo: 1 }] })).kind, "error");
+		const many = parseSpecDraft(JSON.stringify({ questions: Array.from({ length: 6 }, (_, i) => ({ question: `q${i}?`, choices: ["a", "b"] })) }));
 	assert.equal(many.questions.length, 5);
 });
 
 test("parseSpecDraft: question policy — a bare string / choice-less question is an ERROR (never a silent open question)", () => {
-	// the legacy bare string is REJECTED: it is the shape that let internal technical questions
-	// reach the human without choices (2026-10-16 policy)
-	const bare = parseSpecDraft(JSON.stringify({ questions: ["which db should we use?"] }));
+			const bare = parseSpecDraft(JSON.stringify({ questions: ["which db should we use?"] }));
 	assert.equal(bare.kind, "error");
 	assert.match(bare.error, /question policy violation/);
-	assert.match(bare.error, /which db should we use\?/); // names the offender for the retry
-	// object without choices and without the freeText marker → same rejection
-	const noChoices = parseSpecDraft(JSON.stringify({ questions: [{ question: "which module layout?" }] }));
+	assert.match(bare.error, /which db should we use\?/); 		const noChoices = parseSpecDraft(JSON.stringify({ questions: [{ question: "which module layout?" }] }));
 	assert.equal(noChoices.kind, "error");
 	assert.match(noChoices.error, /no choices and no "freeText": true/);
-	// one bad question poisons the round (the retry re-asks the whole draft, with feedback)
-	const partiallyBad = parseSpecDraft(JSON.stringify({ questions: [{ question: "ok?", choices: ["a", "b"] }, "bare one"] }));
+		const partiallyBad = parseSpecDraft(JSON.stringify({ questions: [{ question: "ok?", choices: ["a", "b"] }, "bare one"] }));
 	assert.equal(partiallyBad.kind, "error");
-	// freeText: false is NOT the marker → rejected too
-	assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ question: "x?", freeText: false }] })).kind, "error");
+		assert.equal(parseSpecDraft(JSON.stringify({ questions: [{ question: "x?", freeText: false }] })).kind, "error");
 });
 
 test("QUESTION_POLICY: names both sides of the contract (goal-only questions + decide-it-yourself rule)", () => {
@@ -136,11 +119,9 @@ test("QUESTION_POLICY: names both sides of the contract (goal-only questions + d
 
 test("parseSpecDraft: invalid outputs → kind error with a specific reason (retry feedback)", () => {
 	assert.equal(parseSpecDraft("sure, let me think about it").kind, "error");
-	assert.match(parseSpecDraft(JSON.stringify({ title: "T" })).error, /criteria/); // criteria missing
-	const badItem = parseSpecDraft(JSON.stringify({ criteria: [{ text: "x" }] }));
+	assert.match(parseSpecDraft(JSON.stringify({ title: "T" })).error, /criteria/); 	const badItem = parseSpecDraft(JSON.stringify({ criteria: [{ text: "x" }] }));
 	assert.equal(badItem.kind, "error");
-	assert.match(badItem.error, /\[0\]\.check/); // names the index so the model fixes the right spot
-});
+	assert.match(badItem.error, /\[0\]\.check/); });
 
 test("isMachineCheckable: runnable commands / path-exists pass, manual/ambiguous fail", () => {
 	assert.ok(isMachineCheckable("npm test"));
@@ -149,8 +130,7 @@ test("isMachineCheckable: runnable commands / path-exists pass, manual/ambiguous
 	assert.ok(isMachineCheckable("run `vitest run`"));
 	assert.ok(!isMachineCheckable("manual review by the team"));
 	assert.ok(!isMachineCheckable("ask the human to verify it works"));
-	assert.ok(!isMachineCheckable("GET /health returns 200")); // no command token → forced human review
-});
+	assert.ok(!isMachineCheckable("GET /health returns 200")); });
 
 test("applyQualityGate: empty scope and non-machine checks are forced into specDebt with notes", () => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-draft-"));
@@ -166,22 +146,17 @@ test("applyQualityGate: empty scope and non-machine checks are forced into specD
 			],
 			specDebt: [],
 		});
-		// cross-check gate (2026-10-18): no goal cases → the sign dialog falls back to intent,
-		// the gate notes it + forces human review
-		assert.deepEqual(gated.notes, ["cross-check-missing", "empty-scope", "manual-check:c2"]);
+						assert.deepEqual(gated.notes, ["cross-check-missing", "empty-scope", "manual-check:c2"]);
 		assert.equal(gated.draft.specDebt.length, 3);
 		assert.ok(gated.draft.specDebt.some((d) => d.includes("cross-check cases")));
-		// a scope pointing at a nonexistent path → the quality gate catches it (a typo'd scope is toothless)
-		const ghost = applyQualityGate(dir, { ...gated.draft, scope: ["ghost/path-xyz"], specDebt: [] });
+				const ghost = applyQualityGate(dir, { ...gated.draft, scope: ["ghost/path-xyz"], specDebt: [] });
 		assert.ok(ghost.notes.some((n) => n.startsWith("scope-missing:ghost/path-xyz")));
 		assert.ok(ghost.draft.specDebt.some((d) => d.includes("ghost/path-xyz")));
 		assert.match(gated.draft.specDebt[0], /cross-check cases/);
 		assert.match(gated.draft.specDebt[1], /scope/);
 		assert.match(gated.draft.specDebt[2], /c2/);
-		assert.equal(gated.draft.criteria.length, 2); // criteria untouched, only flagged
-
-		// a good draft (scope hits a real repo path — the wave 2/3 scope-missing rule) → specDebt untouched
-		mkdirSync(join(dir, "src", "auth"), { recursive: true });
+		assert.equal(gated.draft.criteria.length, 2);
+				mkdirSync(join(dir, "src", "auth"), { recursive: true });
 		const clean = applyQualityGate(dir, { ...GOOD_SPEC, title: "Unique title xyz", intent: "unrelated intent qrs" });
 		assert.deepEqual(clean.notes, []);
 		assert.equal(clean.draft.specDebt.length, 0);
@@ -193,8 +168,7 @@ test("applyQualityGate: empty scope and non-machine checks are forced into specD
 test("findSimilarSpec: archived spec with overlapping title+intent is flagged (Jaccard ≥ 0.5)", () => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-sim-"));
 	try {
-		assert.equal(findSimilarSpec(dir, { ...GOOD_SPEC }), null); // no specs dir yet → null
-		const specsDir = join(dir, ".zense", "specs");
+		assert.equal(findSimilarSpec(dir, { ...GOOD_SPEC }), null); 		const specsDir = join(dir, ".zense", "specs");
 		mkdirSync(specsDir, { recursive: true });
 		writeFileSync(
 			join(specsDir, "2026-01-01-00-00-00-v1-fix-login-redirect.json"),
@@ -230,19 +204,15 @@ test("buildSubagentArgv: per-role strip flags — grader/reviewer boot fully bar
 		const a = buildSubagentArgv(`task-${role}`, undefined, undefined, role);
 		for (const f of FULL) assert.ok(a.includes(f), `${role} must have ${f}`);
 		assert.equal(a.at(-1), `task-${role}`, "the task must always be argv's last element");
-		// strip flags sit after --no-session and before the task (before --exclude-tools/--model when present)
-		assert.ok(a.indexOf("--no-themes") > a.indexOf("--no-session"), `${role}: strip flags must come after --no-session`);
+				assert.ok(a.indexOf("--no-themes") > a.indexOf("--no-session"), `${role}: strip flags must come after --no-session`);
 	}
-	// grader combined with --exclude-tools + --model → ordering: strip flags lead both
-	const g = buildSubagentArgv("grade", "sonnet", ["write", "edit"], "grader");
+		const g = buildSubagentArgv("grade", "sonnet", ["write", "edit"], "grader");
 	assert.ok(g.indexOf("--no-skills") < g.indexOf("--exclude-tools"), "strip flags must come before --exclude-tools");
 	assert.ok(g.indexOf("--exclude-tools") < g.indexOf("--model"), "--exclude-tools must come before --model (standing contract)");
-	// requirements: repo exploration needs skills/extensions visible — strip only themes/prompt-templates
-	const req = buildSubagentArgv("draft", undefined, undefined, "requirements");
+		const req = buildSubagentArgv("draft", undefined, undefined, "requirements");
 	assert.ok(req.includes("--no-themes") && req.includes("--no-prompt-templates"));
 	assert.ok(!req.includes("--no-skills") && !req.includes("--no-extensions"), "requirements must not strip skills/extensions");
-	// no role / unknown role → no strip flags (checking only real strip flags — argv always contains --no-session)
-	const STRIP_ONLY = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
+		const STRIP_ONLY = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
 	assert.ok(!STRIP_ONLY.some((f) => buildSubagentArgv("x").includes(f)));
 	assert.ok(!STRIP_ONLY.some((f) => buildSubagentArgv("x", undefined, undefined, "mystery").includes(f)));
 });
@@ -252,22 +222,15 @@ test("buildRequirementsPrompt: enforces explore-first, JSON-only output and the 
 	assert.match(p, /EXPLORE \(read-only/);
 	assert.match(p, /NO write\/edit tools/);
 	assert.match(p, /"questions"/);
-	assert.match(p, /"choices"/); // grilling loop: the sub-agent may attach answer options
-	assert.match(p, /type their own/); // the user can always type their own answer
-	assert.match(p, /1–2 most decision-critical/); // few questions per round, several rounds
-});
+	assert.match(p, /"choices"/); 	assert.match(p, /type their own/); 	assert.match(p, /1–2 most decision-critical/); });
 
 test("buildRequirementsPrompt: goal-only questions — names the banned internal technical category + the assumption/specDebt fallback", () => {
 	const p = buildRequirementsPrompt("add dark mode", []);
 	assert.match(p, /GOAL-ONLY QUESTIONS/);
 	assert.match(p, /product\/UI terms/);
 	assert.match(p, /NEVER ask the human an internal technical\/detail question/);
-	assert.match(p, /library choice, module split/); // names the banned category
-	assert.match(p, /specDebt entry/); // decided-instead instruction
-	assert.match(p, /assumption/);
-	assert.match(p, /freeText/); // the one legal choice-less shape
-	assert.match(p, /policy violation/); // the sub-agent is told the parser rejects it
-	assert.match(p, /Request: add dark mode$/);
+	assert.match(p, /library choice, module split/); 	assert.match(p, /specDebt entry/); 	assert.match(p, /assumption/);
+	assert.match(p, /freeText/); 	assert.match(p, /policy violation/); 	assert.match(p, /Request: add dark mode$/);
 	assert.doesNotMatch(p, /Past lessons/);
 	const withLessons = buildRequirementsPrompt("x", ["📚 lesson one"]);
 	assert.match(withLessons, /Past lessons[\s\S]*lesson one/);
@@ -295,8 +258,6 @@ test("applyQualityGate: unsubstituted placeholder in check → specDebt + notes 
 	}
 });
 
-
-// ---------- cross-check cases (2026-10-18): the user-language goal list the signer reads
 test("parseSpecDraft: crossCheck parsed + trimmed, embedded newlines collapsed, blanks dropped; absent stays undefined", () => {
 	const withCases = parseSpecDraft(JSON.stringify({ ...GOOD_SPEC, crossCheck: ["  A when B  ", "C\nand D", "  "] }));
 	assert.equal(withCases.kind, "spec");

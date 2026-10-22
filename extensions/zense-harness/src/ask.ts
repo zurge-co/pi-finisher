@@ -1,43 +1,24 @@
-// zense-harness module: zense_ask pure helpers — question normalization, answer rendering, no-UI text (see AGENTS.md map)
 
 import { asClarifyQuestions, scanClarifyQuestions, questionPolicyError, type ClarifyQuestion } from "./spec-draft.ts";
 
-// ----------------------------------------------------------------------------- zense_ask helpers (module scope — exported for unit tests)
-
-/** One zense_ask question — identical shape to ClarifyQuestion on purpose: the index.ts
- *  factory passes these straight into askClarifyQuestion (with choices → zensePick ending in
- *  "Other (type your own)"; without → plain input). No picker fork. */
 export type AskQuestion = ClarifyQuestion;
 
-/** Interactive cap: 5 questions per call (same ceiling as the requirements clarify loop) —
- *  more is form-filling, not a decision check-in. */
 export const ASK_MAX_QUESTIONS = 5;
 
-/** Normalize raw tool params → AskQuestion[]: delegates to the clarify normalizer (trim,
- *  drop empty questions, cap choices at 6 so the picker stays readable), then caps the
- *  question count. undefined when nothing usable remains. Callers that must report WHY
- *  questions were rejected use askQuestionScan instead. */
 export const asAskQuestions = (v: unknown): AskQuestion[] | undefined => asClarifyQuestions(v)?.slice(0, ASK_MAX_QUESTIONS);
 
-/** Normalize + police raw tool params → {questions, violations} (same scan as the requirements
- *  clarify loop, so both paths report the identical QUESTION_POLICY feedback). */
 export const askQuestionScan = (v: unknown): { questions: AskQuestion[]; violations: string[] } => {
 	const { questions, violations } = scanClarifyQuestions(v);
 	return { questions: questions.slice(0, ASK_MAX_QUESTIONS), violations };
 };
 
-/** Error text for a zense_ask call whose questions violate QUESTION_POLICY — puts the policy
- *  in front of the model on the next turn instead of letting the call through. */
 export const askPolicyError = (violations: string[]): string => `zense_ask rejected: ${questionPolicyError(violations)}`;
 
-/** One asked question + the human's answer; undefined = Esc/empty = skipped. */
 export interface AskAnswer {
 	question: string;
 	answer: string | undefined;
 }
 
-/** Result text: one numbered "question → answer" per item; skipped questions are named
- *  explicitly so the agent can't silently infer an answer the human never gave. */
 export const formatAskAnswers = (answers: AskAnswer[]): string =>
 	answers
 		.map(
@@ -46,8 +27,5 @@ export const formatAskAnswers = (answers: AskAnswer[]): string =>
 		)
 		.join("\n");
 
-/** No-UI (RPC/print) graceful response — returned as a NORMAL (non-error) result without
- *  awaiting any picker, so a headless session never hangs. Tells the agent to fall back to
- *  plain numbered chat text for this turn. */
 export const ASK_NO_UI_TEXT =
 	"This session has no interactive UI (RPC/print mode) — the multiple-choice picker cannot open and zense_ask will not block. Ask the human the same questions as plain chat text instead (a short numbered option list is acceptable there) and continue from their reply.";

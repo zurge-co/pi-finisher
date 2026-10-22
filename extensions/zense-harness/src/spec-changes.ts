@@ -1,18 +1,9 @@
-// zense-harness module: spec version diff → change summary, spec markdown rendering, on-disk spec sync, fullscreen default (moved verbatim from index.ts — see AGENTS.md map)
 
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { zenseDir, type Spec, type Tracker } from "./types.ts";
 
-// ----------------------------------------------------------------------------- spec version change summary (module scope — exported for unit tests)
-
-/** Field-by-field diff between prev and next spec as human-readable summary lines.
- *  Re-spec loop requirement: when eval/review fails and a new spec version is committed,
- *  the signer must see exactly what changed — never re-present an identical spec silently.
- *  Criteria diffed by id: added (+) / removed (−) / changed (~ text/check); list fields
- *  (approach/scope/constraints/specDebt) diffed as sets. No changes at all → one warning
- *  line (callers use it to detect identical specs). */
 export const buildSpecChanges = (prev: Spec, next: Spec): string[] => {
 	const lines: string[] = [];
 	if (prev.title !== next.title) lines.push(`title: "${prev.title}" → "${next.title}"`);
@@ -43,10 +34,6 @@ export const buildSpecChanges = (prev: Spec, next: Spec): string[] => {
 		: [`⚠️ No changes from v${prev.version} — the new spec is identical to the previous version`];
 };
 
-/** Group the flat changesFrom lines (from buildSpecChanges) into render-friendly sections.
- *  Parses only the original line prefixes (persisted format untouched). Group order fixed by
- *  CHANGE_GROUPS; empty groups hidden; ⚠️ identical-spec warnings render verbatim without a
- *  heading; ungroupable lines land in `### Other` last. */
 export const CHANGE_GROUPS: ReadonlyArray<[string, (line: string) => boolean]> = [
 	["Title & intent", (l) => l.startsWith("title:") || l.startsWith("intent:")],
 	["Approach", (l) => l.startsWith("approach ")],
@@ -56,8 +43,6 @@ export const CHANGE_GROUPS: ReadonlyArray<[string, (line: string) => boolean]> =
 	["Spec debt", (l) => l.startsWith("specDebt ")],
 ];
 
-/** Bucket change lines by CHANGE_GROUPS (fixed order) — shared by groupSpecChanges (archive .md)
- *  and renderSpecChangesTui (sign dialog) so the grouping logic never drifts. */
 const bucketSpecChanges = (lines: string[]) => {
 	const buckets = new Map<string, string[]>();
 	const warns: string[] = [];
@@ -90,26 +75,18 @@ export const groupSpecChanges = (lines: string[]): string => {
 	return parts.join("\n\n");
 };
 
-/** Theme color for each change direction: + add = success / − remove = error / ~ change = warning */
 export type ChangeMarkRole = Extract<ThemeColor, "success" | "error" | "warning">;
 
-/** Render the "## Changes in v{N}" section for the sign dialog (TUI only — the archive .md
- *  keeps plain-text label+marker via groupSpecChanges since files can't show color):
- *  items drop the redundant heading label ("approach +: x" → "1. x") and get colored by
- *  direction instead. Grouping identical to the archive via bucketSpecChanges.
- *  Returns unwrapped lines; [] when the spec has no changesFrom. */
 export const renderSpecChangesTui = (spec: Spec, color: (role: ChangeMarkRole, text: string) => string): string[] => {
 	if (!spec.changesFrom?.length) return [];
 	const { buckets, warns, other } = bucketSpecChanges(spec.changesFrom);
 	const ROLE = { "+": "success", "−": "error", "~": "warning" } as const;
-	// "<label> <marker>: <detail>" → "N. <detail>" colored by marker; unmatched lines stay neutral
-	const renderItem = (line: string, n: number): string => {
+		const renderItem = (line: string, n: number): string => {
 		const m = /^(\S+) ([+−~]): (.*)$/.exec(line);
 		return m ? color(ROLE[m[2] as keyof typeof ROLE], `${n}. ${m[3]}`) : `${n}. ${line}`;
 	};
 	const groups: string[][] = [];
-	if (warns.length) groups.push([...warns]); // ⚠️ verbatim, no heading (matches groupSpecChanges)
-	for (const [heading] of CHANGE_GROUPS) {
+	if (warns.length) groups.push([...warns]); 	for (const [heading] of CHANGE_GROUPS) {
 		const items = buckets.get(heading);
 		if (items?.length) groups.push([`### ${heading}`, ...items.map((x, i) => renderItem(x, i + 1))]);
 	}
@@ -117,9 +94,6 @@ export const renderSpecChangesTui = (spec: Spec, color: (role: ChangeMarkRole, t
 	return [`## Changes in v${spec.version} (vs v${spec.version - 1})`, "", ...groups.flatMap((g, i) => (i ? ["", ...g] : g))];
 };
 
-/** Render a spec as markdown — used for both the archive .md and the sign dialog.
- *  v>=2 with changesFrom gets a "## Changes in v{N} (vs v{N-1})" section before Intent
- *  so the signer sees what changed up front. */
 export const renderSpecMd = (s: Spec): string =>
 	`# Spec v${s.version}: ${s.title}\napproved: ${s.approved}\n\n` +
 	(s.changesFrom?.length
@@ -129,13 +103,6 @@ export const renderSpecMd = (s: Spec): string =>
 	(s.outcomes ? `## What you'll get\n${s.outcomes}\n\n` : "") +
 	`## Intent\n${s.intent}\n\n${s.approach?.length ? "## Approach\n" + s.approach.map((x) => `- ${x}`).join("\n") + "\n\n" : ""}## Scope\n${s.scope.map((x) => `- ${x}`).join("\n")}\n\n## Constraints\n${s.constraints.map((x) => `- ${x}`).join("\n")}\n\n## Acceptance criteria\n${s.criteria.map((c) => `- [ ] ${c.id}: ${c.text} *(check: ${c.check})*`).join("\n")}\n\n## Spec debt (human-verified only)\n${s.specDebt.map((x) => `- ${x}`).join("\n")}\n`;
 
-// ----- sign-time cross-check rendering (2026-10-18): the sign dialog shows the user-language
-//       goal CASES (one per line) + a pointer to the technical file. The human reads this list
-//       to verify pi-zense understood the request, not to review the build plan.
-
-/** Goal lines for any signed artifact: crossCheck first, then legacy outcomes lines, then the
- *  intent's lines (so an old spec/tracker still shows something readable). Never pulls scope,
- *  criteria, checks or spec debt — this is the sign/review surface, not the technical spec. */
 export const goalLines = (s: { crossCheck?: string[]; outcomes?: string; intent?: string }): string[] => {
 	const clean = (xs: string[]): string[] => xs.map((x) => x.trim()).filter(Boolean);
 	if (s.crossCheck?.length) {
@@ -149,9 +116,6 @@ export const goalLines = (s: { crossCheck?: string[]; outcomes?: string; intent?
 	return clean((s.intent ?? "").split("\n")).slice(0, 8);
 };
 
-/** Normalized goal fingerprint (order-insensitive, whitespace/punctuation-insensitive) used by
- *  the no-re-sign rule: a re-spec/re-plan whose goal cases are unchanged needs no new human
- *  signature. Two empty lists are NEVER "unchanged" (nothing to compare = not a carry-over). */
 export const sameGoalLines = (
 	a: { crossCheck?: string[]; outcomes?: string; intent?: string },
 	b: { crossCheck?: string[]; outcomes?: string; intent?: string },
@@ -163,13 +127,6 @@ export const sameGoalLines = (
 	return A.length > 0 && A.length === B.length && A.every((x, i) => x === B[i]);
 };
 
-/** Approval decision for a committed spec (2026-10-18) — the ONE place that decides whether a
- *  human signature prompt is needed:
- *  - tracker signature (longrun phase compile) → auto, no dialog
- *  - gate OFF → auto, no dialog (the human explicitly disabled all permission prompts)
- *  - previous version approved + goal lines unchanged → auto (no re-approval for a stable goal)
- *  - else ask (TUI overlay / plain select) or stay unsigned when there is no UI
- *  The actual signing side effect stays approveCurrentSpec(), shared by every path. */
 export type SpecApprovalDecision =
 	| { kind: "auto"; reason: "tracker" | "gate-off" | "goals-unchanged" }
 	| { kind: "ask"; mode: "tui" | "select" }
@@ -190,10 +147,6 @@ export const decideSpecApproval = (opts: {
 	return { kind: "unsigned", reason: "no-ui" };
 };
 
-/** Agent-facing next step after a typed rejection (n + reason in a decision dialog). The
- *  reason MUST reach the agent's context — closing the dialog silently was the user's pain
- *  point ("I pressed n ... then had to abort and retype it"). Kept pure/testable; the TUI
- *  wiring collects the reason via ctx.ui.input after the overlay closes. */
 export const rejectionDirective = (kind: "spec" | "tracker" | "review" | "gate", reason: string, version?: number): string => {
 	const why = reason.trim() || "(no reason given)";
 	const v = version !== undefined ? ` v${version}` : "";
@@ -206,10 +159,6 @@ export const rejectionDirective = (kind: "spec" | "tracker" | "review" | "gate",
 	return `The human did not sign — this write is blocked. Their reason: "${why}"\nRevise the spec to match this correction, then ask for the signature again.`;
 };
 
-/** The sign dialog body for a regular spec: the goal cross-check (fallback: outcomes lines /
- *  intent for legacy specs) + a pointer line naming the technical spec file. Provably free of
- *  the technical sections — it is built from goalLines() ONLY, so scope prefixes, criteria,
- *  raw checks and spec debt can never leak into the sign surface. */
 export const renderSignOutcome = (s: Spec): string => {
 	const goals = goalLines(s);
 	const body = goals.length
@@ -221,10 +170,6 @@ export const renderSignOutcome = (s: Spec): string => {
 	);
 };
 
-/** The tracker sign dialog body: the set-level goal cases + one grouped block of goal cases per
- *  phase (fallback per phase: its outcomes lines / intent first line) + a pointer to
- *  tracker.md. Same cross-check-only discipline as renderSignOutcome — never scope paths,
- *  criteria ids or checks. */
 export const renderTrackerOutcomes = (t: Tracker): string => {
 	const setGoals = goalLines(t);
 	const setBody = setGoals.length ? setGoals.map((g) => `- ${g}`).join("\n") : "- (no summary yet)";
@@ -241,10 +186,6 @@ export const renderTrackerOutcomes = (t: Tracker): string => {
 	);
 };
 
-/** Sync the approval back to spec files on disk:
- *  commitSpec writes files with approved:false, while approveCurrentSpec only updates in-memory
- *  state — .zense/spec.{json,md} plus archive copies must follow or graders/scripts keep seeing
- *  approved:false. Best-effort: unwritable/missing files are skipped silently. */
 export const syncApprovedSpecFiles = (cwd: string, spec: Spec, paths?: { json?: string; md?: string }): boolean => {
 	const json = JSON.stringify(spec, null, 2);
 	const md = renderSpecMd(spec);
@@ -261,18 +202,11 @@ export const syncApprovedSpecFiles = (cwd: string, spec: Spec, paths?: { json?: 
 			writeFileSync(p, content);
 			wroteAny = true;
 		} catch {
-			/* best-effort */
 		}
 	}
 	return wroteAny;
 };
 
-/**
- * Merge "tuiMode": "fullscreen" into settings.json — only when the key is absent.
- * pi's public extension API has no tuiMode setter, so we write the file directly.
- * null = existing file unparseable/not an object → never overwrite (protects user settings).
- * changed=false = user already chose a tuiMode (even "regular") → respect it, touch nothing.
- */
 export const applyFullscreenDefault = (raw: string | undefined): { text: string; changed: boolean } | null => {
 	if (raw === undefined || !raw.trim()) return { text: `${JSON.stringify({ tuiMode: "fullscreen" }, null, 2)}\n`, changed: true };
 	let parsed: unknown;

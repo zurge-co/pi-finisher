@@ -32,12 +32,8 @@ import {
 	writePhaseSummary,
 } from "../extensions/zense-harness/index.ts";
 
-// long-running mode (ADR-004): tracker persistence/validation, criteria carry + provenance,
-// capsule, checkpoint/reset git semantics, ambient-state-distrust reconcile, worktree reuse
-
 const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
-/** temp repo with one commit on main (+ .zense ignored state) */
 const mkRepo = () => {
 	const root = mkdtempSync(join(tmpdir(), "zense-longrun-"));
 	git(["init", "-q", "-b", "main"], root);
@@ -65,12 +61,9 @@ const mkTracker = (over = {}) => ({
 	...over,
 });
 
-// ---------- identity / persistence
-
 test("slugifyTitle: letters kept, separators collapsed, capped (same regex as commitSpec's archive slugger)", () => {
 	assert.equal(slugifyTitle("Migrate Auth to OAuth!"), "migrate-auth-to-oauth");
-	assert.equal(slugifyTitle("ย้ายระบบ auth"), "ย-ายระบบ-auth"); // combining marks (\p{M}) collapse like commitSpec's slugger — same regex on purpose
-	assert.equal(slugifyTitle("!!!"), "untitled");
+	assert.equal(slugifyTitle("ย้ายระบบ auth"), "ย-ายระบบ-auth"); 	assert.equal(slugifyTitle("!!!"), "untitled");
 	assert.ok(slugifyTitle("x".repeat(100)).length <= 40);
 });
 
@@ -103,8 +96,6 @@ test("loadTracker: missing/corrupt → null (never throws into resume)", () => {
 	rmSync(root, { recursive: true, force: true });
 });
 
-// ---------- validation / selection
-
 test("validateTracker: catches dupes, empty scope, broken criteria", () => {
 	const t = mkTracker();
 	assert.deepEqual(validateTracker(t), []);
@@ -133,8 +124,6 @@ test("phase selection: nextPendingPhase/allPhasesDone/findPhase", () => {
 	assert.equal(allPhasesDone(t), true);
 });
 
-// ---------- criteria carry + provenance (the tracker signature must survive compilation)
-
 test("mergePhaseCriteria: seeds keep identity, extras marked compiled, id clash loses", () => {
 	const seed = [{ id: "S1", text: "seed one", check: "a" }, { id: "S2", text: "seed two", check: "b" }];
 	const merged = mergePhaseCriteria(seed, [{ id: "S2", text: "hijack", check: "x" }, { id: "E1", text: "extra", check: "c" }]);
@@ -149,8 +138,6 @@ test("droppedSeedIds: flags every seed the compiled spec lost", () => {
 	assert.deepEqual(droppedSeedIds(seed, [{ id: "S2", text: "", check: "" }]), ["S1", "S3"]);
 	assert.deepEqual(droppedSeedIds(seed, seed), []);
 });
-
-// ---------- capsule: context discipline — done collapses to one line, active spelled out
 
 test("buildContextCapsule: carries progress, one-line done summaries, active phase detail, worktree", () => {
 	const root = mkRepo();
@@ -168,8 +155,6 @@ test("buildContextCapsule: carries progress, one-line done summaries, active pha
 	assert.ok(!capsule.includes("token store intent body"), "done phase intent is NOT carried in full");
 	rmSync(root, { recursive: true, force: true });
 });
-
-// ---------- git semantics: checkpoint / reset / reconcile (real temp repos)
 
 test("checkpointCommit: commits phase work, never .zense", () => {
 	const root = mkRepo();
@@ -207,8 +192,7 @@ test("ensureLongrunWorktree: create once, reattach by slug across 'sessions', ne
 	const b = ensureLongrunWorktree(root, "migrate-auth", longrunBranch("migrate-auth"));
 	assert.equal(b.created, false, "second call reuses");
 	assert.equal(b.wt.root, a.wt.root);
-	// orphaned branch (dir gone, branch kept) → re-checkout, not a second branch
-	rmSync(a.wt.root, { recursive: true, force: true });
+		rmSync(a.wt.root, { recursive: true, force: true });
 	git(["worktree", "prune"], root);
 	const c = ensureLongrunWorktree(root, "migrate-auth", longrunBranch("migrate-auth"));
 	assert.equal(c.created, true);
@@ -220,38 +204,31 @@ test("reconcileLongrunWorktree: ambient-state distrust — ok/wrong-branch/detac
 	const root = mkRepo();
 	const { wt } = ensureLongrunWorktree(root, "migrate-auth", longrunBranch("migrate-auth"));
 	const branch = longrunBranch("migrate-auth");
-	// missing
-	assert.equal(reconcileLongrunWorktree(join(root, "gone"), branch).status, "missing-worktree");
-	// clean ok
-	let r = reconcileLongrunWorktree(wt.root, branch);
+		assert.equal(reconcileLongrunWorktree(join(root, "gone"), branch).status, "missing-worktree");
+		let r = reconcileLongrunWorktree(wt.root, branch);
 	assert.equal(r.status, "ok");
 	assert.equal(r.dirty.length, 0);
-	// dirty (does not flip status, but blocks auto-heal on mismatch)
-	writeFileSync(join(wt.root, "dirty.ts"), "x\n");
+		writeFileSync(join(wt.root, "dirty.ts"), "x\n");
 	r = reconcileLongrunWorktree(wt.root, branch);
 	assert.equal(r.status, "ok");
 	assert.equal(r.healable, false);
 	assert.ok(r.dirty.some((l) => l.includes("dirty.ts")));
-	// wrong branch + dirty → not healable (never auto-switch away from human work)
-	git(["switch", "-q", "-c", "user-topic"], wt.root);
+		git(["switch", "-q", "-c", "user-topic"], wt.root);
 	r = reconcileLongrunWorktree(wt.root, branch);
 	assert.equal(r.status, "wrong-branch");
 	assert.equal(r.actualBranch, "user-topic");
 	assert.equal(r.healable, false);
-	// clean now → healable, and healToBranch actually returns
-	rmSync(join(wt.root, "dirty.ts"));
+		rmSync(join(wt.root, "dirty.ts"));
 	r = reconcileLongrunWorktree(wt.root, branch);
 	assert.equal(r.healable, true);
 	assert.equal(healToBranch(wt.root, branch).ok, true);
 	assert.equal(git(["rev-parse", "--abbrev-ref", "HEAD"], wt.root), branch);
-	// detached
-	const head = git(["rev-parse", "HEAD"], wt.root);
+		const head = git(["rev-parse", "HEAD"], wt.root);
 	git(["checkout", "-q", head], wt.root);
 	r = reconcileLongrunWorktree(wt.root, branch);
 	assert.equal(r.status, "detached");
 	assert.equal(healToBranch(wt.root, branch).ok, true);
-	// checkpoint diverged (branch rewound behind our back) → human, never auto-heal
-	git(["commit", "-q", "--allow-empty", "-m", "cp", "--no-verify"], wt.root);
+		git(["commit", "-q", "--allow-empty", "-m", "cp", "--no-verify"], wt.root);
 	const ckpt = git(["rev-parse", "HEAD"], wt.root);
 	git(["reset", "-q", "--hard", "HEAD~1"], wt.root);
 	r = reconcileLongrunWorktree(wt.root, branch, ckpt);
@@ -271,8 +248,6 @@ test("reconcile: user commits ahead of checkpoint are visible (amendment reconci
 	rmSync(root, { recursive: true, force: true });
 });
 
-// ---------- closure summary / rendering / discovery
-
 test("writePhaseSummary + renderTrackerMd reflect the closure", () => {
 	const root = mkRepo();
 	const t = mkTracker();
@@ -282,8 +257,7 @@ test("writePhaseSummary + renderTrackerMd reflect the closure", () => {
 	assert.match(readFileSync(join(root, ".zense", "long-running", t.slug, rel), "utf8"), /oauth login landed/);
 	t.phases[1].status = "done";
 	t.phases[1].checkpoint = "def456";
-	t.phases[1].summaryPath = rel; // writePhaseSummary returns the path; the tracker stores it (close does this in index.ts)
-	const md = renderTrackerMd(t);
+	t.phases[1].summaryPath = rel; 	const md = renderTrackerMd(t);
 	assert.match(md, /# Migrate auth — long-running tracker v1/);
 	assert.match(md, /✅ p1 — store/);
 	assert.match(md, /✅ p2 — login flow/);
@@ -291,8 +265,6 @@ test("writePhaseSummary + renderTrackerMd reflect the closure", () => {
 	assert.match(md, /summary: phases\/p2\.md/);
 	rmSync(root, { recursive: true, force: true });
 });
-
-// ---------- planner / phase-spec compilation (drafted by the model, signed by the human)
 
 test("parseLongrunPlan: bare JSON, fenced JSON, and pointed errors on bad shape", () => {
 	const good = { phases: [{ id: "p1", title: "store", intent: "token store", scope: ["src/store"], criteria: [{ id: "P1C1", text: "exists", check: "test -d src/store" }] }] };
@@ -321,35 +293,27 @@ test("buildLongrunPlannerPrompt: demands ordered phases + runnable checks, embed
 	assert.match(prompt, /# Spec\nbody/);
 	assert.match(prompt, /"phases"/);
 	assert.match(prompt, /runnable command/);
-	// fewest-phases bias (2026-09-26): over-splitting made longruns slow — the prompt must
-	// state the per-phase cost + genuine-boundary split condition, never a "2–6 phases" range
-	assert.match(prompt, /FEWEST phases/i);
+			assert.match(prompt, /FEWEST phases/i);
 	assert.match(prompt, /per-phase cost/i);
 	assert.match(prompt, /architecture seam|irreversible|baseline/i);
 	assert.doesNotMatch(prompt, /[0-9][–-]6 phases/);
-	// question policy (2026-10-16): the planner may surface a GOAL question instead of phases,
-	// but never an internal technical/detail question
-	assert.match(prompt, /OUTCOME ambiguous/);
+			assert.match(prompt, /OUTCOME ambiguous/);
 	assert.match(prompt, /"questions"/);
 	assert.match(prompt, /NEVER ask the human internal technical\/detail questions/);
 	assert.match(prompt, /freeText/);
 });
 
 test("parseLongrunPlan: questions instead of phases → goal question for the human (policy-validated)", () => {
-	// a goal question (product/UI outcome) with choices → surfaced, no phases
-	const ask = parseLongrunPlan(JSON.stringify({ questions: [{ question: "which flow should the user land on?", choices: ["dashboard", "inbox"] }] }));
+		const ask = parseLongrunPlan(JSON.stringify({ questions: [{ question: "which flow should the user land on?", choices: ["dashboard", "inbox"] }] }));
 	assert.equal(ask.ok, true);
 	assert.deepEqual(ask.phases, []);
 	assert.deepEqual(ask.questions, [{ question: "which flow should the user land on?", choices: ["dashboard", "inbox"] }]);
-	// explicit freeText is the one legal choice-less shape
-	const free = parseLongrunPlan(JSON.stringify({ questions: [{ question: "what should the empty screen say?", freeText: true }] }));
+		const free = parseLongrunPlan(JSON.stringify({ questions: [{ question: "what should the empty screen say?", freeText: true }] }));
 	assert.equal(free.questions[0].freeText, true);
-	// a bare string / choice-less question is rejected with the policy (never reaches the human)
-	const bare = parseLongrunPlan(JSON.stringify({ questions: ["which db should we use?"] }));
+		const bare = parseLongrunPlan(JSON.stringify({ questions: ["which db should we use?"] }));
 	assert.equal(bare.ok, false);
 	assert.match(bare.error, /question policy violation/);
-	// questions ALONGSIDE phases are ignored — a real plan wins over a stray question key
-	const both = parseLongrunPlan(JSON.stringify({ questions: ["stray?"], phases: [{ title: "p", intent: "i", scope: ["src/"], criteria: [{ id: "c1", text: "t", check: "true" }] }] }));
+		const both = parseLongrunPlan(JSON.stringify({ questions: ["stray?"], phases: [{ title: "p", intent: "i", scope: ["src/"], criteria: [{ id: "c1", text: "t", check: "true" }] }] }));
 	assert.equal(both.ok, true);
 	assert.equal(both.phases.length, 1);
 });
@@ -378,8 +342,7 @@ test("abandonLongrunWorktree: destroys worktree+branch; main untouched (ADR-004 
 	assert.equal(git(["branch", "--list", t.worktreeBranch], root), "", "branch deleted");
 	assert.equal(git(["rev-parse", "HEAD"], root), mainHead, "main HEAD never moved");
 	assert.equal(git(["status", "--porcelain"], root), "", "main tree clean — nothing was ever staged");
-	// idempotent against an already-pruned worktree
-	assert.equal(abandonLongrunWorktree(root, t).ok, true);
+		assert.equal(abandonLongrunWorktree(root, t).ok, true);
 	rmSync(root, { recursive: true, force: true });
 });
 
@@ -399,8 +362,7 @@ test("discoverLongrunTrackers: finds active trackers sorted by recency, skips do
 	const b = mkTracker({ slug: "b-req", title: "B", status: "done", updatedAt: 3000, worktreeBranch: longrunBranch("b-req") });
 	saveTracker(root, a);
 	saveTracker(root, b);
-	// saveTracker bumps updatedAt on every write — pin deterministic values post-save to test the sort
-	writeFileSync(trackerPath(root, "a-req"), JSON.stringify({ ...a, updatedAt: 1000 }));
+		writeFileSync(trackerPath(root, "a-req"), JSON.stringify({ ...a, updatedAt: 1000 }));
 	writeFileSync(trackerPath(root, "b-req"), JSON.stringify({ ...b, updatedAt: 3000 }));
 	mkdirSync(join(root, ".zense", "long-running", "corrupt"), { recursive: true });
 	writeFileSync(join(root, ".zense", "long-running", "corrupt", "tracker.json"), "{bad");
@@ -409,10 +371,6 @@ test("discoverLongrunTrackers: finds active trackers sorted by recency, skips do
 	assert.equal(found.filter((t) => t.status === "active").length, 1);
 	rmSync(root, { recursive: true, force: true });
 });
-
-
-// ---------- cross-check (2026-10-18): the user-language goal cases lead the tracker sign
-//          dialog + tracker.md; optional end-to-end so explicit agent-authored plans keep working
 
 test("buildLongrunPlannerPrompt: crossCheck is REQUIRED per phase and top-level, request-language, jargon-free", () => {
 	const p = buildLongrunPlannerPrompt("Migrate auth", "move to oauth", "req doc");

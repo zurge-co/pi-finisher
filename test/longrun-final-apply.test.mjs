@@ -1,18 +1,9 @@
-// longrun final apply: /zense accept must find the pendingApply the final apply created.
-// Regression 2026-09-28: every completion path called longrunApplyFinal (sets
-// state.pendingApply, repins state.lastEval.head to the index tree) and then
-// resetLongrunPhaseCycle — whose unconditional clears wiped BOTH in the same turn.
-// /zense accept then reported "no pending apply to accept", the tracker could never
-// reach "done", and accept's amended-files detection (evalTree→HEAD) lost its pin.
-// The closures live in the pi factory (can't run under node:test) → source guards,
-// same convention as test/ask-tool.test.mjs.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-const src = readFileSync(new URL("../extensions/zense-harness/index.ts", import.meta.url), "utf8");
+const src = readFileSync(new URL("../extensions/zense-harness/src/longrun-flow.ts", import.meta.url), "utf8");
 
-/** body of resetLongrunPhaseCycle (up to the next const trackerSummaryLines) */
 const helperBody = (() => {
 	const start = src.indexOf("const resetLongrunPhaseCycle =");
 	assert.ok(start > 0, "resetLongrunPhaseCycle exists");
@@ -30,9 +21,6 @@ test("pendingApply and lastEval clears are guarded by !preserveFinalApply inside
 	assert.ok(helperBody.includes("if (!preserveFinalApply) state.pendingApply = undefined;"), "pendingApply clear guarded");
 	assert.ok(helperBody.includes("state.pendingApply = undefined"), "the clear still exists for mid-phase closure (was not deleted)");
 });
-
-
-
 
 test("the remaining completion path still preserves the final apply for /zense accept", () => {
 	const calls = src.match(/resetLongrunPhaseCycle\([^;]*\)/g) ?? [];

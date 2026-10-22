@@ -1,7 +1,3 @@
-// zense-harness module: long-running mode — multi-phase requirements signed ONCE via a
-// tracker, run phase-by-phase in ONE shared worktree, merged into main only when the whole
-// set completes (ADR-004). Pure helpers only; wiring (zense_longrun tool, /zense longrun)
-// lives in index.ts.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,19 +6,13 @@ import { gitOk } from "./worktree.ts";
 import { gitAddButZense, NOT_ZENSE } from "./pending-apply.ts";
 import { scanClarifyQuestions, questionPolicyError, asCaseLines, type ClarifyQuestion } from "./spec-draft.ts";
 
-// ----- paths / identity
-
 export const longrunningRoot = (cwd: string): string => join(zenseDir(cwd), "long-running");
 export const longrunDir = (cwd: string, slug: string): string => join(longrunningRoot(cwd), slug);
 export const trackerPath = (cwd: string, slug: string): string => join(longrunDir(cwd, slug), "tracker.json");
 export const longrunBranch = (slug: string): string => `zense/longrun/${slug}`;
 
-/** requirement-name slug — same unicode-aware slugger as commitSpec's archive files */
 export const slugifyTitle = (title: string): string =>
 	title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "untitled";
-
-// ----- tracker persistence (atomic — tracker.json must survive a crash mid-write: resume
-//       reads it as the ONLY source of truth, ADR-004 ambient-state distrust)
 
 export const saveTracker = (cwd: string, tracker: Tracker): void => {
 	const dir = longrunDir(cwd, tracker.slug);
@@ -31,8 +21,7 @@ export const saveTracker = (cwd: string, tracker: Tracker): void => {
 	const tmp = join(dir, `tracker.json.tmp-${process.pid}`);
 	writeFileSync(tmp, JSON.stringify(tracker, null, 2));
 	renameSync(tmp, trackerPath(cwd, tracker.slug));
-	writeFileSync(join(dir, "tracker.md"), renderTrackerMd(tracker)); // human view — always re-rendered from the json
-};
+	writeFileSync(join(dir, "tracker.md"), renderTrackerMd(tracker)); };
 
 export const loadTracker = (cwd: string, slug: string): Tracker | null => {
 	try {
@@ -46,7 +35,6 @@ export const loadTracker = (cwd: string, slug: string): Tracker | null => {
 	}
 };
 
-/** Signed-tracker sanity — dupes/missing checks would silently break per-phase compiles */
 export const validateTracker = (tracker: Tracker): string[] => {
 	const errors: string[] = [];
 	if (!tracker.slug.trim()) errors.push("slug is empty");
@@ -76,9 +64,7 @@ export const renderTrackerMd = (t: Tracker): string => {
 		"",
 		t.intent || "(see specs.md)",
 		"",
-		// cross-check (2026-10-18): the goal CASES lead the file too — the sign dialog points here,
-		// so this must be the readable list of what the human asked for
-		...(t.crossCheck?.length ? ["## Cross-check — what we understood you want", "", ...t.crossCheck.map((c) => `- ${c}`), ""] : []),
+						...(t.crossCheck?.length ? ["## Cross-check — what we understood you want", "", ...t.crossCheck.map((c) => `- ${c}`), ""] : []),
 		...(t.outcomes ? ["## What you'll get", "", t.outcomes, ""] : []),
 		"## Phases",
 		"",
@@ -98,16 +84,10 @@ export const renderTrackerMd = (t: Tracker): string => {
 	return lines.join("\n");
 };
 
-// ----- phase selection
-
 export const findPhase = (t: Tracker, id: string): TrackerPhase | undefined => t.phases.find((p) => p.id === id);
 export const nextPendingPhase = (t: Tracker): TrackerPhase | undefined => t.phases.find((p) => p.status === "pending");
 export const allPhasesDone = (t: Tracker): boolean => t.phases.length > 0 && t.phases.every((p) => p.status === "done");
 
-
-/** Phase-spec criteria = tracker seeds (origin "tracker", IDs immutable — they carry the
- *  human signature) + agent extras (origin "compiled"). Guard returns the IDs of seed
- *  criteria a compiled spec would have dropped — must be empty before approval. */
 export const mergePhaseCriteria = (seed: Criterion[], extra: Criterion[] = []): Criterion[] => [
 	...seed.map((c) => ({ ...c, origin: "tracker" as const })),
 	...extra.filter((c) => !seed.some((s) => s.id === c.id)).map((c) => ({ ...c, origin: "compiled" as const })),
@@ -115,19 +95,12 @@ export const mergePhaseCriteria = (seed: Criterion[], extra: Criterion[] = []): 
 export const droppedSeedIds = (seed: Criterion[], compiled: Criterion[]): string[] =>
 	seed.filter((s) => !compiled.some((c) => c.id === s.id)).map((s) => s.id);
 
-// ----- planner (plan without an explicit phase list): the requirements doc goes in, an
-//       ordered phase list with seed criteria comes out as JSON — the human signs the
-//       RESULT, so a model-drafted plan never bypasses review
-
 export interface LongrunPlanPhase {
 	id?: string;
 	title: string;
 	intent: string;
-	/** Plain-language goal cases (2026-10-18): the human's request as short checkable lines —
-	 *  the tracker sign surface. Optional for back-compat; outcomes remains the fallback. */
-	crossCheck?: string[];
-	/** Legacy plain-language "what you'll get from this phase" (kept for back-compat). */
-	outcomes?: string;
+		crossCheck?: string[];
+		outcomes?: string;
 	scope: string[];
 	constraints?: string[];
 	criteria: Criterion[];
@@ -153,15 +126,10 @@ export const buildLongrunPlannerPrompt = (title: string, intent: string, specsMd
 		"- crossCheck (top-level + per phase): REQUIRED. 2–6 SHORT lines, one goal CASE per line, same LANGUAGE as the requirement doc — the human reads this INSTEAD of the technical plan at signing and checks that you understood the request. Each line = one user-visible behavior (e.g. \"คุณต้องการให้ A มี B เมื่อ C\"). The top-level crossCheck summarizes the whole set; per-phase crossCheck lists that phase's cases. NEVER jargon, library names, file paths, shell commands or code.",
 		"- outcomes (top-level + per phase): OPTIONAL legacy plain-language summary (1–3 short lines) — crossCheck is the sign surface.",
 		"- scope entries are path prefixes the implementing agent may touch; keep them tight",
-		// question policy (2026-10-16): the planner's boundary decisions are internal technical
-		// calls — it must make them from the requirement doc, never bounce them to the human
-		"- if the requirement doc leaves the OUTCOME ambiguous (what the human wants the result to be or do, product/UI level), return ONLY {\"questions\":[{\"question\":\"…\",\"choices\":[\"a\",\"b\"]}]} instead of phases (max 5; omit choices only for a product/UI question with genuinely no guessable options, marking it \"freeText\": true) — the human answers and you are re-run",
+						"- if the requirement doc leaves the OUTCOME ambiguous (what the human wants the result to be or do, product/UI level), return ONLY {\"questions\":[{\"question\":\"…\",\"choices\":[\"a\",\"b\"]}]} instead of phases (max 5; omit choices only for a product/UI question with genuinely no guessable options, marking it \"freeText\": true) — the human answers and you are re-run",
 		"- NEVER ask the human internal technical/detail questions (library, module split, naming, test approach, data shape, refactor structure): decide those from the requirement doc and repo, and proceed",
 	].join("\n");
 
-/** Parse a planner sub-agent's output into phase drafts. Accepts bare JSON or fenced JSON
- *  (models add ```json despite instructions — strip, don't punish). Structural errors get
- *  actionable messages: the caller retries with an explicit phases list. */
 export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPlanPhase[]; crossCheck?: string[]; outcomes?: string; questions?: ClarifyQuestion[] } | { ok: false; error: string } => {
 	const stripped = output.replace(/```(?:json)?\s*\n?/g, "").replace(/```/g, "");
 	const start = stripped.indexOf("{");
@@ -173,11 +141,7 @@ export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPla
 	} catch (e) {
 		return { ok: false, error: `JSON.parse failed: ${(e as Error).message.slice(0, 120)}` };
 	}
-	// questions instead of phases → a human decision the planner surfaced (it is a sub-agent:
-	// it cannot open a picker itself, so the caller asks). Enforced through the SAME question
-	// policy as the requirements clarify loop / zense_ask (2026-10-16): choices by default, a
-	// choice-less question only with the explicit freeText marker for a product/UI outcome.
-	const questionField = (parsed as { questions?: unknown }).questions;
+					const questionField = (parsed as { questions?: unknown }).questions;
 	if (questionField !== undefined && (parsed as { phases?: unknown }).phases === undefined) {
 		const scan = scanClarifyQuestions(questionField);
 		if (scan.violations.length) return { ok: false, error: questionPolicyError(scan.violations) };
@@ -196,27 +160,19 @@ export const parseLongrunPlan = (output: string): { ok: true; phases: LongrunPla
 		for (const c of p.criteria as Partial<Criterion>[])
 			if (typeof c?.id !== "string" || typeof c?.text !== "string" || typeof c?.check !== "string" || !c.check.trim())
 				return { ok: false, error: `phase "${p.title}": every criterion needs id/text/check` };
-		// outcomes: optional at parse (explicit agent-authored phase lists carry none) — trimmed
-		// when present, dropped when blank (never a half-clean string downstream: the plain
-		// spread would keep the raw " " value, so blank is deleted explicitly)
-		const clean: LongrunPlanPhase = { ...p } as LongrunPlanPhase;
+								const clean: LongrunPlanPhase = { ...p } as LongrunPlanPhase;
 		if (typeof p.outcomes === "string" && p.outcomes.trim()) clean.outcomes = p.outcomes.trim();
 		else delete clean.outcomes;
-		// crossCheck: same optionality/normalization as outcomes (one line per case, blanks drop)
-		const cases = asCaseLines(p.crossCheck);
+				const cases = asCaseLines(p.crossCheck);
 		if (cases) clean.crossCheck = cases;
 		else delete clean.crossCheck;
 		norm.push(clean);
 	}
-	// tracker-level crossCheck/outcomes: same optionality — the sign dialog falls back to the
-	// requirement intent when absent, so an old planner output or hand-written plan keeps working
-	const topOut = (parsed as { outcomes?: unknown }).outcomes;
+			const topOut = (parsed as { outcomes?: unknown }).outcomes;
 	const topCases = asCaseLines((parsed as { crossCheck?: unknown }).crossCheck);
 	return { ok: true, phases: norm, ...(topCases ? { crossCheck: topCases } : {}), ...(typeof topOut === "string" && topOut.trim() ? { outcomes: topOut.trim() } : {}) };
 };
 
-/** Build the phase's spec fields from the tracker entry (used by zense_longrun next →
- *  commitSpec). Seed criteria carry the tracker's signature — see mergePhaseCriteria. */
 export const compilePhaseSpec = (
 	t: Tracker,
 	phase: TrackerPhase,
@@ -224,9 +180,7 @@ export const compilePhaseSpec = (
 ): { title: string; intent: string; crossCheck?: string[]; outcomes?: string; scope: string[]; constraints: string[]; criteria: Criterion[]; specDebt: string[]; provenance: string } => ({
 	title: `longrun(${t.slug}) ${phase.id} – ${phase.title}`,
 	intent: `${phase.intent}\n\n[longrun "${t.slug}" tracker v${t.version} — approved by the tracker's signature; review gate at phase end; worktree ${t.worktreeBranch}]`,
-	// the phase's goal cases ride into the phase spec — a re-sign/resume/review of a mid-set
-	// phase keeps showing the human what THIS phase promised (and maps it at review time)
-	crossCheck: phase.crossCheck,
+			crossCheck: phase.crossCheck,
 	outcomes: phase.outcomes,
 	scope: phase.scope,
 	constraints: phase.constraints,
@@ -234,9 +188,6 @@ export const compilePhaseSpec = (
 	specDebt: [],
 	provenance: `tracker:${t.slug}@v${t.version}`,
 });
-
-// ----- context capsule: the ONLY thing carried into a fresh phase after a compact/new
-//       session — done phases collapse to one line each, the active phase is spelled out
 
 export const buildContextCapsule = (cwd: string, t: Tracker, active: TrackerPhase, opts?: { label?: string }): string => {
 	const label = opts?.label ?? "Active phase";
@@ -270,11 +221,6 @@ export const buildContextCapsule = (cwd: string, t: Tracker, active: TrackerPhas
 	return lines.join("\n");
 }
 
-// ----- git semantics (ADR-004): checkpoint per accepted phase, fail = reset --hard, and
-//       ambient-state distrust — every transition starts with a reconcile
-
-/** Stage everything (except .zense) in the worktree and commit as the phase checkpoint.
- *  nothing-to-commit is a VALID close (the phase may have produced only .zense artifacts). */
 export const checkpointCommit = (wtRoot: string, message: string): { ok: boolean; sha?: string; msg: string } => {
 	const add = gitAddButZense(wtRoot);
 	if (!add.ok) return { ok: false, msg: `git add failed: ${add.err}` };
@@ -288,27 +234,18 @@ export const checkpointCommit = (wtRoot: string, message: string): { ok: boolean
 	return h.ok ? { ok: true, sha: h.out.trim(), msg: h.out.trim() } : { ok: false, msg: "committed but rev-parse failed" };
 };
 
-/** Phase-discard semantics — always reset --hard to the phase baseline, never a reverse
- *  patch (DENY rule, ADR-004): the checkpoint chain makes the reset exact. */
 export const resetToCheckpoint = (wtRoot: string, sha: string): { ok: boolean; msg: string } => {
 	const r = gitOk(["reset", "--hard", sha], wtRoot);
 	if (!r.ok) return { ok: false, msg: r.err };
-	gitOk(["clean", "-fd", "--", ".", NOT_ZENSE], wtRoot); // untracked phase leftovers — .zense excluded per policy
-	return { ok: true, msg: `reset --hard ${sha.slice(0, 12)}` };
+	gitOk(["clean", "-fd", "--", ".", NOT_ZENSE], wtRoot); 	return { ok: true, msg: `reset --hard ${sha.slice(0, 12)}` };
 };
 
 export interface ReconcileResult {
-	/** ok = ready to run; missing = worktree dir gone (caller reattaches); the rest need
-	 *  either auto-heal (healable) or a human pick via zense_ask/dialog */
-	status: "ok" | "missing-worktree" | "wrong-branch" | "detached" | "checkpoint-diverged";
+		status: "ok" | "missing-worktree" | "wrong-branch" | "detached" | "checkpoint-diverged";
 	actualBranch?: string;
-	dirty: string[];          // uncommitted changes outside .zense (porcelain lines)
-	commitsSinceCheckpoint: number;
-	healable: boolean;        // auto git switch is safe (nothing uncommitted to lose)
-}
+	dirty: string[];          	commitsSinceCheckpoint: number;
+	healable: boolean;        }
 
-/** The ambient-state-distrust precondition: never ask "what branch are we on?" — assert the
- *  tracker.json expectation against reality. Run before every next/resume/close. */
 export const reconcileLongrunWorktree = (wtRoot: string | undefined, expectedBranch: string, lastCheckpoint?: string): ReconcileResult => {
 	if (!wtRoot || !existsSync(wtRoot))
 		return { status: "missing-worktree", dirty: [], commitsSinceCheckpoint: 0, healable: true };
@@ -319,9 +256,7 @@ export const reconcileLongrunWorktree = (wtRoot: string | undefined, expectedBra
 	const healable = dirtyLines.length === 0;
 	let commits = 0;
 	if (lastCheckpoint) {
-		// the recorded checkpoint must be an ancestor of HEAD — if the branch was rewound/
-		// rebased behind our back, the checkpoint chain is broken → human, never auto-heal
-		const anc = gitOk(["merge-base", "--is-ancestor", lastCheckpoint, "HEAD"], wtRoot);
+						const anc = gitOk(["merge-base", "--is-ancestor", lastCheckpoint, "HEAD"], wtRoot);
 		if (!anc.ok)
 			return { status: "checkpoint-diverged", ...(actual ? { actualBranch: actual } : {}), dirty: dirtyLines, commitsSinceCheckpoint: 0, healable: false };
 		commits = Number(gitOk(["rev-list", "--count", `${lastCheckpoint}..HEAD`], wtRoot).out.trim() || "0");
@@ -332,26 +267,17 @@ export const reconcileLongrunWorktree = (wtRoot: string | undefined, expectedBra
 	return { status: "ok", actualBranch: actual, dirty: dirtyLines, commitsSinceCheckpoint: commits, healable };
 };
 
-/** Auto-heal half of reconcile: switch back to the expected branch (only when clean — the
- *  dirty case always goes through a human pick first). */
 export const healToBranch = (wtRoot: string, expectedBranch: string): { ok: boolean; msg: string } => {
 	const sw = gitOk(["switch", expectedBranch], wtRoot);
 	return sw.ok ? { ok: true, msg: `switched to ${expectedBranch}` } : { ok: false, msg: sw.err };
 };
 
-/** Abandon teardown: remove the longrun worktree + branch for good. main needs no undo —
- *  a longrun NEVER staged anything into it (that's the whole ADR-004 upside: abandoning a
- *  half-done requirement set is a single rm). The tracker itself is kept as status
- *  "abandoned" by the caller (audit trail). */
 export const abandonLongrunWorktree = (cwd: string, t: Tracker): { ok: boolean; msg: string } => {
 	const wtRoot = join(zenseDir(cwd), "worktree", `longrun-${t.slug}`);
 	if (existsSync(wtRoot) && !gitOk(["worktree", "remove", wtRoot, "--force"], cwd).ok)
 		return { ok: false, msg: `git worktree remove failed for ${wtRoot} — remove manually` };
-	gitOk(["branch", "-D", t.worktreeBranch], cwd); // already gone when the worktree was pruned mid-flow — best-effort
-	return { ok: true, msg: `worktree + branch ${t.worktreeBranch} removed` };
+	gitOk(["branch", "-D", t.worktreeBranch], cwd); 	return { ok: true, msg: `worktree + branch ${t.worktreeBranch} removed` };
 };
-
-// ----- closure summary (phases/<id>.md — the capsule reads its first line later)
 
 export const writePhaseSummary = (cwd: string, t: Tracker, phase: TrackerPhase, summary: string, filesChanged: string[]): string => {
 	const rel = `phases/${phase.id}.md`;
@@ -367,12 +293,9 @@ export const writePhaseSummary = (cwd: string, t: Tracker, phase: TrackerPhase, 
 	return rel;
 };
 
-/** Append one line to specs.md change-log — the requirement doc accumulates what actually
- *  happened, so a fresh session can read ONE file for the whole story. */
 export const appendSpecsLog = (cwd: string, slug: string, line: string): void => {
 	try {
 		appendFileSync(join(longrunDir(cwd, slug), "specs.md"), `\n- ${new Date().toISOString()} ${line}\n`);
 	} catch {
-		/* best-effort */
 	}
 };

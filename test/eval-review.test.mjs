@@ -50,14 +50,10 @@ test("parseGraderOutput: full contract → verdicts + evidence + overall", () =>
 });
 
 test("parseGraderOutput: missing ids / missing OVERALL / PASS without evidence are detected, not silently passed", () => {
-	// ids the grader forgot → incomplete coverage (used to be ignored silently)
-	assert.deepEqual(parseGraderOutput("C1: PASS: ran and it worked\nOVERALL: PASS", CRITERIA).missingIds, ["C2"]);
-	// missing OVERALL → overall=null (the caller must treat it as inconclusive)
-	assert.equal(parseGraderOutput("C1: PASS: ok\nC2: PASS: ok", CRITERIA).overall, null);
-	// PASS without evidence → rejected (closes the confident-bluff hole)
-	assert.deepEqual(parseGraderOutput("C1: PASS\nc2: PASS:\nOVERALL: PASS", [{ id: "C1", text: "x", check: "y" }]).passNoEvidence, ["C1"]);
-	// ids with special chars don't break it (regex escaped)
-	const weird = parseGraderOutput("c-1.2: PASS: ok\nOVERALL: PASS", [{ id: "c-1.2", text: "x", check: "y" }]);
+		assert.deepEqual(parseGraderOutput("C1: PASS: ran and it worked\nOVERALL: PASS", CRITERIA).missingIds, ["C2"]);
+		assert.equal(parseGraderOutput("C1: PASS: ok\nC2: PASS: ok", CRITERIA).overall, null);
+		assert.deepEqual(parseGraderOutput("C1: PASS\nc2: PASS:\nOVERALL: PASS", [{ id: "C1", text: "x", check: "y" }]).passNoEvidence, ["C1"]);
+		const weird = parseGraderOutput("c-1.2: PASS: ok\nOVERALL: PASS", [{ id: "c-1.2", text: "x", check: "y" }]);
 	assert.equal(weird.perCriteria["c-1.2"], "PASS");
 });
 
@@ -86,15 +82,12 @@ test("runCheckProbes: compound checks (path exists && shell / && path exists) ar
 		writeFileSync(join(dir, "here.txt"), "x");
 		writeFileSync(join(dir, "two.txt"), "y");
 		const probes = runCheckProbes(dir, [
-			// pure exists (multiple paths) — passes only when all exist; the old anchored regex never matched this compound at all
-			{ id: "c1", text: "two files", check: "path exists: here.txt && path exists: two.txt" },
+						{ id: "c1", text: "two files", check: "path exists: here.txt && path exists: two.txt" },
 			{ id: "c2", text: "missing one", check: "path exists: here.txt && path exists: nope.txt" },
-			// mixed with shell — used to fall through to sh -c whole → "path" isn't a command → exit 127 false-FAIL
-			{ id: "c3", text: "exists + shell pass", check: "path exists: here.txt && node --version" },
+						{ id: "c3", text: "exists + shell pass", check: "path exists: here.txt && node --version" },
 			{ id: "c4", text: "exists missing + shell pass", check: "path exists: nope.txt && node --version" },
 			{ id: "c5", text: "exists ok + shell fail", check: 'node --version && path exists: here.txt && node -e "process.exit(3)"' },
-			// an unjudgable shell segment inside a compound → the whole criterion is skipped (never guessed)
-			{ id: "c6", text: "unrunnable segment", check: "path exists: here.txt && manual visual QA" },
+						{ id: "c6", text: "unrunnable segment", check: "path exists: here.txt && manual visual QA" },
 		]);
 		assert.deepEqual(probes.map((p) => p.status), ["pass", "fail", "pass", "fail", "fail", "skipped"]);
 		assert.match(probes[1].detail, /not found: nope\.txt/);
@@ -117,15 +110,12 @@ test("runCheckProbes: shell-only check containing quoted '&&' is NOT split (runs
 
 test("runCheckProbes: malformed/usage-error check commands classify as skipped (NOT fail) — no false probe-primacy FAIL loop", () => {
 	const probes = runCheckProbes(tmpdir(), [
-		// real cases from false FAILs: helm arg error / test usage error — the command itself is broken, not the artifact
-		{ id: "u1", text: "helm arg error", check: `node -e "console.error('Error: expected at most two arguments, unexpected: +, grep'); process.exit(1)"` },
+				{ id: "u1", text: "helm arg error", check: `node -e "console.error('Error: expected at most two arguments, unexpected: +, grep'); process.exit(1)"` },
 		{ id: "u2", text: "test usage error", check: `node -e "console.error('sh: test: too many arguments'); process.exit(2)"` },
 		{ id: "u3", text: "command not found", check: "this-command-does-not-exist-xyz --version jq" },
-		// checks that ran fine but the artifact missed = still full fails (probe primacy may still override the grader)
-		{ id: "u4", text: "silent exit 1", check: 'node -e "process.exit(1)"' },
+				{ id: "u4", text: "silent exit 1", check: 'node -e "process.exit(1)"' },
 		{ id: "u5", text: "grep no match", check: "echo hello | grep -q goodbye" },
-		// compound: a broken shell segment → the whole criterion is skipped (can't judge, never guess)
-		{ id: "u6", text: "compound with broken segment", check: `node --version && node -e "console.error('usage: x [opts]'); process.exit(2)"` },
+				{ id: "u6", text: "compound with broken segment", check: `node --version && node -e "console.error('usage: x [opts]'); process.exit(2)"` },
 	]);
 	assert.deepEqual(probes.map((p) => p.status), ["skipped", "skipped", "skipped", "fail", "fail", "skipped"]);
 	assert.match(probes[0].detail, /probe command error/);
@@ -137,18 +127,17 @@ test("lintSpecChecks: spec-side broken checks (127 / not-runnable / placeholder)
 	const dir = mkdtempSync(join(tmpdir(), "zense-lint-"));
 	try {
 		const r = lintSpecChecks(dir, [
-			{ id: "b1", text: "t", check: "bash -c no-such-cmd-qqq" }, // exit 127 → cmdErr → skipped → broken
-			{ id: "b2", text: "t", check: "definitely-not-a-real-cmd-xyz --version" }, // not machine-runnable → skipped → broken
-			{ id: "b3", text: "t", check: "path exists: src/<module>/x" }, // unsubstituted placeholder → skipped → broken
-			{ id: "k1", text: "t", check: "path exists: no-such-artifact-abc" }, // artifact not yet implemented → fail → no warning
-			{ id: "k2", text: "t", check: "test 1 -eq 2" }, // good command, genuinely fails → no warning
-			{ id: "k3", text: "t", check: "node --version" }, // pass → no warning
+			{ id: "b1", text: "t", check: "bash -c no-such-cmd-qqq" },
+			{ id: "b2", text: "t", check: "definitely-not-a-real-cmd-xyz --version" },
+			{ id: "b3", text: "t", check: "path exists: src/<module>/x" },
+			{ id: "k1", text: "t", check: "path exists: no-such-artifact-abc" },
+			{ id: "k2", text: "t", check: "test 1 -eq 2" },
+			{ id: "k3", text: "t", check: "node --version" },
 		]);
 		assert.deepEqual(r.broken.sort(), ["b1", "b2", "b3"]);
 		assert.ok(r.notes.some((n) => n.includes("b1")), "a note must name the broken id");
 		assert.ok(r.notes.every((n) => n.startsWith("check-lint:")), "every note must start with check-lint:");
-		// empty/all-passing criteria → nothing to warn about
-		assert.deepEqual(lintSpecChecks(dir, []), { broken: [], notes: [] });
+				assert.deepEqual(lintSpecChecks(dir, []), { broken: [], notes: [] });
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -160,10 +149,8 @@ test("CHECK_FORMAT_CONTRACT + requirements prompt: contract markers (sh -c / pat
 	const p = buildRequirementsPrompt("probe", []);
 	for (const marker of ["sh -c", "path exists:", "specDebt", "&&", "**", "npm test"])
 		assert.ok(p.includes(marker), `requirements prompt missing marker "${marker}"`);
-	// the prompt must embed the very same contract blob (single source of truth) — never fork the wording
-	assert.ok(p.includes(CHECK_FORMAT_CONTRACT.slice(0, 120)), "prompt must embed CHECK_FORMAT_CONTRACT");
+		assert.ok(p.includes(CHECK_FORMAT_CONTRACT.slice(0, 120)), "prompt must embed CHECK_FORMAT_CONTRACT");
 });
-
 
 test("SUBAGENT_EXCLUDE_TOOLS: grader and reviewer are read-only like requirements", () => {
 	for (const role of ["requirements", "grader", "reviewer"]) assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS[role], ["write", "edit"]);
@@ -181,8 +168,7 @@ test("gatherRepoFacts: reads package scripts + README head + layout, tolerates b
 		assert.match(facts, /test="node --test test\/x\.mjs"/);
 		assert.match(facts, /README\.md \(head\)/);
 		assert.match(facts, /top-level dirs: src/);
-		// a bare dir → no repo facts (the host toolchain fact is fine — package.json-less cargo/go repos need it), no throw
-		const bare = mkdtempSync(join(tmpdir(), "zense-facts-bare-"));
+				const bare = mkdtempSync(join(tmpdir(), "zense-facts-bare-"));
 		try {
 			assert.ok(gatherRepoFacts(bare).every((f) => f.startsWith("- toolchain on PATH")));
 		} finally {
@@ -196,8 +182,7 @@ test("gatherRepoFacts: reads package scripts + README head + layout, tolerates b
 test("loadSpecExemplar: picks the newest APPROVED spec with criteria, skips unapproved/broken", () => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-exemplar-"));
 	try {
-		assert.equal(loadSpecExemplar(dir), null); // no archive yet
-		const specsDir = join(dir, ".zense", "specs");
+		assert.equal(loadSpecExemplar(dir), null); 		const specsDir = join(dir, ".zense", "specs");
 		mkdirSync(specsDir, { recursive: true });
 		writeFileSync(
 			join(specsDir, "2026-01-01-00-00-00-v1-old-signed.json"),
@@ -225,8 +210,7 @@ test("buildGraderPrompt: probe results are authoritative, evidence mandatory, re
 	assert.match(p, /Reward-hacking checklist/);
 	assert.match(p, /Change summary/);
 	assert.match(p, /A PASS without evidence is rejected/);
-	// retry feedback gets appended
-	assert.match(buildGraderPrompt(spec, [], "", "no verdict given for: C2"), /SYSTEM FEEDBACK: your previous response was rejected: no verdict given for: C2/);
+		assert.match(buildGraderPrompt(spec, [], "", "no verdict given for: C2"), /SYSTEM FEEDBACK: your previous response was rejected: no verdict given for: C2/);
 });
 
 test("parseReviewerPacket: full schema ok + TL;DR extracted; missing sections reported for retry feedback", () => {
@@ -282,8 +266,7 @@ test("mergeCrossCheck: every signed goal appears once; exact/near matches reuse 
 		{ goal: goals[0], evidence: "" },
 		{ goal: goals[1], evidence: "removed it in src/b.ts" },
 	]);
-	// reviewer-only extra lines stay visible at the end
-	const extra = mergeCrossCheck([goals[0]], [{ goal: "bonus case", evidence: "added in src/z.ts" }]);
+		const extra = mergeCrossCheck([goals[0]], [{ goal: "bonus case", evidence: "added in src/z.ts" }]);
 	assert.equal(extra.length, 2);
 	assert.equal(extra[1].goal, "bonus case");
 });
@@ -301,8 +284,7 @@ test("buildReviewerPrompt: carries eval evidence + git + flags/debt, defines str
 	assert.match(p, /Intent: make things fast/);
 	assert.match(p, /Eval verdict: PASS/);
 	assert.match(p, /C2=FAIL/);
-	assert.match(p, /C1: pass — ok/); // r2: probes carry their detail verbatim, not bare id:status
-	assert.match(p, /out-of-scope write: x/);
+	assert.match(p, /C1: pass — ok/); 	assert.match(p, /out-of-scope write: x/);
 	assert.match(p, /debt one/);
 	assert.match(p, /need-fix: criteria failed: C2/);
 	assert.match(p, /abc impl v2/);
@@ -314,8 +296,7 @@ test("buildReviewerPrompt: carries eval evidence + git + flags/debt, defines str
 	assert.match(withGoals, /1\. You want A to show B when C/);
 	assert.match(withGoals, /EXACTLY one line per case above/);
 	assert.match(withGoals, /what was actually DONE/);
-	assert.match(buildReviewerPrompt("i", undefined, [], [], [], "", "Rollback"), /was rejected: Rollback/); // r5: feedback covers both schema and grounding
-});
+	assert.match(buildReviewerPrompt("i", undefined, [], [], [], "", "Rollback"), /was rejected: Rollback/); });
 
 test("buildReviewerPrompt: stale lastEval (version/tree) is dropped and warned", () => {
 	const ev = {
@@ -325,22 +306,18 @@ test("buildReviewerPrompt: stale lastEval (version/tree) is dropped and warned",
 		specVersion: 1,
 		head: "tree-aaa",
 	};
-	// version mismatch → stale: verdict/per-criteria/probes dropped + warning
-	const staleV = buildReviewerPrompt("i", ev, [], [], [], "", "", { specVersion: 2, head: "tree-aaa" });
+		const staleV = buildReviewerPrompt("i", ev, [], [], [], "", "", { specVersion: 2, head: "tree-aaa" });
 	assert.doesNotMatch(staleV, /Eval verdict: PASS/);
 	assert.doesNotMatch(staleV, /C1=PASS/);
 	assert.doesNotMatch(staleV, /C1: pass/);
 	assert.match(staleV, /STALE eval evidence/);
-	// tree mismatch (code changed after eval) → stale too
-	const staleT = buildReviewerPrompt("i", ev, [], [], [], "", "", { specVersion: 1, head: "tree-bbb" });
+		const staleT = buildReviewerPrompt("i", ev, [], [], [], "", "", { specVersion: 1, head: "tree-bbb" });
 	assert.doesNotMatch(staleT, /Eval verdict: PASS/);
 	assert.match(staleT, /STALE eval evidence/);
-	// fresh (version+tree match) → renders every line as before
-	const fresh = buildReviewerPrompt("i", ev, [], [], [], "", "", { specVersion: 1, head: "tree-aaa" });
+		const fresh = buildReviewerPrompt("i", ev, [], [], [], "", "", { specVersion: 1, head: "tree-aaa" });
 	assert.match(fresh, /Eval verdict: PASS/);
 	assert.match(fresh, /C1=PASS/);
-	assert.match(fresh, /C1: pass — ok/); // r2: probe detail verbatim
-	assert.doesNotMatch(fresh, /STALE/);
+	assert.match(fresh, /C1: pass — ok/); 	assert.doesNotMatch(fresh, /STALE/);
 });
 
 test("gitChangeSummary: baseline scopes log+diff to baseline..HEAD", () => {
@@ -358,12 +335,8 @@ test("gitChangeSummary: baseline scopes log+diff to baseline..HEAD", () => {
 		git(["add", "-A"]);
 		git(["commit", "-q", "-m", "current-round commit"]);
 		const scoped = gitChangeSummary(cwd, baseline);
-		assert.match(scoped, /current-round commit/); // only this round's commit shows
-		assert.doesNotMatch(scoped, /old-round commit/); // pre-baseline commits must not leak in
-		assert.match(scoped, /new-round-file\.txt/); // the baseline-referenced diffstat sees the new file
-		assert.doesNotMatch(scoped, /old-round-file\.txt/);
-		// degrade: no baseline → previous behavior (full history); baseline in a non-repo dir → no throw
-		assert.match(gitChangeSummary(cwd), /old-round commit/);
+		assert.match(scoped, /current-round commit/); 		assert.doesNotMatch(scoped, /old-round commit/); 		assert.match(scoped, /new-round-file\.txt/); 		assert.doesNotMatch(scoped, /old-round-file\.txt/);
+				assert.match(gitChangeSummary(cwd), /old-round commit/);
 		const nonGit = mkdtempSync(join(tmpdir(), "zense-nogit-base-"));
 		try {
 			assert.equal(gitChangeSummary(nonGit, "deadbeef"), "");
@@ -376,25 +349,20 @@ test("gitChangeSummary: baseline scopes log+diff to baseline..HEAD", () => {
 });
 
 test("buildPendingApplyEvidencePrefix: the reviewer can't mistake main for committed — a clear staged-uncommitted label when pendingApply exists", () => {
-	// with pendingApply (applied, awaiting a human commit): must state clearly that changes are staged-but-uncommitted by design
-	const p = buildPendingApplyEvidencePrefix(true, false);
+		const p = buildPendingApplyEvidencePrefix(true, false);
 	assert.match(p, /staged, uncommitted/);
 	assert.match(p, /a human commits after this review/);
 	assert.match(p, /no new commits since baseline.+expected/);
-	// human edits during review → an extra note, but the review proceeds (not stale)
-	const h = buildPendingApplyEvidencePrefix(true, true);
+		const h = buildPendingApplyEvidencePrefix(true, true);
 	assert.match(h, /edited AFTER eval\+apply/);
 	assert.match(h, /review as normal/);
-	// no pendingApply (old flow / pre-eval) → no stray label
-	assert.equal(buildPendingApplyEvidencePrefix(false, false), "");
-	// concatenated into buildReviewerPrompt as gitSummary, the label must survive into the actual prompt
-	const prompt = buildReviewerPrompt("i", undefined, [], [], [], buildPendingApplyEvidencePrefix(true, false) + "\n" + "diffstat vs baseline:\n src.ts | 2 ++", "", {
+		assert.equal(buildPendingApplyEvidencePrefix(false, false), "");
+		const prompt = buildReviewerPrompt("i", undefined, [], [], [], buildPendingApplyEvidencePrefix(true, false) + "\n" + "diffstat vs baseline:\n src.ts | 2 ++", "", {
 		specVersion: 1,
 		head: "tree-x",
 	});
 	assert.match(prompt, /staged, uncommitted/);
-	assert.match(prompt, /src\.ts \| 2/); // the staged-changes diffstat still rides with the evidence
-});
+	assert.match(prompt, /src\.ts \| 2/); });
 
 test("gitChangeSummary: staged-but-uncommitted changes (pendingApply) still show in diffstat/porcelain — the reviewer sees full evidence", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "zense-staged-"));
@@ -407,13 +375,10 @@ test("gitChangeSummary: staged-but-uncommitted changes (pendingApply) still show
 		git(["add", "-A"]);
 		git(["commit", "-q", "-m", "baseline commit"]);
 		const baseline = git(["rev-parse", "HEAD"]).trim();
-		// simulate post-apply-back state: new file staged, HEAD unmoved (no commit yet)
-		writeFileSync(join(cwd, "applied.txt"), "staged only\n");
+				writeFileSync(join(cwd, "applied.txt"), "staged only\n");
 		git(["add", "applied.txt"]);
 		const s = gitChangeSummary(cwd, baseline);
-		assert.match(s, /applied\.txt/); // both porcelain and diffstat must see the staged change
-		assert.doesNotMatch(s, /commits since baseline/); // no new commits after baseline (apply-back never commits — by design)
-	} finally {
+		assert.match(s, /applied\.txt/); 		assert.doesNotMatch(s, /commits since baseline/); 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
 });
@@ -438,8 +403,7 @@ test("gitChangedSymbols: reports real added function/class/const names with thei
 		assert.match(out, /\+ src\/a\.ts: export function renderB/);
 		assert.match(out, /\+ src\/a\.ts: const helper/);
 		assert.match(out, /\+ src\/b\.ts: export interface Case/);
-		assert.equal(gitChangedSymbols(cwd, "deadbeef"), ""); // bad ref → best-effort empty, never a throw
-	} finally {
+		assert.equal(gitChangedSymbols(cwd, "deadbeef"), ""); 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
 });
@@ -465,8 +429,7 @@ test("gitDiffExcerpt: verbatim added/removed lines + file paths (call sites and 
 		assert.match(out, /file: src\/a\.ts/);
 		assert.match(out, /\+export function newPath/);
 		assert.match(out, /-export function oldPath/);
-		assert.match(out, /\+newPath\(\)/); // the call site in the other file is visible
-		assert.equal(gitDiffExcerpt(cwd, "deadbeef"), "");
+		assert.match(out, /\+newPath\(\)/); 		assert.equal(gitDiffExcerpt(cwd, "deadbeef"), "");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -482,271 +445,4 @@ test("buildRequirementsPrompt: facts + exemplar spliced in, request stays last (
 	const lessonsAt = withCtx.indexOf("Past lessons");
 	const requestAt = withCtx.indexOf("Request: add x");
 	assert.ok(exemplarAt > -1 && exemplarAt < factsAt && factsAt < lessonsAt && lessonsAt < requestAt);
-});
-
-test("applyQualityGate: scope pointing at a non-existent path is caught (gate would be toothless otherwise)", () => {
-	const dir = mkdtempSync(join(tmpdir(), "zense-scope-"));
-	try {
-		mkdirSync(join(dir, "src", "real-dir"), { recursive: true }); // a real path → not flagged
-		const { notes, draft } = applyQualityGate(dir, {
-			title: "t",
-			intent: "i",
-			scope: ["src/real-dir", "ghost/nope-xyz"],
-			constraints: [],
-			criteria: [{ id: "c1", text: "t", check: "npm test" }],
-			specDebt: [],
-		});
-		assert.ok(notes.some((n) => n.startsWith("scope-missing:ghost/nope-xyz")));
-		assert.ok(!notes.some((n) => n.startsWith("scope-missing:src/real-dir")));
-		assert.ok(draft.specDebt.some((d) => d.includes("ghost/nope-xyz")));
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test("canReuseWorktree: null/missing-dir → false, existing dir → true (guards against a spec bump orphaning in-progress work)", async () => {
-	const { canReuseWorktree } = await import("../extensions/zense-harness/index.ts");
-	assert.equal(canReuseWorktree(null), false);
-	assert.equal(canReuseWorktree(undefined), false);
-	assert.equal(canReuseWorktree({ root: "/nonexistent-zense-wt-xyz-123", branch: "zense/impl/v1-x", dir: "/nonexistent-zense-wt-xyz-123" }), false);
-	const dir = mkdtempSync(join(tmpdir(), "zense-reuse-"));
-	try {
-		// reuse = the only changing condition is the dir existing on disk — its branch/dir metadata must stay intact
-		assert.equal(canReuseWorktree({ root: dir, branch: "zense/impl/v3-old", dir }), true);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test("hasUnsubstitutedPlaceholder: returns offending token for angle/brace templates, null for clean checks", () => {
-	assert.equal(hasUnsubstitutedPlaceholder("path exists: <path>"), "<path>");
-	assert.equal(hasUnsubstitutedPlaceholder("path exists: src/<module>/x.ts"), "<module>");
-	assert.equal(hasUnsubstitutedPlaceholder("{name} gate"), "{name}");
-	assert.equal(hasUnsubstitutedPlaceholder("npm test"), null);
-	assert.equal(hasUnsubstitutedPlaceholder('node -e "process.exit(1)"'), null);
-	// real shell: redirection/grep are not placeholders; ${VAR} is excepted (lookbehind)
-	assert.equal(hasUnsubstitutedPlaceholder("cat nofile 2>&1 | grep -q ok"), null);
-	assert.equal(hasUnsubstitutedPlaceholder('grep -q "${HOME}" README.md'), null);
-});
-
-test("runCheckProbes: unsubstituted placeholder in check → skipped (NOT fail), detail points to re-spec", () => {
-	const probes = runCheckProbes(tmpdir(), [
-		{ id: "ph1", text: "angle placeholder path", check: "path exists: src/<module>/index.ts" },
-		{ id: "ph2", text: "brace placeholder shell", check: 'grep -q "ok" {file}' },
-		{ id: "ph3", text: "clean shell", check: "node --version" },
-	]);
-	assert.deepEqual(probes.map((p) => p.status), ["skipped", "skipped", "pass"]);
-	assert.match(probes[0].detail, /unsubstituted placeholder "<module>"/);
-	assert.match(probes[0].detail, /fix spec via zense_spec/);
-	assert.match(probes[1].detail, /unsubstituted placeholder "\{file\}"/);
-});
-
-test("modelMatchesPattern: exact / thinking-suffix / case-insensitive match, rejects other providers and prefixes", () => {
-	assert.ok(modelMatchesPattern("openai/gpt-4.1", "openai/gpt-4.1"));
-	assert.ok(modelMatchesPattern("openai/gpt-4.1", "openai/gpt-4.1:high"));
-	assert.ok(modelMatchesPattern("OpenAI/GPT-4.1", "openai/gpt-4.1"));
-	assert.ok(!modelMatchesPattern("openai/gpt-4.1", "anthropic/claude"));
-	assert.ok(!modelMatchesPattern("synthetic/syn:large:text", "synthetic/syn:large")); // a prefix is not a suffix pair
-});
-
-test("normalizeShellCommand: strips leading bash:/sh:/shell:/zsh: prefix once, no-op otherwise", () => {
-	assert.equal(normalizeShellCommand("bash: node --version"), "node --version");
-	assert.equal(normalizeShellCommand("sh:npm test"), "npm test");
-	assert.equal(normalizeShellCommand("SHELL: node --version"), "node --version");
-	assert.equal(normalizeShellCommand("zsh: make build"), "make build");
-	// no-op: no prefix / prefix mid-string / a genuine shell command as a whole
-	assert.equal(normalizeShellCommand("npm test"), "npm test");
-	assert.equal(normalizeShellCommand("bash --version"), "bash --version");
-	assert.equal(normalizeShellCommand('echo "a" && bash: node --version'), 'echo "a" && bash: node --version');
-});
-
-test("runCheckProbes: leading runner prefix executes the stripped command (true pass/fail/cmdErr)", () => {
-	const probes = runCheckProbes(tmpdir(), [
-		{ id: "n1", text: "prefixed pass", check: "bash: node --version" },
-		{ id: "n2", text: "prefixed real fail", check: 'sh: node -e "process.exit(7)"' },
-		{ id: "n3", text: "prefixed missing cmd", check: "bash: definitely-missing-command-xyz --version" },
-		{ id: "n4", text: "prefixed compound", check: "shell: node --version && path exists: definitely-missing-file-xyz" },
-	]);
-	assert.deepEqual(probes.map((p) => p.status), ["pass", "fail", "skipped", "fail"]);
-	assert.equal(probes[1].exitCode, 7); // a real fail = really executed, not 127
-	assert.equal(probes[2].exitCode, 127); // inner command missing → cmdErr, still skipped as before
-	assert.match(probes[2].detail, /probe command error/);
-	assert.match(probes[3].detail, /not found: definitely-missing-file-xyz/);
-});
-
-// ----- M: per-role strip flags table
-test("SUBAGENT_STRIP_FLAGS: grader/reviewer fully bare, requirements strips only themes/templates", () => {
-	const FULL = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.grader, FULL);
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.reviewer, FULL);
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.requirements, ["--no-themes", "--no-prompt-templates"]);
-	assert.equal(SUBAGENT_STRIP_FLAGS["unknown-role"], undefined);
-});
-
-// ----- M: compact tool-result builders
-test("buildCompactProbeSection: detail only for non-pass probes; passes collapse to one line", () => {
-	const section = buildCompactProbeSection([
-		{ id: "c1", status: "pass", detail: "ok" },
-		{ id: "c2", status: "fail", exitCode: 1, detail: "npm test exploded\nstack line 2" },
-		{ id: "c3", status: "skipped", detail: "not machine-runnable" },
-		{ id: "c4", status: "pass", detail: "ok too" },
-	]);
-	assert.match(section, /## Probes/);
-	assert.match(section, /- c2: fail \(exit 1\) — npm test exploded/);
-	assert.match(section, /- c3: skipped — not machine-runnable/);
-	assert.match(section, /probes pass: c1,c4/); // passes merged into one line
-	assert.ok(!section.includes("stack line 2"), "detail must be cut to one line");
-	assert.ok(!section.includes("- c1:"), "a passing probe gets no detail line of its own");
-});
-
-test("buildEvalResultText PASS: verdict + per-criterion verdicts + zense_review directive + log hint", () => {
-	const text = buildEvalResultText({
-		verdict: "PASS",
-		criteria: [
-			{ id: "C1", text: "tests pass", check: "npm test" },
-			{ id: "C2", text: "file exists", check: "path exists: src/x.ts" },
-		],
-		perCriteria: { C1: "PASS", C2: "PASS" },
-		evidence: { C1: "npm test exit 0", C2: "file found" },
-		failedIds: [],
-		probeOverrides: [],
-		probes: [
-			{ id: "C1", status: "pass", detail: "ok" },
-			{ id: "C2", status: "pass", detail: "ok" },
-		],
-		trajectory: ["out-of-scope write: x"],
-		specDebt: ["manual QA"],
-		logPath: ".zense/subagents/t-grader.log",
-	});
-	assert.match(text, /✅ Eval PASS/);
-	assert.match(text, /zense_review/, "the PASS directive must order zense_review immediately (the agent once silently considered itself done)");
-	assert.match(text, /- C1: PASS — npm test exit 0/);
-	assert.match(text, /- C2: PASS — file found/);
-	assert.match(text, /probes pass: C1,C2/);
-	assert.match(text, /out-of-scope write/);
-	assert.match(text, /manual QA/);
-	assert.match(text, /\.zense\/subagents\/t-grader\.log/);
-	assert.match(text, /read it yourself/, "must point the agent at the log to read itself");
-});
-
-test("buildEvalResultText FAIL: failing criteria only + evidence capped at 120 chars + no lines for passing ones", () => {
-	const longEvidence = "x".repeat(200);
-	const text = buildEvalResultText({
-		verdict: "FAIL",
-		criteria: [
-			{ id: "C1", text: "a", check: "npm test" },
-			{ id: "C2", text: "b", check: "npm run build" },
-		],
-		perCriteria: { C1: "PASS", C2: "FAIL" },
-		evidence: { C1: "passed fine", C2: `${longEvidence}\nsecond line` },
-		failedIds: ["C2"],
-		probeOverrides: ["C2"],
-		probes: [
-			{ id: "C1", status: "pass", detail: "ok" },
-			{ id: "C2", status: "fail", exitCode: 2, detail: "build broke" },
-		],
-		trajectory: [],
-		specDebt: [],
-		logPath: ".zense/subagents/t-grader.log",
-	});
-	assert.match(text, /❌ Eval FAIL/);
-	assert.match(text, /failing criteria: C2/);
-	assert.match(text, /probe override → FAIL \[C2\]/);
-	assert.match(text, /- C2: FAIL — /);
-	assert.ok(!text.includes("- C1: PASS"), "the FAIL branch must cut passing per-criteria lines");
-	const c2Line = text.split("\n").find((l) => l.startsWith("- C2:"));
-	assert.ok(c2Line.length <= 121 + "- C2: FAIL — ".length, `evidence must be cut to ~120 chars (got ${c2Line.length})`);
-	assert.ok(!text.includes("second line"), "evidence must stay one line");
-	assert.match(text, /probes pass: C1/);
-	assert.match(text, /build broke/);
-	assert.ok(text.length < 2_500, `the FAIL text must be significantly shorter than the old raw dump (got ${text.length} chars)`);
-});
-
-test("buildReviewResultText: TL;DR + counts + log hint; the failure branch carries the error tail and the log", () => {
-	const okText = buildReviewResultText({ ok: true, tlDr: "all good", trajectoryCount: 2, escalationCount: 1, logPath: ".zense/subagents/t-reviewer.log" });
-	assert.match(okText, /all good/);
-	assert.match(okText, /trajectory flags: 2 · escalations: 1/);
-	assert.match(okText, /t-reviewer\.log/);
-	assert.ok(okText.length < 900, "the compact result must be shorter than the old packet slice(0,4000)");
-	const withCross = buildReviewResultText({ ok: true, tlDr: "all good", trajectoryCount: 0, escalationCount: 0, logPath: "x.log", crossCheck: [{ goal: "A when B", evidence: "added f in src/a.ts" }] });
-	assert.match(withCross, /## Cross-check — your case → what was done/);
-	assert.match(withCross, /- A when B\n  → added f in src\/a\.ts/);
-	const errText = buildReviewResultText({ ok: false, tlDr: "", trajectoryCount: 0, escalationCount: 0, logPath: ".zense/subagents/t-reviewer.log", errorOutput: "exited code=1" });
-	assert.match(errText, /reviewer failed: exited code=1/);
-	assert.match(errText, /t-reviewer\.log/);
-});
-
-// ----- M: comment-discipline guideline
-test("COMMENT_DISCIPLINE_GUIDELINE: covers all 5 mandatory rules and stays short", () => {
-	assert.match(COMMENT_DISCIPLINE_GUIDELINE, /non-obvious/); // WHY only
-	assert.match(COMMENT_DISCIPLINE_GUIDELINE, /WHAT a line does/i); // no what-comments
-	assert.match(COMMENT_DISCIPLINE_GUIDELINE, /banner/i); // no separators/banners
-	assert.match(COMMENT_DISCIPLINE_GUIDELINE, /JSDoc/i); // no docstring boilerplate
-	assert.match(COMMENT_DISCIPLINE_GUIDELINE, /existing decision-recording comments/i); // never delete the repo's existing comments
-	const lines = COMMENT_DISCIPLINE_GUIDELINE.split("\n");
-	assert.ok(lines.length <= 10, `the guideline must stay ~8 lines (got ${lines.length})`);
-});
-
-// TDZ guard (2026-09-08): zense_eval's inconclusive branch once crashed "Cannot access
-// 'probeSection' before initialization" because it was declared after the branch — the bug
-// survived because no test covered that error path
-
-
-// ---------- review-decision modal text (2026-10-16): review ends in a DECISION — y=accept,
-//          n=close-only; the non-UI chat fallback (buildReviewResultText) stays unchanged
-
-test("buildReviewModalText: cross-check cases render goal → what was done; an unmapped case is flagged, never dropped", () => {
-	const md = buildReviewModalText({
-		tlDr: "done",
-		crossCheck: [
-			{ goal: "You want A to show B when C", evidence: "added renderB in src/a.ts" },
-			{ goal: "When 1 happens, 2 disappears", evidence: "" },
-		],
-		trajectory: [],
-		specDebt: [],
-		escalations: [],
-		canAccept: true,
-	});
-	assert.match(md, /## Cross-check — your case → what was done/);
-	assert.match(md, /\*\*You want A to show B when C\*\*/);
-	assert.match(md, /→ added renderB in src\/a\.ts/);
-	assert.match(md, /When 1 happens, 2 disappears/);
-	assert.match(md, /⚠ not mapped by the reviewer/);
-});
-
-test("buildReviewModalText: TL;DR + flags/debt/escalations render; y accept hint only when something is staged", () => {
-	const md = buildReviewModalText({
-		tlDr: "the login fix landed cleanly",
-		trajectory: ["reviewer hallucination: x.ts"],
-		specDebt: ["verify UX by eye"],
-		escalations: [{ kind: "need-decision", detail: "pick a branch" }],
-		paths: ["src/auth/guard.ts", "test/auth.test.mjs"],
-		logPath: ".zense/subagents/x.log",
-		canAccept: true,
-	});
-	assert.match(md, /## Review — TL;DR/);
-	assert.match(md, /the login fix landed cleanly/);
-	assert.match(md, /reviewer hallucination: x\.ts/);
-	assert.match(md, /verify UX by eye/);
-	assert.match(md, /need-decision: pick a branch/);
-	assert.match(md, /2 file\(s\)/, "staged paths are listed");
-	assert.match(md, /\*\*\[y\] accept\*\*/, "y = accept when canAccept");
-	assert.match(md, /\*\*\[n\] close\*\*/, "n = close only — always offered");
-});
-
-test("buildReviewModalText: nothing staged → the accept hotkey is withheld, not shown disabled", () => {
-	const md = buildReviewModalText({ tlDr: "ok", trajectory: [], specDebt: [], escalations: [], canAccept: false });
-	assert.ok(!md.includes("[y] accept"), "y must not read as an option when nothing can be accepted");
-	assert.match(md, /nothing is staged in main/);
-	assert.match(md, /\[n\] close/);
-});
-
-test("the eval/review graders staying on disk are still wired as read-only judging roles", async () => {
-	const { SUBAGENT_EXCLUDE_TOOLS, buildGraderPrompt, parseGraderOutput } = await import("../extensions/zense-harness/index.ts");
-	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.grader, ["write", "edit"], "the grader role may judge but never fix");
-	const prompt = buildGraderPrompt({ intent: "x", scope: [], criteria: [{ id: "c1", text: "holds", check: "npm test" }], specDebt: [] }, [], [], "");
-	assert.match(prompt, /c1/);
-	const parsed = parseGraderOutput("c1: PASS: npm test exited 0\nOVERALL: PASS", [{ id: "c1", text: "holds", check: "npm test" }]);
-	assert.equal(parsed.overall, "PASS");
-	assert.equal(parsed.perCriteria.c1, "PASS");
 });

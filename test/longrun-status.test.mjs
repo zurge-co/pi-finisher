@@ -5,11 +5,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { longrunStatusText, saveTracker } from "../extensions/zense-harness/index.ts";
 
-// longrun status bar (2026-09-24): compact footer line for the active long-run tracker —
-// `zense · <slug> <done>/<total> · <id> <title> | (between phases) · <cycle phase>`.
-// longrunStatusText is pure (fs read only: loads the tracker from cwd); index.ts wires it
-// into updateWidget with a string-level dedupe.
-
 const tracker = (over = {}) => ({
 	version: 1,
 	slug: "add-auth",
@@ -39,8 +34,7 @@ const withTracker = (t, fn) => {
 test("longrunStatusText: nothing to show when no longrun / tracker gone / not active", () => {
 	withTracker(tracker(), (cwd) => {
 		assert.equal(longrunStatusText(cwd, undefined, "implementation"), undefined);
-		assert.equal(longrunStatusText(cwd, { slug: "nope", trackerVersion: 1 }, "implementation"), undefined); // not on disk
-		assert.equal(longrunStatusText(cwd, { slug: "add-auth", trackerVersion: 1 }, "implementation").includes("add-auth"), true);
+		assert.equal(longrunStatusText(cwd, { slug: "nope", trackerVersion: 1 }, "implementation"), undefined); 		assert.equal(longrunStatusText(cwd, { slug: "add-auth", trackerVersion: 1 }, "implementation").includes("add-auth"), true);
 	});
 	withTracker(tracker({ status: "done" }), (cwd) => {
 		assert.equal(longrunStatusText(cwd, { slug: "add-auth", trackerVersion: 1 }, "review"), undefined);
@@ -73,19 +67,15 @@ test("longrunStatusText: activePhase pointing at a missing phase falls back to t
 
 test("longrunStatusText: progress reflects done count only", () => {
 	const t = tracker();
-	t.phases[2].status = "done"; // p3 done, p2 still active → 2 done
-	withTracker(t, (cwd) => {
+	t.phases[2].status = "done"; 	withTracker(t, (cwd) => {
 		const line = longrunStatusText(cwd, { slug: "add-auth", trackerVersion: 1, activePhase: "p2" }, "review");
 		assert.equal(line, "zense · add-auth 2/3 · p2 Wire up login · review");
 	});
 });
 
-// regression guards: the footer entry must be wired into the existing updateWidget closure
-// (string-level dedupe), re-exported for tests, and cleared by pi's session reset
-
 test("index.ts wires the longrun status bar via updateWidget with dedupe", () => {
-	const src = readFileSync(new URL("../extensions/zense-harness/index.ts", import.meta.url), "utf8");
-	assert.ok(src.includes('export * from "./src/longrun-status.ts"'), "module re-exported from the entry point");
+	const src = readFileSync(new URL("../extensions/zense-harness/src/panel-widget.ts", import.meta.url), "utf8");
+	assert.ok(src.includes('from "./longrun-status.ts"'), "module re-exported from the entry point");
 	assert.ok(src.includes('setStatus("zense-longrun", status)'), "footer entry set under the zense-longrun key");
 	assert.ok(/const updateWidget[\s\S]{0,1600}?setStatus\("zense-longrun"/.test(src), "setStatus lives inside updateWidget");
 	assert.ok(src.includes("lastLongrunStatus"), "string-level dedupe exists");

@@ -100,10 +100,31 @@ const reasonOf = (line: string, marker: string): string | undefined => {
 	return after || undefined;
 };
 
+const regexAllowedAfter = (prev: string): boolean => prev === "" || /[=(,:;[!&|?{}+\-*%<>~^]/.test(prev) || /(^|\W)(return|typeof|case|in|of|new|delete|void|throw)$/.test(prev);
+
+const skipRegex = (line: string, start: number): number => {
+	let i = start + 1;
+	let inClass = false;
+	while (i < line.length) {
+		const ch = line[i];
+		if (ch === "\\") { i += 2; continue; }
+		if (ch === "[") inClass = true;
+		else if (ch === "]") inClass = false;
+		else if (ch === "/" && !inClass) {
+			i++;
+			while (i < line.length && /[gimsuyd]/.test(line[i])) i++;
+			return i;
+		}
+		i++;
+	}
+	return line.length;
+};
+
 const lineHasComment = (line: string, rule: CommentRule, block: { open: boolean }): boolean => {
 	if (!rule.tokenized) return rule.regexes.some((r) => r.test(line));
 	const opened = block.open;
 	let quote: string | undefined;
+	let significant = "";
 	for (let i = 0; i < line.length; i++) {
 		const ch = line[i];
 		const next = line[i + 1];
@@ -111,7 +132,7 @@ const lineHasComment = (line: string, rule: CommentRule, block: { open: boolean 
 			if (ch === "*" && next === "/") {
 				block.open = false;
 				i++;
-			} else if (ch === undefined) break;
+			}
 			continue;
 		}
 		if (quote) {
@@ -130,6 +151,12 @@ const lineHasComment = (line: string, rule: CommentRule, block: { open: boolean 
 			else i = close + 1;
 			return true;
 		}
+		if (ch === "/" && regexAllowedAfter(significant)) {
+			i = skipRegex(line, i) - 1;
+			significant = "/";
+			continue;
+		}
+		if (!/\s/.test(ch)) significant = (significant + ch).slice(-16);
 	}
 	return opened || block.open;
 };

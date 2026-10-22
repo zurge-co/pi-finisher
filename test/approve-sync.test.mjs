@@ -27,8 +27,7 @@ const setupZenseDir = () => {
 test("syncApprovedSpecFiles: writes approved:true back into spec.json + spec.md (latest copies)", () => {
 	const cwd = setupZenseDir();
 	const unsigned = baseSpec();
-	// simulate commitSpec: the files are written while still unsigned
-	writeFileSync(join(cwd, ".zense", "spec.json"), JSON.stringify(unsigned, null, 2));
+		writeFileSync(join(cwd, ".zense", "spec.json"), JSON.stringify(unsigned, null, 2));
 	writeFileSync(join(cwd, ".zense", "spec.md"), renderSpecMd(unsigned));
 
 	const signed = { ...unsigned, approved: true, approvedAt: 12345 };
@@ -54,8 +53,6 @@ test("syncApprovedSpecFiles: also syncs the archive copies that paths point at",
 });
 
 test("syncApprovedSpecFiles: missing files / no paths → best-effort, no breakage", () => {
-	const cwd = setupZenseDir(); // never committed a spec — no spec.json
-	assert.equal(syncApprovedSpecFiles(cwd, { ...baseSpec(), approved: true }), false);
-	assert.equal(existsSync(join(cwd, ".zense", "spec.json")), false); // must never create a file that was never committed
-	assert.equal(syncApprovedSpecFiles(cwd, { ...baseSpec(), approved: true }, { json: join(cwd, "nope.json") }), false);
+	const cwd = setupZenseDir(); 	assert.equal(syncApprovedSpecFiles(cwd, { ...baseSpec(), approved: true }), false);
+	assert.equal(existsSync(join(cwd, ".zense", "spec.json")), false); 	assert.equal(syncApprovedSpecFiles(cwd, { ...baseSpec(), approved: true }, { json: join(cwd, "nope.json") }), false);
 });

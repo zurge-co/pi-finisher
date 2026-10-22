@@ -1,5 +1,3 @@
-// ask-tool: zense_ask pure helpers (src/ask.ts) + index.ts source regression guards
-// (tool registered as "zense_ask", ctx.hasUI checked before any picker is awaited)
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -18,14 +16,10 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const readSrc = (rel) => readFileSync(join(here, "..", rel), "utf8");
 
-// ---------- asAskQuestions (normalize raw tool params → picker questions)
-
 test("asAskQuestions: {question, choices} objects normalize; a bare string is no longer accepted", () => {
-	// policy (2026-10-16): a choice-less question can only be an explicit product/UI freeText one
-	assert.deepEqual(asAskQuestions([{ question: "with choices?", choices: ["a", "b"] }]), [{ question: "with choices?", choices: ["a", "b"] }]);
+		assert.deepEqual(asAskQuestions([{ question: "with choices?", choices: ["a", "b"] }]), [{ question: "with choices?", choices: ["a", "b"] }]);
 	assert.deepEqual(asAskQuestions([{ question: "no options for this one", freeText: true }]), [{ question: "no options for this one", choices: [], freeText: true }]);
-	// a legacy bare string has no choices and no freeText marker → dropped by the back-compat view
-	assert.equal(asAskQuestions(["plain question?"]), undefined);
+		assert.equal(asAskQuestions(["plain question?"]), undefined);
 });
 
 test("askQuestionScan: reports why questions were rejected (policy feedback reaches the model)", () => {
@@ -33,8 +27,7 @@ test("askQuestionScan: reports why questions were rejected (policy feedback reac
 	assert.deepEqual(scan.questions, [{ question: "what should the screen show?", choices: ["list", "grid"] }]);
 	assert.equal(scan.violations.length, 1);
 	assert.match(scan.violations[0], /bare question string with no choices/);
-	// the error text carries the policy so the model self-corrects in the same turn
-	assert.match(askPolicyError(scan.violations), /product\/UI-outcome questions/);
+		assert.match(askPolicyError(scan.violations), /product\/UI-outcome questions/);
 	assert.match(askPolicyError(scan.violations), /internal technical\/detail/);
 });
 
@@ -48,8 +41,7 @@ test("asAskQuestions: nothing usable → undefined (the tool reports an error in
 	assert.equal(asAskQuestions("not an array"), undefined);
 	assert.equal(asAskQuestions([]), undefined);
 	assert.equal(asAskQuestions([{ question: "   " }, { choices: ["orphan"] }]), undefined);
-	assert.equal(asAskQuestions([{ question: "q?" }]), undefined); // choice-less + no freeText → rejected, not asked
-});
+	assert.equal(asAskQuestions([{ question: "q?" }]), undefined); });
 
 test("asAskQuestions: choices capped at 6 and questions at ASK_MAX_QUESTIONS (picker stays readable)", () => {
 	const many = asAskQuestions([{ question: "q", choices: ["1", "2", "3", "4", "5", "6", "7", "8"] }]);
@@ -57,8 +49,6 @@ test("asAskQuestions: choices capped at 6 and questions at ASK_MAX_QUESTIONS (pi
 	const qs = asAskQuestions(Array.from({ length: ASK_MAX_QUESTIONS + 3 }, (_, i) => ({ question: `q${i}?`, choices: ["a", "b"] })));
 	assert.equal(qs.length, ASK_MAX_QUESTIONS);
 });
-
-// ---------- formatAskAnswers (result text the agent reads)
 
 test("formatAskAnswers: answered questions render 'question → answer' numbered in order", () => {
 	const text = formatAskAnswers([
@@ -74,22 +64,18 @@ test("formatAskAnswers: skipped (Esc) is named explicitly — never infer an ans
 	assert.match(text, /do NOT infer/);
 });
 
-// ---------- ASK_NO_UI_TEXT (graceful RPC/print fallback)
-
 test("ASK_NO_UI_TEXT: tells the agent to fall back to plain numbered chat text", () => {
 	assert.match(ASK_NO_UI_TEXT, /no interactive UI/i);
 	assert.match(ASK_NO_UI_TEXT, /plain chat text/);
 });
 
-// ---------- index.ts source regression guards (wiring can't run under node:test)
-
 test("source: zense_ask is registered via pi.registerTool with its name literal", () => {
-	const src = readSrc("extensions/zense-harness/index.ts");
+	const src = readSrc("extensions/zense-harness/src/tools.ts");
 	assert.match(src, /name:\s*"zense_ask"/);
 });
 
 test("source: the no-UI branch checks ctx.hasUI and returns ASK_NO_UI_TEXT before any picker", () => {
-	const src = readSrc("extensions/zense-harness/index.ts");
+	const src = readSrc("extensions/zense-harness/src/tools.ts");
 	const i = src.indexOf('"zense_ask"');
 	assert.ok(i > 0);
 	const body = src.slice(i);
@@ -101,8 +87,10 @@ test("source: the no-UI branch checks ctx.hasUI and returns ASK_NO_UI_TEXT befor
 });
 
 test("source: registration sits after askClarifyQuestion/zensePick are defined (factory-closure TDZ order)", () => {
-	const src = readSrc("extensions/zense-harness/index.ts");
-	const def = src.indexOf("const askClarifyQuestion");
-	const reg = src.indexOf('"zense_ask"');
-	assert.ok(def !== -1 && reg !== -1 && def < reg, "askClarifyQuestion must be defined before the zense_ask registration references it");
+	const gui = readSrc("extensions/zense-harness/src/gui.ts");
+	const tools = readSrc("extensions/zense-harness/src/tools.ts");
+	assert.ok(gui.indexOf("const askClarifyQuestion") !== -1, "askClarifyQuestion must be defined in the gui kit");
+	assert.ok(gui.indexOf("return { escGuard, escGuardUnsubscribe, zenseCustom") !== -1, "and exported from it");
+	assert.ok(tools.indexOf('"zense_ask"') !== -1, "the tool itself is registered in the tools kit");
+	assert.ok(tools.includes("const askClarifyQuestion = ctx.askClarifyQuestion"), "the tools kit takes it from the context (dependency injection), not from a local picker implementation");
 });

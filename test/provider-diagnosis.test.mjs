@@ -16,11 +16,6 @@ import {
 	writeSubagentExtIncludes,
 } from "../extensions/zense-harness/index.ts";
 
-// provider-missing diagnosis + auto-heal (spec 2026-09-17): sub-agent boot bare (--no-extensions)
-// strips the provider extension (e.g. @aliou/pi-synthetic) → post-run diagnosis, because
-// the provider a role needs is only knowable at run time (per-role models.json may differ
-// from the main agent's) — auto-heal retry + persist, or mark failed with guidance pointing
-// at /zense:ext-config:<role>
 const mkTmp = () => mkdtempSync(join(tmpdir(), "zense-provdiag-"));
 
 test("providerIdOfModelPattern / usedProviderOf: provider is everything before '/', no '/' = undefined", () => {
@@ -49,9 +44,9 @@ test("findProviderExtension: finds the extension with registerProvider + the pro
 
 test("findProviderExtension: skips disabled / unreadable files / no registerProvider", () => {
 	const exts = [
-		{ path: "/x/a/provider/index.ts", enabled: false, source: "", scope: "user" }, // disabled → skipped
-		{ path: "/x/b/provider/index.ts", enabled: true, source: "", scope: "user" }, // unreadable → skipped
-		{ path: "/x/c/other/index.ts", enabled: true, source: "", scope: "user" }, // has the id but no registerProvider → skipped
+		{ path: "/x/a/provider/index.ts", enabled: false, source: "", scope: "user" },
+		{ path: "/x/b/provider/index.ts", enabled: true, source: "", scope: "user" },
+		{ path: "/x/c/other/index.ts", enabled: true, source: "", scope: "user" },
 	];
 	const reader = (p) => (p === "/x/b/provider/index.ts" ? undefined : "synthetic synthetic\n");
 	assert.equal(findProviderExtension("synthetic", exts, reader), undefined);
@@ -70,8 +65,7 @@ test("mergeExtInclude: appends once (idempotent — an existing path returns the
 	const cur = ["/x/a.ts"];
 	const merged = mergeExtInclude(cur, "/x/b.ts");
 	assert.deepEqual(merged, ["/x/a.ts", "/x/b.ts"]);
-	assert.equal(mergeExtInclude(merged, "/x/b.ts"), merged); // identity — the caller uses !== to detect 'nothing to write'
-});
+	assert.equal(mergeExtInclude(merged, "/x/b.ts"), merged); });
 
 test("diagnoseProviderMissing: silent fallback (usedModel has a different provider) → provider-mismatch", () => {
 	const d = diagnoseProviderMissing("synthetic/hf:x:free", { ok: true, output: "...", usedModel: "openai/gpt-4o" });
@@ -93,11 +87,9 @@ test("diagnoseProviderMissing: hard error with usedModel uncaptured → hard-mis
 	const out = "sub-agent exited code=1\nError: no models found matching 'synthetic/hf:x:free'\n";
 	const d = diagnoseProviderMissing("synthetic/hf:x:free", { ok: false, output: out });
 	assert.equal(d?.kind, "hard-missing");
-	// ordinary failures (timeout/tool noise) must not false-positive
-	assert.ok(!PROVIDER_MISSING_RX.test("sub-agent exited code=143 signal=null (timeout SIGTERM)"));
+		assert.ok(!PROVIDER_MISSING_RX.test("sub-agent exited code=143 signal=null (timeout SIGTERM)"));
 	assert.equal(diagnoseProviderMissing("synthetic/hf:x", { ok: false, output: "sub-agent exited code=143 (TIMEOUT)" }), undefined);
-	// no pattern / no provider in pattern → no diagnosis
-	assert.equal(diagnoseProviderMissing(undefined, { ok: false, output: "no models found matching x" }), undefined);
+		assert.equal(diagnoseProviderMissing(undefined, { ok: false, output: "no models found matching x" }), undefined);
 	assert.equal(diagnoseProviderMissing("sonnet:high", { ok: false, output: "no models found matching x" }), undefined);
 });
 
@@ -134,13 +126,10 @@ test("persist path: writeSubagentExtIncludes writes the merged include list (loc
 		const merged = mergeExtInclude(cur, hitPath);
 		writeSubagentExtIncludes(dir, "grader", merged, globalDir);
 		assert.deepEqual(subagentExtIncludes("grader", dir, undefined, globalDir), [hitPath]);
-		// first-time global seed — global holds the same include
-		assert.deepEqual(subagentExtIncludes("grader", undefined, undefined, globalDir), [hitPath]);
-		// merging again (idempotent) + rewriting — no path duplication
-		writeSubagentExtIncludes(dir, "grader", mergeExtInclude([hitPath], hitPath), globalDir);
+				assert.deepEqual(subagentExtIncludes("grader", undefined, undefined, globalDir), [hitPath]);
+				writeSubagentExtIncludes(dir, "grader", mergeExtInclude([hitPath], hitPath), globalDir);
 		assert.deepEqual(subagentExtIncludes("grader", dir, undefined, globalDir), [hitPath]);
-		// the local file keeps its other keys (the writer's standing contract)
-		const raw = JSON.parse(readFileSync(join(dir, ".zense", "config.json"), "utf8"));
+				const raw = JSON.parse(readFileSync(join(dir, ".zense", "config.json"), "utf8"));
 		assert.ok(raw.subagentExtInclude.grader.includes(hitPath));
 	} finally {
 		rmSync(dir, { recursive: true, force: true });

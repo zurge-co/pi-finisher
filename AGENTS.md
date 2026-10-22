@@ -1,57 +1,94 @@
 # AGENTS.md — working effectively in this repo
 
-pi-zense: a spec-gated, human-signed SDLC harness shipped as a **pi extension** (`extensions/zense-harness/`) plus a dark theme (`themes/`). Everything the agent-facing harness does lives in the extension; tests are plain `node:test` files importing it.
+pi-zense: a **goal-confirm autonomous runner** shipped as a **pi extension** (`extensions/zense-harness/`) plus a dark theme (`themes/`). Confirm the goal once; the harness then fans work out over the model ladder, judges every case from executed evidence, drives fix→verify rounds, and reports once. Tests are plain `node:test` files importing the extension.
+
+## Non-negotiable code rules
+
+1. **No comments in code.** No `//` and no `/* */` in `.ts`/`.mjs`/`.sh`. Names and structure carry the intent. The only exception is a load-bearing reason that carries the marker `zense-hygiene-allow: <why>` — a bare marker is itself a violation.
+2. **Every file stays at or under 500 lines.** Split instead of growing. `extensions/zense-harness/index.ts` is a thin entry point (hooks + wiring) and must stay well under that.
+3. **Tests are proof, not coverage.** Write the few that establish a real property — a bound holds for every input, an ordering is total, a boundary is exact, an invariant survives. A test that would still pass with the logic broken is worse than no test. Do not add ceremony assertions to raise the count.
+4. After any edit: `npm run typecheck && npm test`. Both are fast. `test/module-budget.test.mjs` and `test/no-comments.test.mjs` enforce rules 1–2 on the real tree.
+
+## How the harness is put together
+
+`index.ts` builds one `HarnessContext` (see `src/kit.ts`) holding the shared plumbing — state box, `persist`, `learn`/`flag`/`escalate`, and the cross-module functions — then hands that same object to each kit:
+
+```
+index.ts  →  createGui / createViewers / createPanelWidget / createSubagentLaunch
+          →  createCodeSwarm / createSpecFlow / createHygieneHook
+          →  registerTools / registerCommands
+```
+
+Each `create…` returns its public members; `index.ts` assigns them back onto the context with `Object.assign`, so a kit may use anything a previous kit provided. Session hooks (`session_start`, `tool_call`, `before_agent_start`, `turn_end`, `agent_end`) stay in `index.ts` — that is the only thing it should contain besides the wiring.
 
 ## Golden rules for exploration (read code cheaply)
 
-1. **Never read `extensions/zense-harness/index.ts` end-to-end.** It is the ~2,000-line pi wiring (hooks, TUI dialogs, tool/command registrations). The pure helpers you usually want are in `extensions/zense-harness/src/` — one theme per file, each sized to fit in a single read.
+1. **Do not read `index.ts` end-to-end** — it is wiring. Find the concern in the module map and read that one file; every module is sized to fit in a single read.
 2. **Find a symbol by grepping, then read only the owning module:**
    `grep -rn "^export .*<name>" extensions/zense-harness/src extensions/zense-harness/index.ts`
-   The module map below tells you where to look first.
-3. **Tests import named exports from the entry point** (`../extensions/zense-harness/index.ts`), which re-exports all of `src/` — add new helpers to the right `src/` module and they are importable from `index.ts` automatically.
-4. After any edit: `npm run typecheck && npm test` (see Commands). Both are fast — always run them.
+3. **Tests import named exports from the entry point** (`../extensions/zense-harness/index.ts`), which re-exports all of `src/`. Add new helpers to the right `src/` module and they are importable from `index.ts` automatically.
+4. Source-guard tests must point at the file that actually owns the code (they were retargeted from `index.ts` to `src/gui.ts`, `src/tools.ts`, `src/commands.ts`, `src/longrun-flow.ts`, `src/panel-widget.ts` in the split) — never re-broaden them to `index.ts`.
 
 ## Repo map
 
 | Path | Contents |
 | --- | --- |
-| `extensions/zense-harness/index.ts` | Extension entry point: `export default function (pi)` factory — session hooks, Phase-gate `tool_call` interceptor, turn/token meters, all TUI dialogs, `zense_*` tools, `/zense` commands. **Tests read this file's source for TDZ/order guards on factory closures (`probeSection`, `evalView`, `commitSpec`, `runDistill`) — keep those closures here, verbatim names.** |
-| `extensions/zense-harness/src/` | All module-scope helpers, one theme per file (map below) |
-| `test/*.test.mjs` | `node:test` suites; named imports from the entry point; some grep `index.ts` source for regression guards |
+| `extensions/zense-harness/index.ts` | Entry point: the `HarnessContext` wiring, session hooks, worktree redirect, hygiene `tool_result` check |
+| `extensions/zense-harness/src/` | All helpers — one concern per file (map below) |
+| `test/*.test.mjs` | `node:test` suites; named imports from the entry point; a few read module source for regression guards |
 | `themes/` | Zense dark theme |
 | `scripts/release.sh` | Release script (`npm run release`) |
-| `package.json` | Scripts: `typecheck`, `test`; pi package manifest (`pi.extensions`, `pi.themes`) |
 
 ## `extensions/zense-harness/src/` module map
 
 | Module | What lives here |
 | --- | --- |
-| `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`) + `zenseDir`; imported by nearly every module |
-| `spec-changes.ts` | Spec v→v+1 diff → change summary lines/groups, spec markdown render, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
-| `worktree.ts` | Git worktree isolation: `shellQuote`, path/command rewrite, `gitOk`, worktree create/reuse, `.git/info/exclude` |
-| `resume.ts` | `/zense resume` disk discovery: spec load, archive paths, session worktree scan, pendingApply restore, `discoverResumeState` |
-| `pending-apply.ts` | ADR-003 apply-back: commit/snapshot messages, `gitAddButZense`, `applyWorktreeBack`, `discardPendingApply`, `acceptPendingApply` |
-| `cycle.ts` | Cycle closure: `resetCycleState`, one-shot context bulletins, `freshState` |
-| `spec-draft.ts` | Requirements-output parsing: clarify/spec JSON (`parseSpecDraft`), machine-checkable heuristic, quality gate + similar-spec guard |
-| `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes (`.zense/config.json`), provider-missing diagnosis, `buildRequirementsPrompt` |
-| `decompose.ts` | Decompose-then-compile: planner subtasks, `needsDecompose`, draft merge, `compileDecomposed` |
-| `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
-| `evidence.ts` | Eval evidence: toolchain probe, gathered repo facts, git change summary, criteria check probes + commit-time `lintSpecChecks` |
-| `eval-review.ts` | Grader/reviewer contracts: grader output parse, grader/reviewer prompts, compact eval/review result text, packet validation, hallucination detector |
-| `adr-deny.ts` | ADR `DENY:` line parsing + path violation messages (re-read before every impl run) |
+| `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`, `Tracker`) + `zenseDir` |
+| `kit.ts` | `HarnessContext` — the shared plumbing type every kit receives |
+| `state-box.ts` | Mutable state holder (`createStateBox`) so kits see one live `State` |
+| `panel-widget.ts` | The live widget: `updateWidget` (status line + one row per running agent), `rescheduleTicker`, `applyRedirect` into the session worktree |
+| `agent-panel.ts` | Pure panel rendering: `panelRows`/`panelLines`/`panelTickMs`, `clip`, `elapsedLabel`, `streamTail` |
+| `subagent-launch.ts` | `launchSubagent` (timeout, cancel, live tail, model override) + provider-missing auto-heal |
 | `subagent-runner.ts` | `runSubagent`: spawn `pi --mode json`, stream/kill/timeout, JSONL log under `.zense/subagents/` (+ `fmtTok`) |
-| `memory.ts` | `memory.jsonl` summary + `/zense distill`: impact stats, lesson parsing/rewrite, atomic file replace, `distillTaskPrompt` |
-| `models.ts` | Per-role model config (`.zense/models.json`), model picker choices, `panelize` dialog helper |
+| `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes, provider diagnosis |
+| `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
+| `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `pickSlot`, `runSwarm` retry/failover |
+| `swarm-code.ts` | Slice planning/ids, worker prompt, `FILES:` parse, overlap detection, merge plan |
+| `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), bounded rounds (`nextVerifyRound`), report render |
+| `goal-driver.ts` | The confirmed-goal driver: finish / fix / stop, round bookkeeping |
+| `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys |
+| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, the one-shot confirm prompt) |
+| `code-hygiene.ts` | Comment/length scanner (string- and regex-aware) + the rule text given to agents |
+| `hygiene-hook.ts` | The `tool_result` enforcement hook |
+| `gui.ts` | TUI dialogs: `zenseCustom`, overlay sizes, `zensePick`, ext-config checkbox, clarify questions |
+| `viewers.ts` | Live sub-agent tail viewer + `openAgentsViewer` |
+| `tools.ts` | `zense_ask`, `zense_swarm`, `zense_goal` registration |
+| `commands.ts` | `/zense …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
+| `spec-flow.ts` | `commitSpec`, `approveCurrentSpec`, pending-apply accept |
+| `longrun-flow.ts` | Multi-phase tracker flow: reconcile, final apply, phase cycle, auto-advance |
+| `spec-changes.ts` | Spec diff → change summary, spec markdown, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
+| `worktree.ts` | Git worktree isolation: path/command rewrite, `gitOk`, create/reuse, git exclude |
+| `pending-apply.ts` | Apply-back: commit/snapshot messages, `applyWorktreeBack`, `discardPendingApply`, `acceptPendingApply` |
+| `resume.ts` | `/zense resume` disk discovery |
+| `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |
+| `evidence.ts` | Check probes, repo facts, git change summary, `lintSpecChecks` |
+| `eval-review.ts` | Grader/reviewer contracts (still used by the verify path's prompts) |
+| `spec-draft.ts` | Requirements-output parsing + quality gate (used by the compile path) |
+| `memory.ts` | `memory.jsonl` summary + `/zense distill` |
+| `models.ts` | Per-role model config, picker choices, `panelize` |
+| `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
+| `adr-deny.ts` | ADR `DENY:` parsing (kept; no longer on the write path) |
+| `decompose.ts` | Planner subtasks / draft merge (kept for the compile path) |
+| `ask.ts` | `zense_ask` policy scanning + answer formatting |
+| `longrun.ts` / `longrun-auto.ts` / `longrun-status.ts` | Tracker persistence, AUTO loop helpers, footer status line |
 
 ## Commands
 
-- `npm test` — full suite (199 tests, ~8s). Single file: `node --no-warnings --test test/<file>.test.mjs`
+- `npm test` — full suite. Single file: `node --no-warnings --test test/<file>.test.mjs`
 - `npm run typecheck` — `tsc --noEmit` over the extension entry (checks all `src/` transitively)
 
 ## Conventions
 
 - **Relative imports between TS modules carry explicit `.ts` extensions** (Node type-stripping in tests + jiti in pi both accept this; `typecheck` passes `--allowImportingTsExtensions`).
-- **Code-motion discipline:** `src/` modules were extracted verbatim — keep comments/docblocks attached to their symbols, no drive-by reformatting.
-- **Comment style:** dense, decision-anchored docblocks ("why", regression dates like `(2026-09-02)`); existing `// ----` section banners are kept — match the surrounding file rather than restyling it.
-- The `export default function (pi)` factory stays in `index.ts`; only self-contained pure helpers graduate into `src/` modules.
-- `.zense/` is harness state (specs, ADRs, memory, worktrees) — never commit it outside this repo's own dogfooding flow; sub-agents get `PI_ZENSE_SUBAGENT=1` and must not re-enter the harness.
+- **Kits receive one `HarnessContext`**; never import `index.ts` from `src/`.
+- **Keep the entry point thin**: new behaviour belongs in a kit or a pure module, wired from `index.ts` in one line.

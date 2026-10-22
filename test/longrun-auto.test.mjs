@@ -19,11 +19,6 @@ import {
 	writePhaseSummary,
 } from "../extensions/zense-harness/index.ts";
 
-// longrun v2 (auto loop): auto gating, bounded auto-fix prompt, next-phase kickoff,
-// one-line compaction summary (disk is the source of truth), digest.md — the single review
-// artifact. The reset itself rides turn_end boundary compaction drafts in index.ts (runtime
-// pi wiring, not unit-testable here) — never ctx.compact() (aborts the run mid-turn)
-
 const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
 const mkRepo = () => {
@@ -68,8 +63,6 @@ const mkTracker = (over = {}) => ({
 	...over,
 });
 
-// ---------- gating
-
 test("autoLoopEnabled: ONLY explicit true — undefined/false keep the v1 manual gates", () => {
 	assert.equal(autoLoopEnabled(mkTracker()), true);
 	assert.equal(autoLoopEnabled(mkTracker({ auto: false })), false);
@@ -77,8 +70,6 @@ test("autoLoopEnabled: ONLY explicit true — undefined/false keep the v1 manual
 	delete noAuto.auto;
 	assert.equal(autoLoopEnabled(noAuto), false);
 });
-
-// ---------- auto-fix prompt (bounded re-drive, no human until the bound)
 
 test("buildAutoFixPrompt: nails the failed signed criteria + scope + re-eval directive, rounds left", () => {
 	const t = mkTracker();
@@ -94,8 +85,6 @@ test("AUTO_FIX_MAX_ROUNDS is a small integer bound (not an unbounded furnace)", 
 	assert.ok(AUTO_FIX_MAX_ROUNDS >= 1 && AUTO_FIX_MAX_ROUNDS <= 3);
 });
 
-// ---------- compaction summary: the one-line reset directive the boundary draft carries
-
 test("buildCompactionCapsule: ONE self-sufficient line pointing at zense_longrun next — no stale prior-phase capsule", () => {
 	const root = mkRepo();
 	const t = mkTracker();
@@ -106,14 +95,11 @@ test("buildCompactionCapsule: ONE self-sufficient line pointing at zense_longrun
 	assert.match(line, /never reconstruct state from memory/);
 	assert.equal(line.includes("\n"), false, "the summary is ONE line — the fresh context re-derives state from disk, not from a snapshot");
 	assert.ok(!/p2/.test(line) && !/seed criteria/.test(line), "no next-phase detail embedded — next re-reads the tracker");
-	// set complete → no 'next', points at the single review
-	t.phases[1].status = "done";
+		t.phases[1].status = "done";
 	saveTracker(root, t);
 	assert.match(buildCompactionCapsule(t), /awaits the single final human review/);
 	rmSync(root, { recursive: true, force: true });
 });
-
-// ---------- digest.md — per-phase intent, criteria+verdict, files, why
 
 test("renderDigestMd: every phase gets intent, criteria verdicts, files, rationale, checkpoint", () => {
 	const t = mkTracker();
@@ -144,8 +130,6 @@ test("buildLongrunDigest: writes digest.md into the longrun directory with the p
 	rmSync(root, { recursive: true, force: true });
 });
 
-// ---------- kickoff: the ONLY instruction surviving a retain-none reset
-
 test("buildNextPhaseKickoff: self-sufficient — tells the fresh context to re-read from disk and call next", async () => {
 	const { buildNextPhaseKickoff } = await import("../extensions/zense-harness/index.ts");
 	const t = mkTracker();
@@ -154,12 +138,8 @@ test("buildNextPhaseKickoff: self-sufficient — tells the fresh context to re-r
 	assert.match(kick, /hard-reset/);
 	assert.match(kick, /zense_longrun next/);
 	assert.match(kick, /never reconstruct state from memory/);
-	// a wrong-arity call must fail loudly, not silently — assert the throw so future refactors keep the (cwd, tracker, phase) shape
-	assert.throws(() => buildNextPhaseKickoff(t, nextPendingPhase(t)));
+		assert.throws(() => buildNextPhaseKickoff(t, nextPendingPhase(t)));
 });
-
-// ---------- tracker signature decision (2026-10-18): no human prompt when the goal is stable
-//          or the gate is OFF — a re-plan with the same cases carries the previous signature
 
 test("decideTrackerSign: gate OFF → AUTO; goals unchanged → previous mode; otherwise ask", () => {
 	assert.deepEqual(decideTrackerSign({ gateEnabled: false, goalsUnchanged: false, prevAuto: undefined, hasUI: false, tui: false }), { kind: "auto", auto: true, reason: "gate-off" });

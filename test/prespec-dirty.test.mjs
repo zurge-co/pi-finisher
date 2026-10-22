@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { uncommittedChanges, snapshotUncommitted, composeSnapshotMessage, isGitRepo, gitAddButZense } from "../extensions/zense-harness/index.ts";
 
-/** temp git repo with an initial commit (tracked: README.md + .zense/x) */
 const makeRepo = () => {
 	const base = mkdtempSync(join(tmpdir(), "zense-dirty-"));
 	const cwd = join(base, "repo");
@@ -26,9 +25,7 @@ const makeRepo = () => {
 test("uncommittedChanges: clean repo → [] (incl. modified .zense — harness state doesn't count)", () => {
 	const { cwd, base } = makeRepo();
 	assert.deepEqual(uncommittedChanges(cwd), []);
-	appendFileSync(join(cwd, ".zense", "x"), "dirty"); // touch only .zense
-	writeFileSync(join(cwd, ".zense", "memory.jsonl"), "{}\n"); // untracked inside .zense
-	assert.deepEqual(uncommittedChanges(cwd), []);
+	appendFileSync(join(cwd, ".zense", "x"), "dirty"); 	writeFileSync(join(cwd, ".zense", "memory.jsonl"), "{}\n"); 	assert.deepEqual(uncommittedChanges(cwd), []);
 	rmSync(base, { recursive: true, force: true });
 });
 
@@ -52,12 +49,10 @@ test("uncommittedChanges: non-git dir → [] (degrades silently, never blocks co
 test("snapshotUncommitted: commits pending changes outside .zense → repo clean, no .zense in the commit", () => {
 	const { cwd, base, git } = makeRepo();
 	writeFileSync(join(cwd, "wip.ts"), "// wip\n");
-	writeFileSync(join(cwd, ".zense", "memory.jsonl"), "{}\n"); // must not be committed
-	const r = snapshotUncommitted(cwd, composeSnapshotMessage(uncommittedChanges(cwd)));
+	writeFileSync(join(cwd, ".zense", "memory.jsonl"), "{}\n"); 	const r = snapshotUncommitted(cwd, composeSnapshotMessage(uncommittedChanges(cwd)));
 	assert.equal(r.ok, true, r.msg);
 	assert.notEqual(r.msg, "nothing to commit");
-	assert.deepEqual(uncommittedChanges(cwd), []); // everything outside .zense is clean now
-	const files = git(["show", "--name-only", "--format=", "HEAD"]).split("\n").map((s) => s.trim()).filter(Boolean);
+	assert.deepEqual(uncommittedChanges(cwd), []); 	const files = git(["show", "--name-only", "--format=", "HEAD"]).split("\n").map((s) => s.trim()).filter(Boolean);
 	assert.deepEqual(files, ["wip.ts"], `committed files: ${files}`);
 	const subject = git(["log", "-1", "--format=%s"]).trim();
 	assert.ok(subject.startsWith("chore: snapshot pre-spec"), subject);
@@ -72,8 +67,7 @@ test("composeSnapshotMessage: subject built from real files (≤72 chars) + body
 	assert.ok(subject.includes("src/a.ts, new.ts"), subject);
 	assert.ok(subject.includes("old.ts -> renamed.ts"), `3 short files should all fit in the subject: ${subject}`);
 	assert.ok(body.join("\n").includes("- old.ts -> renamed.ts"));
-	// many files → subject truncated with (+N) but the body is complete
-	const many = Array.from({ length: 30 }, (_, i) => `?? file-${i}.ts`);
+		const many = Array.from({ length: 30 }, (_, i) => `?? file-${i}.ts`);
 	const m2 = composeSnapshotMessage(many);
 	const subject2 = m2.split("\n")[0];
 	assert.ok(subject2.length <= 72, `subject too long: ${subject2.length}`);
@@ -104,14 +98,12 @@ test("snapshotUncommitted: .zense/ in .gitignore → add must not fail (git ≥2
 	git(["commit", "-q", "-m", "init"]);
 	writeFileSync(join(cwd, "wip.ts"), "// wip\n");
 	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "spec.json"), "{}\n"); // ignored — the old add died right here
-	const r = snapshotUncommitted(cwd, "chore: snapshot");
+	writeFileSync(join(cwd, ".zense", "spec.json"), "{}\n"); 	const r = snapshotUncommitted(cwd, "chore: snapshot");
 	assert.equal(r.ok, true, `snapshot must succeed despite .zense being ignored: ${r.msg}`);
 	assert.match(r.msg, /^[0-9a-f]{7,}$/, `msg must be the snapshot commit's short hash: ${r.msg}`);
 	const files = git(["show", "--name-only", "--format=", "HEAD"]).split("\n").map((s) => s.trim()).filter(Boolean);
 	assert.deepEqual(files, ["wip.ts"], `the commit must not drag .zense/.gitignore along: ${files}`);
-	assert.deepEqual(uncommittedChanges(cwd), []); // everything outside .zense is clean now
-	rmSync(base, { recursive: true, force: true });
+	assert.deepEqual(uncommittedChanges(cwd), []); 	rmSync(base, { recursive: true, force: true });
 });
 
 test("gitAddButZense: repo without a first commit (no HEAD) + .zense not ignored → sources only staged, .zense never enters the index", () => {

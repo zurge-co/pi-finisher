@@ -8,13 +8,6 @@ import {
 	takeContextBulletin,
 } from "../extensions/zense-harness/index.ts";
 
-// cycle closure (spec v3, 2026-09-17): two symptoms of sloppy closure — (1) the agent doesn't
-// know the human accepted/discarded/committed (command/reconcile paths close silently; the
-// agent only ever sees tool results) → a one-shot contextBulletin rides the next turn's
-// system prompt once; (2) a leftover state.spec would make commitSpec continue the version
-// counter → reset cycle state so new work starts at v1. The reset must clear cycle scope
-// while keeping session-scope observability.
-
 test("buildAcceptBulletin: version/title/amended complete + mentions cycle reset + spec v1 | ≤2 lines", () => {
 	const plain = buildAcceptBulletin(2, "Cycle closure", 0);
 	assert.ok(plain.startsWith("[zense]"));
@@ -56,8 +49,7 @@ test("resetCycleState: clears all cycle fields (spec/phase/eval/head/override/so
 		specJsonPath: "/x/spec.json",
 		lastCompileLessons: 3,
 		worktreeLeaveNotified: true,
-		// session-scope observability — must survive
-		turnsUsed: 9,
+				turnsUsed: 9,
 		tokensUsed: 12345,
 		subagentRuns: [{ role: "grader", ok: true, summary: "", at: 1 }],
 		trajectoryFlags: ["f"],
@@ -82,7 +74,6 @@ test("resetCycleState: idempotent — repeated calls on an already-empty state d
 	resetCycleState(s);
 	assert.equal(s.phase, "requirements");
 	assert.equal(s.spec, undefined);
-	// alongside the bulletin: reset never touches contextBulletin (callers may set it after)
-	s.contextBulletin = buildReconcileBulletin(1);
+		s.contextBulletin = buildReconcileBulletin(1);
 	assert.equal(takeContextBulletin(s), buildReconcileBulletin(1));
 });

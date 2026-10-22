@@ -1,35 +1,13 @@
-// zense-harness module: longrun v2 — the autonomous loop (signed ONCE via the tracker, no
-// per-phase human gate): eval PASS auto-checkpoints and advances, eval FAIL auto-fixes
-// bounded by AUTO_FIX_MAX_ROUNDS, and the context between phases is hard-reset by a
-// DETERMINISTIC compaction boundary draft appended at turn_end (a one-line reset directive
-// as the summary, firstKeptEntryId: null → pi's self-retaining retain-none reset) — never
-// an LLM auto-summary lugging pi's default ~20k-token tail (that was v1's growing-context
-// bug), never a prior-phase capsule snapshot (that dragged stale state past the reset — the
-// fresh context re-reads the tracker from disk instead), and never ctx.compact() (pi's
-// manual compact() aborts the current agent operation mid-run and never retries the
-// interrupted turn — that stalled the loop after every phase transition, 2026-09-26).
-// Pure helpers only; session/boundary wiring lives in index.ts.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Tracker, type TrackerPhase } from "./types.ts";
 import { longrunDir, nextPendingPhase } from "./longrun.ts";
 
-/** Max consecutive eval FAILs the auto loop fixes on its own before escalating need-decision
- *  (bound discipline mirrors evalOverrideFails' deadlock guard — an autonomous loop without
- *  a bound is a token furnace). */
 export const AUTO_FIX_MAX_ROUNDS = 2;
 
-/** Auto gating is explicit: only a tracker SIGNED as autonomous runs without human gates —
- *  undefined/false keeps the v1 manual close/fail semantics forever. */
 export const autoLoopEnabled = (t: Tracker): boolean => t.auto === true;
 
-/** Tracker signature decision (2026-10-18) — the ONE place that decides whether the longrun
- *  sign dialog is needed:
- *  - gate OFF → auto-sign as AUTO (the human disabled every approval prompt)
- *  - previously signed + goal cases unchanged → carry the previous mode, no re-sign
- *  - else ask (TUI overlay / plain select) or stay unsigned when there is no UI
- *  The signature side effects (approvedAt/status/auto/worktree) stay in index.ts. */
 export type TrackerSignDecision =
 	| { kind: "auto"; auto: boolean; reason: "gate-off" | "goals-unchanged" }
 	| { kind: "ask"; mode: "tui" | "select" }
@@ -51,8 +29,6 @@ export const decideTrackerSign = (opts: {
 
 export const digestPath = (cwd: string, slug: string): string => join(longrunDir(cwd, slug), "digest.md");
 
-/** FAIL round inside the auto loop: pointed re-drive against exactly the failed criteria.
- *  The agent gets this appended to the FAIL result — no human until rounds run out. */
 export const buildAutoFixPrompt = (phase: TrackerPhase, failed: { id: string; text: string }[], roundsLeft: number): string =>
 	[
 		`auto-fix (${roundsLeft} round(s) left before the human is called in) — phase ${phase.id} "${phase.title}" failed these signed criteria:`,
@@ -60,27 +36,17 @@ export const buildAutoFixPrompt = (phase: TrackerPhase, failed: { id: string; te
 		`fix ONLY what those require — stay inside scope (${phase.scope.join(", ")}), don't restructure, don't add criteria — then call zense_eval again`,
 	].join("\n");
 
-/** Appended to the auto-advance result: after the retain-none cut this kickoff is the ONLY
- *  instruction the fresh context carries — it must be fully self-sufficient. */
 export const buildNextPhaseKickoff = (_cwd: string, t: Tracker, nextPhase: TrackerPhase): string =>
 	[
 		`AUTO-CONTINUE longrun "${t.slug}": the previous phase was checkpointed and this context was hard-reset (retain-none — nothing of the prior phase remains).`,
 		`call zense_longrun next now to activate phase ${nextPhase.id} "${nextPhase.title}" — it re-reads the tracker from disk and emits the signed phase spec; never reconstruct state from memory`,
 	].join("\n");
 
-/** The compaction summary for a phase transition: ONE self-sufficient line, supplied to
- *  the turn_end boundary as a compaction draft instead of any LLM summary. The context capsule is
- *  deliberately NOT embedded (2026-09-26) — that dragged a stale snapshot of completed
- *  phases past the reset; disk is the single source of truth: `zense_longrun next`
- *  re-reads tracker.json and re-derives the capsule + phase spec from CURRENT worktree state. */
 export const buildCompactionCapsule = (t: Tracker): string => {
 	if (!nextPendingPhase(t))
 		return `[zense longrun] ${t.slug} — every phase is done; the whole set awaits the single final human review (staged in main) · see digest.md`;
 	return `[zense longrun] ${t.slug} — a phase was checkpointed and this context was hard-reset (retain-none): call zense_longrun next now to activate the next phase — it re-reads the tracker from disk and emits the signed phase spec; never reconstruct state from memory`;
 };
-
-// ----- digest.md — the ONE human review artifact at the end of the set: per phase the
-//       intent/goal, the signed criteria + their verdicts, and the files changed + why
 
 export const renderDigestMd = (t: Tracker, readPhaseSummary: (p: TrackerPhase) => string): string => {
 	const lines = [
@@ -113,8 +79,6 @@ export const renderDigestMd = (t: Tracker, readPhaseSummary: (p: TrackerPhase) =
 	return lines.join("\n");
 };
 
-/** Write .zense/long-running/<slug>/digest.md from the tracker (phases/*.md supply the
- *  rationale text — first non-heading line, same convention as the capsule). Returns the path. */
 export const buildLongrunDigest = (cwd: string, t: Tracker): string => {
 	const readSummary = (p: TrackerPhase): string => {
 		if (!p.summaryPath) return "";

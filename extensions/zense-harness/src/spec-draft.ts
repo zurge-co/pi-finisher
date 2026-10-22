@@ -1,22 +1,14 @@
-// zense-harness module: requirements draft parsing: clarify/spec JSON parse, machine-checkable heuristic, quality gate + duplicate-spec guard (moved verbatim from index.ts — see AGENTS.md map)
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { zenseDir, type Criterion } from "./types.ts";
 import { hasUnsubstitutedPlaceholder } from "./evidence.ts";
 
-// ----------------------------------------------------------------------------- requirements draft parsing (module scope — exported for unit tests)
-
 export interface SpecDraft {
 	title: string;
 	intent: string;
-	/** 2026-10-18: the sign surface. 2–6 SHORT goal cases (one per line) in the request's
-	 *  language, each expressing one user-visible behavior the human asked for. Optional at
-	 *  parse time for back-compat; legacy `outcomes` remains the fallback. */
-	crossCheck?: string[];
-	/** Legacy plain-language summary kept for older specs/trackers — the sign dialog now
-	 *  prefers crossCheck. */
-	outcomes?: string;
+		crossCheck?: string[];
+		outcomes?: string;
 	approach: string[];
 	scope: string[];
 	constraints: string[];
@@ -24,36 +16,19 @@ export interface SpecDraft {
 	specDebt: string[];
 }
 
-/** One clarify question (normalized) — a question TO THE HUMAN, so it must satisfy
- *  QUESTION_POLICY below: either answer options the human picks from ("Other (type your own)"
- *  is appended by the picker), or freeText:true for a product/UI-outcome question that
- *  genuinely has no guessable options (renders a plain input). A legacy bare string carries
- *  neither and is REJECTED (2026-10-16) — never silently downgraded to an open question. */
 export interface ClarifyQuestion {
 	question: string;
 	choices: string[];
 	freeText?: boolean;
 }
 
-/** Question policy (2026-10-16) — the ONE contract shared by the requirements clarify loop,
- *  the planner prompts and the zense_ask tool. A question to the human is a PRODUCT/UI-OUTCOME
- *  question ("what should the result be/do?"), never an internal technical/detail decision
- *  (library, module split, naming, test approach, data shape, refactor structure): the agent
- *  decides those itself from the repo/context, proceeds, and records the decision as an
- *  explicit assumption + specDebt entry the human sees at signing. Answer options are the
- *  default; omitting them is legal ONLY with an explicit "freeText": true marker for a
- *  genuine product/UI question that has no guessable options. */
 export const QUESTION_POLICY =
 	"Ask ONLY product/UI-outcome questions — what the human wants the result to be or do — each with 2–6 pickable choices. " +
 	'Never ask internal technical/detail questions (library, module split, naming, test approach, data shape, refactor structure): decide those from the repo/context, proceed, and record the decision as an explicit assumption plus a specDebt entry. ' +
 	'Choices may be omitted only for a product/UI question with genuinely no guessable options, and then the question MUST set "freeText": true.';
 
-/** Picker cap: >6 options is a menu, not a decision check-in. */
 export const MAX_CLARIFY_CHOICES = 6;
 
-/** One scan of raw clarify questions: the ACCEPTED ones plus one feedback line per rejected
- *  item (the requirements sub-agent gets the lines back as retry feedback, so a policy
- *  violation costs a round instead of silently reaching the human). */
 export interface ClarifyScan {
 	questions: ClarifyQuestion[];
 	violations: string[];
@@ -67,9 +42,6 @@ export type DraftParse =
 const asStringArray = (v: unknown): string[] | undefined =>
 	Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : undefined;
 
-/** Normalize goal cases: one line each (embedded newlines collapse to spaces), trimmed, blanks
- *  dropped. Shared by the requirements parser and the longrun planner parser so both sign
- *  surfaces receive the same shape. */
 export const asCaseLines = (v: unknown): string[] | undefined => {
 	const arr = asStringArray(v);
 	if (!arr) return undefined;
@@ -77,12 +49,6 @@ export const asCaseLines = (v: unknown): string[] | undefined => {
 	return lines.length ? lines : undefined;
 };
 
-/** Normalize + police raw clarify questions → ClarifyScan. Accepted shapes: {question,
- *  choices:[…]} (capped at MAX_CLARIFY_CHOICES) and {question, freeText:true} (product/UI
- *  question with no guessable options). Rejected with a feedback line: a bare string and any
- *  object with neither choices nor the freeText marker — the two ways a model used to hand the
- *  human an open-ended (often internal technical) question. Items with no question text are
- *  not questions at all and are skipped silently (unchanged behavior). */
 export const scanClarifyQuestions = (v: unknown): ClarifyScan => {
 	const questions: ClarifyQuestion[] = [];
 	const violations: string[] = [];
@@ -106,23 +72,14 @@ export const scanClarifyQuestions = (v: unknown): ClarifyScan => {
 	return { questions, violations };
 };
 
-/** Back-compat view of scanClarifyQuestions: the ACCEPTED questions only (undefined when none).
- *  Callers that must surface the policy feedback use scanClarifyQuestions. */
 export const asClarifyQuestions = (v: unknown): ClarifyQuestion[] | undefined => {
 	const { questions } = scanClarifyQuestions(v);
 	return questions.length ? questions : undefined;
 };
 
-/** Retry feedback for rejected questions — names the policy AND the offenders so the retrying
- *  sub-agent (or the main agent) can fix exactly what broke instead of guessing. */
 export const questionPolicyError = (violations: string[]): string =>
 	`question policy violation — ${QUESTION_POLICY} Rejected: ${violations.join("; ")}`;
 
-/**
- * Extract a single JSON object from sub-agent output — tolerant of raw JSON, ```json fences,
- * and surrounding prose (first-'{' to last-'}'), because models love adding prose despite
- * being told not to; a single strict parse would fail needlessly often.
- */
 export const extractJsonObject = (text: string): unknown => {
 	const candidates: string[] = [text.trim()];
 	const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -134,24 +91,11 @@ export const extractJsonObject = (text: string): unknown => {
 		try {
 			return JSON.parse(c);
 		} catch {
-			/* try the next candidate */
 		}
 	}
 	return undefined;
 };
 
-/**
- * A: parse + validate the requirements sub-agent draft per contract:
- *   - spec shape    → {title,intent,approach,scope,constraints,criteria[{id,text,check}],specDebt}
- *   - clarify shape (F) → {"questions": [...]} (ask back instead of guessing) — counts as
- *     clarify only when no criteria are present; each question is {question, choices} or
- *     {question, freeText:true} per QUESTION_POLICY — a bare string / a choice-less question is
- *     an ERROR (retry feedback), never a silent open question
- *   - anything else → error describing what broke (used as feedback on the round-2 retry)
- * Minor shape issues are normalized (missing criteria ids → auto c1..n, missing arrays → []),
- * but empty criteria / items without text+check are invalid — a spec without teeth is worse
- * than none.
- */
 export const parseSpecDraft = (text: string): DraftParse => {
 	const raw = extractJsonObject(text);
 	if (raw === undefined || typeof raw !== "object" || raw === null || Array.isArray(raw))
@@ -191,13 +135,6 @@ export const parseSpecDraft = (text: string): DraftParse => {
 	};
 };
 
-/**
- * Heuristic: can the harness/grader actually run this check automatically? Passes on known
- * command tokens, backtick-quoted commands, '$'-prompts, or a path-exists pattern; words like
- * "manual"/"by eye" fail immediately. The quality gate (G) pushes uncheckable criteria into
- * specDebt (forced human review). Intentionally permissive (false negatives beat false
- * positives: anything uncertain must land in specDebt).
- */
 export const isMachineCheckable = (check: string): boolean => {
 	const s = check.toLowerCase();
 	if (/\bmanual(ly)?\b|by eye|visually|eyeball|ask (the )?human/.test(s)) return false;
@@ -216,9 +153,6 @@ export const jaccard = (a: Set<string>, b: Set<string>): number => {
 	return inter / (a.size + b.size - inter);
 };
 
-/** G: duplicate-spec guard — scan the newest 20 archive specs (.zense/specs/*.json) and
- *  compare title+intent tokens; Jaccard ≥ 0.5 counts as "similar" (loose enough to catch
- *  paraphrases without flagging genuinely different work). */
 export const findSimilarSpec = (cwd: string, draft: SpecDraft): { file: string; title: string; score: number } | null => {
 	const dir = join(zenseDir(cwd), "specs");
 	if (!existsSync(dir)) return null;
@@ -230,18 +164,11 @@ export const findSimilarSpec = (cwd: string, draft: SpecDraft): { file: string; 
 			const score = jaccard(mine, tokenSet(`${old.title ?? ""} ${old.intent ?? ""}`));
 			if (score >= 0.5 && (!best || score > best.score)) best = { file: f, title: old.title ?? "?", score };
 		} catch {
-			/* skip corrupt archive files */
 		}
 	}
 	return best;
 };
 
-/** Outcome-summary jargon heuristic (2026-10-16): the outcomes text is the ONLY thing the
- *  signer reads, so it must read like product language, not engineering notes. Conservative by
- *  design — only tokens that are unambiguous engineering artifacts flag it: code fences/
- *  backticks, file extensions/paths, shell-composition operators, command invocations,
- *  path-exists checks. False negatives are fine (a human still reads it at signing); false
- *  positives would push clean text into specDebt, so the token set stays narrow. */
 export const hasOutcomeJargon = (text: string): string[] => {
 	const hits: string[] = [];
 	if (/```|`/.test(text)) hits.push("code fence/backtick");
@@ -251,19 +178,9 @@ export const hasOutcomeJargon = (text: string): string[] => {
 	return hits;
 };
 
-/**
- * G: harness-side quality gate — the sub-agent is good at drafting, but the harness must be
- * skeptical on the human's behalf: empty scope / unverifiable check / duplicate of an old spec
- * → forced into specDebt (human review at eval/review). Returns a new draft (no mutation)
- * plus short notes about what was added (telemetry + tool-result messaging).
- */
 export const applyQualityGate = (cwd: string, draft: SpecDraft): { draft: SpecDraft; notes: string[] } => {
 	const notes: string[] = [];
 	const extraDebt: string[] = [];
-	// cross-check gates (2026-10-18): the goal CASES are the sign surface now. Missing cases →
-	// fall back to intent (still readable, but the signer deserves the dedicated list); jargon /
-	// overlong lines → human review instead of silently rendering command soup. `outcomes` stays
-	// as the legacy fallback and is checked with the same heuristic.
 	const cases = draft.crossCheck?.length ? draft.crossCheck : undefined;
 	if (!cases) {
 		const legacy = draft.outcomes?.trim();
@@ -293,7 +210,6 @@ export const applyQualityGate = (cwd: string, draft: SpecDraft): { draft: SpecDr
 		extraDebt.push("quality-gate: scope not specified — every write would pass the scope check; name the path prefixes the agent may touch");
 		notes.push("empty-scope");
 	}
-	// W3: a scope typo = silently toothless gate — a prefix with no real path matches no writes
 	for (const s of draft.scope) {
 		const prefix = s.replace(/\*+$/, "").replace(/\/+$/, "");
 		if (prefix && !existsSync(join(cwd, prefix))) {

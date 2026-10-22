@@ -13,9 +13,6 @@ import {
 	SUBAGENT_TIMEOUT_MS,
 } from "../extensions/zense-harness/index.ts";
 
-// decompose-then-compile: planner role + needsDecompose + planner parser + merge +
-// orchestration (pure — runTask is an injected fake; no real pi spawn)
-
 const planJson = (subs) => JSON.stringify({ subtasks: subs });
 const twoSubs = () => [
 	{ id: "t1", title: "core", intent: "implement the core logic" },
@@ -35,8 +32,6 @@ const specJson = (marker) =>
 		specDebt: [marker === "t1" ? "debt-a" : "debt-a"],
 	});
 
-// ---------- needsDecompose (deterministic thresholds — the tests assert numeric boundaries)
-
 test("needsDecompose: genuinely small/short intent → false (normal flow untouched)", () => {
 	assert.equal(needsDecompose(""), false);
 	assert.equal(needsDecompose("fix the typo in README"), false);
@@ -52,8 +47,6 @@ test("needsDecompose: whitespace-free languages measured by character length ins
 	assert.equal(needsDecompose("中".repeat(DECOMPOSE_MAX_CHARS)), false);
 	assert.equal(needsDecompose("中".repeat(DECOMPOSE_MAX_CHARS + 1)), true);
 });
-
-// ---------- parsePlannerSubtasks (shape validation + 2–8 count + unique ids — specific throw messages)
 
 test("parsePlannerSubtasks: raw JSON and ```json fences both work", () => {
 	const plain = parsePlannerSubtasks(planJson(twoSubs()));
@@ -84,28 +77,21 @@ test("buildPlannerPrompt: embeds the intent + the 2–8 subtask rule and states 
 	assert.match(p, /SEQUENTIAL/);
 });
 
-// ---------- mergeSubtaskDrafts (merged criteria get unique ids, scope/constraints deduped)
-
 test("mergeSubtaskDrafts: 2 drafts — criteria concatenated + re-idded c1..cN (colliding ids fixed), duplicates deduped, approach prefixed", () => {
 	const d1 = { subtask: "t1", draft: parseDraftForMerge("t1") };
 	const d2 = { subtask: "t2", draft: parseDraftForMerge("t2") };
 	const m = mergeSubtaskDrafts("BIG", "the whole intent", [d1, d2]);
 	assert.equal(m.title, "BIG");
 	assert.equal(m.intent, "the whole intent");
-	assert.deepEqual(m.criteria.map((c) => c.id), ["c1", "c2", "c3", "c4"]); // the two "same-id" no longer collide
-	assert.equal(m.criteria.length, 4);
+	assert.deepEqual(m.criteria.map((c) => c.id), ["c1", "c2", "c3", "c4"]); 	assert.equal(m.criteria.length, 4);
 	assert.deepEqual(m.scope, ["scope-t1/", "scope-t2/"]);
 	assert.deepEqual(m.constraints, ["shared-constraint", "c-t1", "c-t2"]);
-	assert.deepEqual(m.specDebt, ["debt-a"]); // deduped
-	assert.ok(m.approach.every((a, i) => a.startsWith(i === 0 ? "[t1] " : "[t2] ")));
+	assert.deepEqual(m.specDebt, ["debt-a"]); 	assert.ok(m.approach.every((a, i) => a.startsWith(i === 0 ? "[t1] " : "[t2] ")));
 });
 
 function parseDraftForMerge(marker) {
-	// a draft of the same shape parseSpecDraft returns (built directly to avoid a dependency loop)
-	return JSON.parse(specJson(marker));
+		return JSON.parse(specJson(marker));
 }
-
-// ---------- compileDecomposed (orchestration — fake runTask, asserts sequential + fail-fast)
 
 const fakePlanner = (output, ok = true) => ({ ok, output });
 const runFor = (calls, handlers) => async (role, task) => {
@@ -138,8 +124,7 @@ test("compileDecomposed: planner failure (ok=false or malformed output) → thro
 		compileDecomposed("X", runFor(calls, { planner: () => Promise.resolve(fakePlanner("not json")), requirements: () => Promise.reject(new Error("must not be called")) }), (st) => st.id),
 		/JSON/,
 	);
-	assert.equal(calls.length, 2); // only the second planner round — requirements still uncalled
-});
+	assert.equal(calls.length, 2); });
 
 test("compileDecomposed: a subtask failing mid-way stops everything (later subtasks never launch), no half-spec is offered", async () => {
 	const calls = [];
@@ -151,8 +136,7 @@ test("compileDecomposed: a subtask failing mid-way stops everything (later subta
 	});
 	await assert.rejects(compileDecomposed("X", runTask, (st) => `PROMPT[${st.id}]`), /subtask t2/);
 	assert.deepEqual(calls.map(([role, task]) => [role, String(task)]),
-		[["planner", calls[0][1]], ["requirements", "PROMPT[t1]"], ["requirements", "PROMPT[t2]"]]); // t3 never launched
-});
+		[["planner", calls[0][1]], ["requirements", "PROMPT[t1]"], ["requirements", "PROMPT[t2]"]]); });
 
 test("compileDecomposed: a subtask asking to clarify → throw (decompose has no per-subtask clarify — caller falls back)", async () => {
 	const runTask = runFor([], {
@@ -169,8 +153,6 @@ test("compileDecomposed: a subtask violating the question policy → invalid dra
 	});
 	await assert.rejects(compileDecomposed("X", runTask, (st) => st.id), /draft invalid[\s\S]*question policy violation/);
 });
-
-// ---------- planner is a first-class role: wired into every per-role registry like the others
 
 test("planner role: present in SUBAGENT_EXCLUDE_TOOLS (read-only), STRIP_FLAGS and TIMEOUT_MS", () => {
 	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.planner, ["write", "edit"]);

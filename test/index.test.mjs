@@ -59,19 +59,16 @@ test("panelize: fake theme.bg injectable via structural type — token 'selected
 test("panelize: a line shorter than w gets padded to full width, then bg-wrapped whole", () => {
 	const fake = { bg: (_c, text) => `[BG]${text}[/BG]` };
 	const [padded] = panelize(fake, ["abc"], 8);
-	// the content inside the bg wrap must be exactly w wide (abc + 5 spaces)
-	assert.equal(padded.slice(4, -5).length, 8);
+		assert.equal(padded.slice(4, -5).length, 8);
 	assert.equal(padded, `[BG]abc${" ".repeat(5)}[/BG]`);
 });
 
 test("panelize: width measured via visibleWidth — ANSI escapes take no screen; overlong lines get no negative padding", () => {
 	const fake = { bg: (_c, text) => `{${text}}` };
 	const [ansiLine] = panelize(fake, ["\x1b[31mRED\x1b[39m"], 10);
-	// "RED" is 3 wide on screen → padded by 7 cells even though its string is far longer
-	assert.equal(visibleWidth(ansiLine.slice(1, -1)), 10);
+		assert.equal(visibleWidth(ansiLine.slice(1, -1)), 10);
 	const [longLine] = panelize(fake, ["twelve-chars-x"], 5);
-	assert.ok(!longLine.includes("  ")); // w smaller than the content → never attempts negative padding
-});
+	assert.ok(!longLine.includes("  ")); });
 
 test("missing or empty targets are never blocked", () => {
 	const adr = "DENY: node_modules/\r\nDENY: src/legacy";

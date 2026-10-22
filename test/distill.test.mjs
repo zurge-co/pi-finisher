@@ -16,7 +16,6 @@ import {
 	replaceFileAtomic,
 } from "../extensions/zense-harness/index.ts";
 
-/** fake repo with a .zense fixture in tmp — returns a cleanup fn */
 const makeRepo = () => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-distill-"));
 	mkdirSync(join(dir, ".zense", "specs"), { recursive: true });
@@ -32,8 +31,7 @@ test("distillImpact: counts memory lines + file count/size of specs and subagent
 		writeFileSync(join(dir, ".zense", "specs", "s1.md"), "hello");
 		writeFileSync(join(dir, ".zense", "subagents", "g.log"), "x".repeat(100));
 		const imp = distillImpact(dir);
-		assert.equal(imp.memoryLines, 2); // blank lines don't count
-		assert.ok(imp.memoryBytes > 0);
+		assert.equal(imp.memoryLines, 2); 		assert.ok(imp.memoryBytes > 0);
 		assert.equal(imp.specFiles, 2);
 		assert.equal(imp.specBytes, 7);
 		assert.equal(imp.logFiles, 1);
@@ -103,19 +101,13 @@ test("distilled memory + subsequent new lessons (every existing prefix kind) flo
 	try {
 		const mem = join(dir, ".zense", "memory.jsonl");
 		writeFileSync(mem, buildDistilledMemory(["the gate must block before signing"]));
-		// lessons accumulated *after* a distill — all existing prefix kinds must co-parse
-		appendFileSync(mem, JSON.stringify({ at: 1, phase: "maintenance", note: "flag: unsigned override: edit" }) + "\n");
+				appendFileSync(mem, JSON.stringify({ at: 1, phase: "maintenance", note: "flag: unsigned override: edit" }) + "\n");
 		appendFileSync(mem, JSON.stringify({ at: 2, phase: "requirements", note: "escalation: need-permission: write blocked: spec unsigned" }) + "\n");
 		appendFileSync(mem, JSON.stringify({ at: 3, phase: "evaluation", note: "sub-agent failed: grader" }) + "\n");
 		appendFileSync(mem, JSON.stringify({ at: 4, phase: "maintenance", note: "distilled: a freeform lesson without a known prefix" }) + "\n");
 		const agg = aggregateMemory(dir);
 		assert.equal(agg.total, 5);
-		assert.equal(agg.flags.get("unsigned override: edit"), 1); // flag: still aggregates
-		assert.equal(agg.esc.get("need-permission"), 1); // escalation: still aggregates
-		assert.equal(agg.subFails.get("grader"), 1); // sub-agent failed: still aggregates
-		assert.equal(agg.misc, 1); // freeform "distilled:" lands in misc (shown as a count)
-		// the unchanged memorySummaryLines must render, and the distilled lesson (eval channel) must show up in the summary fed to compile_spec
-		const lines = memorySummaryLines(dir).join("\n");
+		assert.equal(agg.flags.get("unsigned override: edit"), 1); 		assert.equal(agg.esc.get("need-permission"), 1); 		assert.equal(agg.subFails.get("grader"), 1); 		assert.equal(agg.misc, 1); 				const lines = memorySummaryLines(dir).join("\n");
 		assert.match(lines, /5 lessons/);
 		assert.match(lines, /eval history.*distilled · the gate must block before signing/);
 		assert.match(lines, /unsigned override: edit ×1/);
@@ -127,18 +119,14 @@ test("distilled memory + subsequent new lessons (every existing prefix kind) flo
 test("lessons longer than 60 chars survive aggregateMemory/memorySummaryLines in full (regression: the eval channel used to truncate at 60)", () => {
 	const { dir, cleanup } = makeRepo();
 	try {
-		// a 160-char lesson — clearly over the old eval-channel truncation ceiling
-		const longLesson = "the gate must block every write before the spec is signed, otherwise the agent edits code ahead of any human signature, breaking the harness's core promise--1234567890";
+				const longLesson = "the gate must block every write before the spec is signed, otherwise the agent edits code ahead of any human signature, breaking the harness's core promise--1234567890";
 		assert.ok(longLesson.length > 60);
 		writeFileSync(join(dir, ".zense", "memory.jsonl"), buildDistilledMemory([longLesson]));
 		const agg = aggregateMemory(dir);
-		assert.equal(agg.evals[0], `distilled · ${longLesson}`); // complete, no slice(0, 60)
-		// a regular (non-distilled) eval entry is still truncated at 60 as before — behavior unchanged
-		appendFileSync(join(dir, ".zense", "memory.jsonl"), JSON.stringify({ at: 9, phase: "evaluation", note: `eval: ${"x".repeat(120)}` }) + "\n");
+		assert.equal(agg.evals[0], `distilled · ${longLesson}`); 				appendFileSync(join(dir, ".zense", "memory.jsonl"), JSON.stringify({ at: 9, phase: "evaluation", note: `eval: ${"x".repeat(120)}` }) + "\n");
 		const agg2 = aggregateMemory(dir);
 		assert.equal(agg2.evals[1].length, 60);
-		assert.ok(memorySummaryLines(dir).join("\n").includes(longLesson)); // feeds compile_spec in full
-	} finally {
+		assert.ok(memorySummaryLines(dir).join("\n").includes(longLesson)); 	} finally {
 		cleanup();
 	}
 });
@@ -167,8 +155,7 @@ test("distillTaskPrompt: embeds the full memory content inline (no reliance on a
 test("distill's deletion scope: specs/ + subagents/ only — the protected set (adr/, config.json, models.json, spec.json, spec.md, worktree/) must survive intact", () => {
 	const { dir, cleanup } = makeRepo();
 	try {
-		// the promised protected set — build every piece around memory
-		mkdirSync(join(dir, ".zense", "adr"), { recursive: true });
+				mkdirSync(join(dir, ".zense", "adr"), { recursive: true });
 		mkdirSync(join(dir, ".zense", "worktree"), { recursive: true });
 		writeFileSync(join(dir, ".zense", "adr", "001-x.md"), "DENY: node_modules/");
 		writeFileSync(join(dir, ".zense", "config.json"), "{}");
@@ -176,20 +163,14 @@ test("distill's deletion scope: specs/ + subagents/ only — the protected set (
 		writeFileSync(join(dir, ".zense", "spec.json"), "{}");
 		writeFileSync(join(dir, ".zense", "spec.md"), "# spec");
 		writeFileSync(join(dir, ".zense", "memory.jsonl"), buildDistilledMemory(["a"]));
-		// runDistill's deletion step: clearDirFiles is invoked only on these 2 dirs (specs keeps nothing, subagents keeps the distiller log)
-		writeFileSync(join(dir, ".zense", "specs", "old.json"), "{}");
+				writeFileSync(join(dir, ".zense", "specs", "old.json"), "{}");
 		writeFileSync(join(dir, ".zense", "subagents", "old.log"), "x");
 		writeFileSync(join(dir, ".zense", "subagents", "latest-distiller.log"), "y");
 		clearDirFiles(join(dir, ".zense", "specs"));
 		clearDirFiles(join(dir, ".zense", "subagents"), new Set(["latest-distiller.log"]));
-		// everything protected survives
-		for (const p of ["adr/001-x.md", "config.json", "models.json", "spec.json", "spec.md", "memory.jsonl"])
+				for (const p of ["adr/001-x.md", "config.json", "models.json", "spec.json", "spec.md", "memory.jsonl"])
 			assert.ok(readFileSync(join(dir, ".zense", p), "utf8").length > 0, p);
-		assert.equal(readdirSync(join(dir, ".zense", "worktree")).filter((f) => !f.startsWith(".")).length, 0); // worktree/ undeleted (was empty anyway)
-		assert.deepEqual(readdirSync(join(dir, ".zense", "adr")), ["001-x.md"]); // adr/ intact
-		assert.deepEqual(readdirSync(join(dir, ".zense", "specs")), []); // specs cleared
-		assert.deepEqual(readdirSync(join(dir, ".zense", "subagents")), ["latest-distiller.log"]); // logs cleared except kept
-	} finally {
+		assert.equal(readdirSync(join(dir, ".zense", "worktree")).filter((f) => !f.startsWith(".")).length, 0); 		assert.deepEqual(readdirSync(join(dir, ".zense", "adr")), ["001-x.md"]); 		assert.deepEqual(readdirSync(join(dir, ".zense", "specs")), []); 		assert.deepEqual(readdirSync(join(dir, ".zense", "subagents")), ["latest-distiller.log"]); 	} finally {
 		cleanup();
 	}
 });
@@ -204,8 +185,7 @@ test("clearDirFiles: deletes files only, respects the keep set — the dir itsel
 		const n = clearDirFiles(d, new Set(["keep.log"]));
 		assert.equal(n, 2);
 		assert.equal(readFileSync(join(d, "keep.log"), "utf8"), "3");
-		assert.equal(clearDirFiles(join(dir, ".zense", "nope")), 0); // missing dir → 0, no throw
-	} finally {
+		assert.equal(clearDirFiles(join(dir, ".zense", "nope")), 0); 	} finally {
 		cleanup();
 	}
 });
@@ -220,7 +200,7 @@ test("regression: runDistill must resolve strip flags via subagentStripFlagsAsyn
 	const { readFileSync: rf } = await import("node:fs");
 	const { fileURLToPath } = await import("node:url");
 	const { dirname } = await import("node:path");
-	const src = rf(join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "zense-harness", "index.ts"), "utf8");
+	const src = rf(join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "zense-harness", "src", "commands.ts"), "utf8");
 	const i = src.indexOf("const runDistill");
 	assert.ok(i >= 0, "runDistill not found");
 	const j = src.indexOf("runSubagent(", i);
