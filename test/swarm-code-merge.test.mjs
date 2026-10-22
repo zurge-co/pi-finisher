@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findOverlaps, mergeOrder, mergeReport, mergeSignature, planMerge } from "../extensions/zense-harness/index.ts";
+import { findOverlaps, mergeOrder, mergeReport, mergeSignature, planMerge, sliceViolations } from "../extensions/zense-harness/index.ts";
 
 const out = (id, paths, ok = true) => ({ id, ok, paths });
 
@@ -57,4 +57,13 @@ test("an explicit override merges everything but still reports the overlaps", ()
 	const plan = planMerge(outcomes, { allowOverlap: true });
 	assert.deepEqual(plan.blocked, []);
 	assert.equal(plan.overlaps.length, 1);
+});
+
+test("a coder's own files are held to the same code rules before anything merges", () => {
+	const files = { "src/clean.ts": "export const a = 1;\n", "src/dirty.ts": "export const a = 1;\n// just a note\n", "README.md": "// fine here\n" };
+	const violations = sliceViolations(Object.keys(files), (p) => files[p]);
+	assert.deepEqual(violations.map((v) => [v.path, v.kind]), [["src/dirty.ts", "comment"]]);
+	assert.deepEqual(sliceViolations(["missing.ts"], () => undefined), []);
+	const big = "src/huge.ts";
+	assert.equal(sliceViolations([big], () => Array.from({ length: 501 }, () => "x").join("\n"))[0].kind, "length");
 });

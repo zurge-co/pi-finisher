@@ -93,7 +93,7 @@ import { readModelsConfig, resolveModelPattern, writeModelsConfig, availableMode
 import { readModelLadder, readSwarmConcurrency, runSwarm, effectiveLadder, swarmSlots, swarmSummaryLine, buildFanOutPrompt, costCeilingsConfigured, SWARM_ROUTING_GUIDELINE, type FanOutArgs, type SwarmSlot, type SwarmTask } from "./src/swarm.ts";
 import { CODE_HYGIENE_GUIDELINE, buildCodeRulesPrompt, formatHygieneViolations, isHygieneChecked, scanSource, type HygieneViolation } from "./src/code-hygiene.ts";
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./src/agent-panel.ts";
-import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, type SliceOutcome, type SlicePlan } from "./src/swarm-code.ts";
+import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./src/swarm-code.ts";
 import { buildGoalConfirmPrompt, goalCases, goalGate } from "./src/goal-confirm.ts";
 import { askQuestionScan, askPolicyError, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
 
@@ -381,6 +381,18 @@ export default function (pi: ExtensionAPI) {
 					if (!r.ok) return { ok: false, output: `${r.output}\n(log: ${r.logPath})` };
 					const reported = parseWorkerFiles(r.output);
 					const changed = reported.length ? reported : gitIn(plan.worktreeDir, ["diff", "--name-only", "HEAD"]).out.split("\n").filter(Boolean);
+					const violations = sliceViolations(changed, (rel) => {
+						const abs = join(plan.worktreeDir, rel);
+						try {
+							return existsSync(abs) ? readFileSync(abs, "utf8") : undefined;
+						} catch {
+							return undefined;
+						}
+					});
+					if (violations.length) {
+						learn(ctx, `swarm code: slice ${plan.id} broke the code rules — handed back to a coder (${violations.length} violation(s))`);
+						return { ok: false, output: `your slice broke the code rules — fix these in your checkout, then report FILES: again\n${formatHygieneViolations(violations)}` };
+					}
 					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
 					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output });
 					return { ok: true, output: r.output };

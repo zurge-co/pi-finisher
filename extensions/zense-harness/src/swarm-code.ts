@@ -1,3 +1,5 @@
+import { isHygieneChecked, scanSource, type HygieneViolation } from "./code-hygiene.ts";
+
 export interface CodeSlice {
 	id: string;
 	instruction: string;
@@ -135,6 +137,17 @@ export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; w
 		"",
 		`Your slice (${slice.id}): ${slice.instruction}`,
 	].join("\n");
+
+export const sliceViolations = (paths: string[], read: (repoRelativePath: string) => string | undefined): HygieneViolation[] => {
+	const out: HygieneViolation[] = [];
+	for (const rel of [...new Set(paths.map(normalizeScope))].sort((a, b) => a.localeCompare(b))) {
+		if (!rel || !isHygieneChecked(rel)) continue;
+		const text = read(rel);
+		if (text === undefined) continue;
+		out.push(...scanSource(text, rel).violations);
+	}
+	return out;
+};
 
 const isRepoRelative = (path: string): boolean => !path.startsWith("/") && !/^[a-zA-Z]:/.test(path) && !path.split("/").includes("..");
 
