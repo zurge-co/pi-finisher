@@ -47,6 +47,12 @@ finished artifact — exactly the harness design plan.md recommends.
 
 ## Agent-facing tools
 
+| Tool | What it does |
+|---|---|
+| `zense_goal` | The goal-confirm driver: one confirmation, then the harness owns the run. It keeps the round counter, reads each verdict from executed evidence, hands failures back for another round, and stops with ONE report when every case is proven or the bound is reached. No approval prompt between rounds, no token/cost ceiling. |
+| `zense_swarm` | Parallel sub-agents on the model ladder (`priority1..priority5` in `.zense/models.json`, capped by `swarmConcurrency`). `explore` = read-only fan-out, `verify` = independent verifiers that must run real commands, `code` = one git worktree + branch per slice, merged back in deterministic slice-id order and refusing to merge overlapping paths silently. |
+| `zense_ask` | Multiple-choice picker for goal/UI questions — skipped entirely when the gate is off. |
+
 `zense_spec`, `zense_adr`, `zense_eval`, `zense_review` — each delegates the heavy
 reasoning to an isolated sub-agent run of pi itself (guarded by
 `PI_ZENSE_SUBAGENT=1` so sub-agents don't recurse into the harness).

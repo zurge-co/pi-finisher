@@ -25,6 +25,8 @@ export const resetCycleState = (s: State): void => {
 	s.specJsonPath = undefined;
 	s.lastCompileLessons = undefined;
 	s.worktreeLeaveNotified = undefined;
+	s.goalDriver = undefined;
+	s.verifyLoop = undefined;
 };
 
 /** one-shot getter: returns the bulletin and clears the field immediately (caller persists —

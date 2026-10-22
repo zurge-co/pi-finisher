@@ -58,6 +58,7 @@ export * from "./src/goal-confirm.ts";
 export * from "./src/agent-panel.ts";
 export * from "./src/swarm-code.ts";
 export * from "./src/verify-loop.ts";
+export * from "./src/goal-driver.ts";
 export * from "./src/ask.ts";
 export * from "./src/longrun.ts";
 export * from "./src/longrun-auto.ts";
@@ -96,6 +97,7 @@ import { CODE_HYGIENE_GUIDELINE, buildCodeRulesPrompt, formatHygieneViolations, 
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./src/agent-panel.ts";
 import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./src/swarm-code.ts";
 import { MAX_VERIFY_ROUNDS, advanceLoop, buildFixPrompt, buildReport, freshVerifyLoop, judgeCase, nextVerifyRound, renderVerifyReport } from "./src/verify-loop.ts";
+import { buildGoalToolText, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./src/goal-driver.ts";
 import { buildGoalConfirmPrompt, goalCases, goalGate } from "./src/goal-confirm.ts";
 import { askQuestionScan, askPolicyError, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./src/ask.ts";
 
@@ -3048,8 +3050,23 @@ export default function (pi: ExtensionAPI) {
 			learn(ctx, `swarm ${p.mode}: ${swarmSummaryLine(results)} — ladder ${ladder.join(" > ")} (${source})${notes}`);
 			if (p.mode === "verify") {
 				const report = buildReport(results.map((r) => judgeCase(r.id, r.output, r.ok ? {} : { exitCode: 1 })));
-				const loop = state.verifyLoop ?? freshVerifyLoop();
+				const active = state.goalDriver as GoalRunState | undefined;
+				const driver = active && !active.doneAt ? active : undefined;
+				const loop = driver ? driver.loop : state.verifyLoop ?? freshVerifyLoop();
 				const decision = nextVerifyRound(loop, report);
+				if (driver) {
+					const step = nextGoalDriverStep({ ...driver, loop }, report);
+					state.goalDriver = step.state;
+					state.verifyLoop = step.state.loop;
+					persist();
+					updateWidget(ctx);
+					learn(ctx, `goal driver: ${step.action} round ${step.round}/${MAX_VERIFY_ROUNDS} — ${step.state.outcome ?? "running"}`);
+					return {
+						content: [{ type: "text", text: [buildGoalToolText({ ...driver, loop }, step), "", body].join("\n") }],
+						details: { mode: p.mode, report, decision, step: step.action, outcome: step.state.outcome, results },
+						...(report.allPass ? {} : { isError: true }),
+					};
+				}
 				state.verifyLoop = advanceLoop(loop, report);
 				persist();
 				learn(ctx, `verify: ${report.allPass ? "PASS" : "not verified"} round ${state.verifyLoop.round}/${MAX_VERIFY_ROUNDS} — ${report.cases.map((c) => `${c.caseId}:${c.verdict}`).join(", ")}`);
@@ -3064,6 +3081,49 @@ export default function (pi: ExtensionAPI) {
 				content: [{ type: "text", text: `${swarmSummaryLine(results)} (concurrency ${concurrency})\n\n${body}${failed.length ? `\n\n⚠ ${failed.length} slice(s) failed — re-run just those slices or do them yourself` : ""}` }],
 				details: { mode: p.mode, concurrency, results },
 				...(failed.length ? { isError: true } : {}),
+			};
+		},
+	});
+
+	// ----- zense_goal: one confirmation, then the harness itself drives the loop — verify,
+	//       hand the failures back, verify again — until every case is proven or the bounded
+	//       driver stops. No approval step between rounds; the human reads one report at the end.
+
+	pi.registerTool({
+		name: "zense_goal",
+		label: "Zense Goal",
+		description:
+			"Confirm a goal ONCE and let the harness drive it: it runs the verify fan-out on your model ladder, judges each case from executed evidence, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
+		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
+		promptGuidelines: [
+			"Call zense_goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
+			"After a 'fix' step, fix the real cause and call zense_goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
+			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or report honestly that it cannot be proven here.",
+		],
+		parameters: Type.Object({
+			goal: Type.String({ description: "the outcome, in the human's words — one goal per run" }),
+			cases: Type.Optional(Type.Array(Type.String(), { description: "the cases that make the goal true (defaults to the spec's own goal cases)" })),
+		}),
+		async execute(_id, p, _s, _o, ctx) {
+			const goal = p.goal.trim();
+			if (!goal) return { content: [{ type: "text", text: "zense_goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
+			const cases = (p.cases ?? []).map((c) => c.trim()).filter(Boolean);
+			const started = resumeOrStart(state.goalDriver as GoalRunState | undefined, goal);
+			state.goalDriver = started;
+			if (cases.length && !state.spec) {
+				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: false, approvedAt: undefined, createdAt: Date.now() } as any;
+			}
+			if (cases.length && state.spec) state.spec.crossCheck = cases;
+			persist();
+			updateWidget(ctx);
+			learn(ctx, `goal confirmed once: ${goal.slice(0, 160)}${cases.length ? ` (${cases.length} case(s))` : ""} — round ${started.loop.round}`);
+			const next = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
+			return {
+				content: [{ type: "text", text: buildGoalToolText(started, { action: "fix", round: started.loop.round, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then prove it:
+${next.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}
+
+prove it with real commands (zense_swarm mode=verify or your own runs); no further approval will be asked.` }) }],
+				details: { goal, cases: next, round: started.loop.round },
 			};
 		},
 	});
