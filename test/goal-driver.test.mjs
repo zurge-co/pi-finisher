@@ -98,3 +98,16 @@ test("the finished report carries every case with its own evidence", () => {
 	assert.match(stop.text, new RegExp(`\\$ npm test -- --r${MAX_VERIFY_ROUNDS} → exit 1`));
 	assert.match(stop.text, /goal not proven: g/);
 });
+
+test("a fix round keeps the same goal alive, so the driver — not the call site — owns the loop", () => {
+	const started = freshGoalRun("ship it", 10);
+	const fix = nextGoalDriverStep(started, report(failing("c1")));
+	const again = resumeOrStart(fix.state, "ship it", 11);
+	assert.equal(again, fix.state);
+	assert.equal(again.loop.round, 1);
+	assert.deepEqual(again.loop.fingerprints.length, 1);
+	const finish = nextGoalDriverStep(fix.state, report(passing("c1")));
+	assert.equal(finish.action, "finish");
+	assert.equal(finish.state.outcome, "verified");
+	assert.equal(resumeOrStart(finish.state, "ship it", 12).loop.round, 0, "after a run closes, the same goal starts a fresh count");
+});

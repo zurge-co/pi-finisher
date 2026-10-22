@@ -353,6 +353,15 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	const armGoalRound = (text: string): void => {
+		const kick = `GOAL-STILL-OPEN — the driver handed this round back to you (no human will approve anything):\n${text}`;
+		try {
+			pi.sendUserMessage(kick, { deliverAs: "followUp" });
+		} catch {
+			/* the returned text still carries the same instruction if the agent is mid-stream */
+		}
+	};
+
 	const runCodeSwarm = async (
 		ctx: ExtensionContext,
 		slices: { id: string; instruction: string; scope?: string[] }[],
@@ -3061,6 +3070,7 @@ export default function (pi: ExtensionAPI) {
 					persist();
 					updateWidget(ctx);
 					learn(ctx, `goal driver: ${step.action} round ${step.round}/${MAX_VERIFY_ROUNDS} — ${step.state.outcome ?? "running"}`);
+					if (step.action === "fix") armGoalRound(step.text);
 					return {
 						content: [{ type: "text", text: [buildGoalToolText({ ...driver, loop }, step), "", body].join("\n") }],
 						details: { mode: p.mode, report, decision, step: step.action, outcome: step.state.outcome, results },
@@ -3111,7 +3121,8 @@ export default function (pi: ExtensionAPI) {
 			const started = resumeOrStart(state.goalDriver as GoalRunState | undefined, goal);
 			state.goalDriver = started;
 			if (cases.length && !state.spec) {
-				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: false, approvedAt: undefined, createdAt: Date.now() } as any;
+				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
+				state.phase = "implementation";
 			}
 			if (cases.length && state.spec) state.spec.crossCheck = cases;
 			persist();
