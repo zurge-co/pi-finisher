@@ -16,7 +16,7 @@ import {
 	writeHandoff,
 	handoffInjection,
 	stackSummary,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-handoff-"));
 
@@ -77,8 +77,8 @@ test("what a real sub-agent writes is what the next task reads back", () => {
 
 test("a corrupt stack file yields an empty stack instead of throwing the run away", () => {
 	const cwd = tmpRepo();
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "handoff.jsonl"), '{not json\n\n[]\n{"text":""}\n');
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "handoff.jsonl"), '{not json\n\n[]\n{"text":""}\n');
 	assert.deepEqual(readHandoff(cwd), []);
 });
 

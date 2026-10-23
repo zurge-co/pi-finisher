@@ -1,6 +1,6 @@
 import { readModelLadder, swarmSlots } from "./swarm.ts";
 
-export const LADDER_PROVIDER = "zense";
+export const LADDER_PROVIDER = "finisher";
 export const LADDER_MODEL_ID = "auto";
 export const LADDER_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -58,11 +58,11 @@ export const buildVirtualModelDefinition = (opts: {
 			const fallback = request.previous?.model;
 			const physical = fallback ? opts.findModel(fallback.provider ?? "", fallback.id ?? "") : undefined;
 			if (physical) return { model: physical, thinkingLevel: "medium" };
-			throw new Error("zense ladder: .zense/models.json has no priority1..priority5 — set one pattern like \"provider/model\"");
+			throw new Error("finisher ladder: .finisher/models.json has no priority1..priority5 — set one pattern like \"provider/model\"");
 		}
 		const parts = splitPattern(pick.pattern);
 		const physical = parts ? opts.findModel(parts.provider, parts.id) : undefined;
-		if (!physical) throw new Error(`zense ladder: "${pick.pattern}" does not resolve to a model with credentials`);
+		if (!physical) throw new Error(`finisher ladder: "${pick.pattern}" does not resolve to a model with credentials`);
 		return { model: physical, thinkingLevel: (parts?.thinkingLevel ?? "medium") as "off" | "low" | "medium" | "high" | "xhigh" | "max" };
 	},
 });
@@ -95,13 +95,13 @@ export const registerLadderModel = (opts: RegisterLadderOpts): boolean => {
 			const fallback = request.previous?.model ? find(request.previous.model.provider ?? "", request.previous.model.id ?? "") : undefined;
 			if (!pick) {
 				if (fallback) return { model: fallback, thinkingLevel: "medium" };
-				throw new Error("zense ladder: .zense/models.json has no priority1..priority5 — set one pattern like \"provider/model\"");
+				throw new Error("finisher ladder: .finisher/models.json has no priority1..priority5 — set one pattern like \"provider/model\"");
 			}
 			const parts = splitPattern(pick.pattern);
 			const physical = parts ? find(parts.provider, parts.id) : undefined;
 			if (!physical) {
 				if (fallback) return { model: fallback, thinkingLevel: "medium" };
-				throw new Error(`zense ladder: "${pick.pattern}" does not resolve to a model with credentials`);
+				throw new Error(`finisher ladder: "${pick.pattern}" does not resolve to a model with credentials`);
 			}
 			return { model: physical, thinkingLevel: parts?.thinkingLevel ?? "medium" };
 		},

@@ -10,7 +10,7 @@ import {
 	diagnoseProviderMissing,
 	providerIdOfModelPattern,
 	usedProviderOf,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const mkTmp = () => mkdtempSync(join(tmpdir(), "zense-provdiag-"));
 
@@ -72,7 +72,7 @@ test("buildProviderMissingGuidance: already included but falling back → points
 	assert.ok(inc.includes("auth") && inc.includes("pi login synthetic"));
 	assert.ok(!inc.includes("tick"), "already included → must not order another tick");
 	const none = buildProviderMissingGuidance("grader", "acme-llm");
-	assert.ok(none.includes("/zense models"), "no extension found → offer changing the role's model");
+	assert.ok(none.includes("/finisher models"), "no extension found → offer changing the role's model");
 	assert.ok(!none.includes("ext-config-show grader on"), "no path = never orders on <path>");
 });
 

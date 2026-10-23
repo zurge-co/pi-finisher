@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
 export const HANDOFF_KEY = "handoff";
 
@@ -31,8 +31,8 @@ const readKey = (file: string, key: string): string | undefined => {
 
 export const readHandoffModel = (cwd: string): HandoffModel | undefined => {
 	for (const [file, source] of [
-		[join(zenseDir(cwd), "models.json"), "models.json"],
-		[join(zenseDir(cwd), "config.json"), "config.json"],
+		[join(finisherDir(cwd), "models.json"), "models.json"],
+		[join(finisherDir(cwd), "config.json"), "config.json"],
 	] as const) {
 		const pattern = readKey(file, HANDOFF_KEY);
 		if (!pattern) continue;

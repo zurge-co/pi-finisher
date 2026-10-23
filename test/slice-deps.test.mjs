@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { detectTestCommand, parseWorkerTests, buildCodeWorkerPrompt, linkDeps, excludeInWorktree } from "../extensions/zense-harness/index.ts";
+import { detectTestCommand, parseWorkerTests, buildCodeWorkerPrompt, linkDeps, excludeInWorktree } from "../extensions/finisher/index.ts";
 
 const makeRepo = () => {
 	const base = mkdtempSync(join(tmpdir(), "zense-slice-"));

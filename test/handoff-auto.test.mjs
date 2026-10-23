@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveHandoffPlan, handoffPlanNote } from "../extensions/zense-harness/index.ts";
+import { resolveHandoffPlan, handoffPlanNote } from "../extensions/finisher/index.ts";
 
 const noClassifiers = async () => [];
 const oneClassifier = async () => [{ provider: "typesafe", id: "jev-latest" }];

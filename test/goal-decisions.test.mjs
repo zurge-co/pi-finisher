@@ -14,7 +14,7 @@ import {
 	withDecisionRule,
 	writeDecisionsFile,
 	buildGoalToolText,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const out = (...lines) => lines.join("\n");
 
@@ -86,8 +86,8 @@ test("the decisions file is written once per goal and is readable afterwards", (
 
 test("there is no rollback baseline any more — undo is something the human asks the agent for", async () => {
 	const { readFileSync } = await import("node:fs");
-	const indexSrc = readFileSync(new URL("../extensions/zense-harness/index.ts", import.meta.url), "utf8");
+	const indexSrc = readFileSync(new URL("../extensions/finisher/index.ts", import.meta.url), "utf8");
 	assert.ok(!indexSrc.includes("baselineHead ="), "goal confirmation no longer records a commit to roll back to");
-	const types = readFileSync(new URL("../extensions/zense-harness/src/types.ts", import.meta.url), "utf8");
+	const types = readFileSync(new URL("../extensions/finisher/src/types.ts", import.meta.url), "utf8");
 	assert.equal(/\tbaselineHead\?:/.test(types), false, "and the state no longer carries it");
 });

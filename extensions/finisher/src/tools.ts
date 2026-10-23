@@ -36,15 +36,15 @@ export const registerTools = (ctx: HarnessContext) => {
 	});
 
 	pi.registerTool(boundedTool({
-		name: "zense_swarm",
+		name: "finisher_swarm",
 		label: "Zense Swarm",
 		description:
-			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .zense/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands; mode=code gives every slice its OWN git worktree + branch so coders write in parallel without touching each other, then merges back in deterministic slice-id order and refuses to merge silently when two slices touched the same path. No token/cost ceiling.",
+			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands; mode=code gives every slice its OWN git worktree + branch so coders write in parallel without touching each other, then merges back in deterministic slice-id order and refuses to merge silently when two slices touched the same path. No token/cost ceiling.",
 		promptSnippet: "Fan out parallel sub-agents across the model priority ladder (explore / verify / code in isolated worktrees)",
 		promptGuidelines: [
-			"Use zense_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
-			"Use zense_swarm verify to prove the result against reality: each verifier must RUN commands and end with VERDICT: PASS/FAIL. A claim with no executed command is UNVERIFIED, never PASS. The loop is bounded — fix the real cause and call verify again; identical evidence stops it.",
-			"Use zense_swarm code when the change splits into independent slices: each coder gets its own worktree, so give every slice its scope and let them all run at once. Slices that need the same file must be one slice — overlapping paths are blocked and reported, never merged silently.",
+			"Use finisher_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
+			"Use finisher_swarm verify to prove the result against reality: each verifier must RUN commands and end with VERDICT: PASS/FAIL. A claim with no executed command is UNVERIFIED, never PASS. The loop is bounded — fix the real cause and call verify again; identical evidence stops it.",
+			"Use finisher_swarm code when the change splits into independent slices: each coder gets its own worktree, so give every slice its scope and let them all run at once. Slices that need the same file must be one slice — overlapping paths are blocked and reported, never merged silently.",
 			"Decide library/layout/approach yourself — do not ask the human.",
 		],
 		parameters: Type.Object({
@@ -61,11 +61,11 @@ export const registerTools = (ctx: HarnessContext) => {
 			maxAttempts: Type.Optional(Type.Integer({ description: "attempts per slice before it counts as failed (default 2)" })),
 		}),
 		async execute(_id, p, sig, _on, ctx) {
-			if (!p.subtasks.length) return { content: [{ type: "text", text: "zense_swarm: subtasks must contain at least one slice" }], details: {}, isError: true };
-			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `zense_swarm: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
+			if (!p.subtasks.length) return { content: [{ type: "text", text: "finisher_swarm: subtasks must contain at least one slice" }], details: {}, isError: true };
+			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `finisher_swarm: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
 			const ids = new Set<string>();
 			for (const s of p.subtasks) {
-				if (!s.id.trim() || ids.has(s.id)) return { content: [{ type: "text", text: `zense_swarm: subtask id "${s.id}" is empty or duplicated` }], details: {}, isError: true };
+				if (!s.id.trim() || ids.has(s.id)) return { content: [{ type: "text", text: `finisher_swarm: subtask id "${s.id}" is empty or duplicated` }], details: {}, isError: true };
 				ids.add(s.id);
 			}
 			const mainPattern = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
@@ -73,7 +73,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const slots = swarmSlots(ladder);
 			if (!slots.length)
 				return {
-					content: [{ type: "text", text: "zense_swarm: no model to run — set priority1..priority5 in .zense/models.json (each a pi model pattern like \"provider/model\"), or run the swarm from a session whose model resolves; it uses as many slots as are set" }],
+					content: [{ type: "text", text: "finisher_swarm: no model to run — set priority1..priority5 in .finisher/models.json (each a pi model pattern like \"provider/model\"), or run the swarm from a session whose model resolves; it uses as many slots as are set" }],
 					details: { missingLadder: true },
 					isError: true,
 				};
@@ -122,14 +122,14 @@ export const registerTools = (ctx: HarnessContext) => {
 	}));
 
 	pi.registerTool(boundedTool({
-		name: "zense_goal",
+		name: "finisher_goal",
 		label: "Zense Goal",
 		description:
 			"Confirm a goal ONCE and let the harness drive it: it runs the verify fan-out on your model ladder, judges each case from executed evidence, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
 		promptGuidelines: [
-			"Call zense_goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
-			"After a 'fix' step, fix the real cause and call zense_goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
+			"Call finisher_goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
+			"After a 'fix' step, fix the real cause and call finisher_goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
 			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or report honestly that it cannot be proven here.",
 		],
 		parameters: Type.Object({
@@ -138,7 +138,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		}),
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
-			if (!goal) return { content: [{ type: "text", text: "zense_goal: goal is empty — ctx.state the outcome the human wants" }], details: {}, isError: true };
+			if (!goal) return { content: [{ type: "text", text: "finisher_goal: goal is empty — ctx.state the outcome the human wants" }], details: {}, isError: true };
 			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
 			const previous = state.goalDriver as GoalRunState | undefined;
 			const isNewGoal = !previous || goalKey(previous.goal) !== goalKey(goal);
@@ -157,7 +157,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			updateWidget(ctx);
 			const next = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 			return {
-				content: [{ type: "text", text: buildGoalToolText(started, { action: "finish", round: 0, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then call zense_swarm mode=verify ONCE at the end:
+				content: [{ type: "text", text: buildGoalToolText(started, { action: "finish", round: 0, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then call finisher_swarm mode=verify ONCE at the end:
 ${next.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}
 
 verification runs once, reading the change and exercising the changed code directly (never the test suite as proof). If a case cannot be exercised, it comes back as UNVERIFIED for a human to test.` }) }],
@@ -167,7 +167,7 @@ verification runs once, reading the change and exercising the changed code direc
 	}));
 
 	pi.registerTool(boundedTool({
-		name: "zense_steer",
+		name: "finisher_steer",
 		label: "Zense Steer",
 		description:
 			"Push a finding into a sub-agent THAT IS STILL RUNNING, so it corrects course without being restarted. Call it with no arguments to list who is working right now. You decide when this matters — the harness never guesses on your behalf. steer lands after the current turn's tool calls, before the next model request; followUp lands after the agent finishes its current work.",
@@ -188,7 +188,7 @@ verification runs once, reading the change and exercising the changed code direc
 			const now = Date.now();
 			if (!pp.role || !pp.message?.trim()) {
 				return {
-					content: [{ type: "text", text: live.length ? `live sub-agents (pass role + message to reach one):\n${live.map((r) => `  ${r.role} — running ${Math.round((now - r.startedAt) / 1000)}s`).join("\n")}` : "no sub-agent is running — there is nothing to steer. Start one with zense_swarm, or do the work yourself." }],
+					content: [{ type: "text", text: live.length ? `live sub-agents (pass role + message to reach one):\n${live.map((r) => `  ${r.role} — running ${Math.round((now - r.startedAt) / 1000)}s`).join("\n")}` : "no sub-agent is running — there is nothing to steer. Start one with finisher_swarm, or do the work yourself." }],
 					details: { live: live.map((r) => ({ role: r.role, aliveMs: now - r.startedAt })) },
 					...(live.length ? { isError: true } : {}),
 				};

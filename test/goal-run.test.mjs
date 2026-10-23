@@ -14,18 +14,18 @@ import {
 	isRetiredTool,
 	readConfigSurface,
 	surfaceLine,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const repo = (models, config) => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-surface-"));
-	mkdirSync(join(dir, ".zense"), { recursive: true });
-	if (models !== undefined) writeFileSync(join(dir, ".zense", "models.json"), JSON.stringify(models));
-	if (config !== undefined) writeFileSync(join(dir, ".zense", "config.json"), JSON.stringify(config));
+	mkdirSync(join(dir, ".finisher"), { recursive: true });
+	if (models !== undefined) writeFileSync(join(dir, ".finisher", "models.json"), JSON.stringify(models));
+	if (config !== undefined) writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(config));
 	return dir;
 };
 
 test("the agent-facing surface is the three goal tools — nothing that asks a human", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["zense_goal", "zense_swarm", "zense_steer"]);
+	assert.deepEqual([...SURFACE_TOOLS], ["finisher_goal", "finisher_swarm", "finisher_steer"]);
 	for (const t of RETIRED_TOOLS) {
 		assert.equal(isRetiredTool(t), true, `${t} must be retired`);
 		assert.equal(isLiveTool(t), false, `${t} must not be callable`);
@@ -58,8 +58,8 @@ test("a missing or broken config degrades to the plain surface instead of throwi
 	assert.deepEqual(readConfigSurface(empty), { priority: [], ignoredKeys: [] });
 	assert.match(surfaceLine(empty), /model ladder: \(main session model only\)/);
 	const broken = repo(undefined, undefined);
-	writeFileSync(join(broken, ".zense", "models.json"), "{ not json");
-	writeFileSync(join(broken, ".zense", "config.json"), "[1,2,3]");
+	writeFileSync(join(broken, ".finisher", "models.json"), "{ not json");
+	writeFileSync(join(broken, ".finisher", "config.json"), "[1,2,3]");
 	assert.deepEqual(readConfigSurface(broken).priority, []);
 	assert.deepEqual(costCeilingKeysPresent(broken), []);
 	const junk = repo({ priority: ["x/y"] }, { swarmConcurrency: 0 });
@@ -67,7 +67,7 @@ test("a missing or broken config degrades to the plain surface instead of throwi
 });
 
 test("the single end report names every case with the evidence that decided it", async () => {
-	const { buildReport, freshGoalRun, judgeCase, nextGoalDriverStep } = await import("../extensions/zense-harness/index.ts");
+	const { buildReport, freshGoalRun, judgeCase, nextGoalDriverStep } = await import("../extensions/finisher/index.ts");
 	const cases = [judgeCase("c1", "$ npm test\nexit code 0\nVERDICT: PASS"), judgeCase("c2", "$ npx tsc --noEmit\nexit code 1\nVERDICT: FAIL"), judgeCase("c3", "looks fine to me")];
 	let state = freshGoalRun("ship it");
 	let step = nextGoalDriverStep(state, buildReport(cases));
@@ -84,8 +84,8 @@ test("the single end report names every case with the evidence that decided it",
 });
 
 test("no code path can stop a run for cost: the only bounds are evidence and rounds", async () => {
-	const { MAX_LOOP_BATCHES, freshGoalRun, judgeCase, buildReport, nextGoalDriverStep } = await import("../extensions/zense-harness/index.ts");
-	const driverSrc = await import("node:fs").then((fs) => fs.readFileSync(new URL("../extensions/zense-harness/src/goal-driver.ts", import.meta.url), "utf8"));
+	const { MAX_LOOP_BATCHES, freshGoalRun, judgeCase, buildReport, nextGoalDriverStep } = await import("../extensions/finisher/index.ts");
+	const driverSrc = await import("node:fs").then((fs) => fs.readFileSync(new URL("../extensions/finisher/src/goal-driver.ts", import.meta.url), "utf8"));
 	assert.doesNotMatch(driverSrc, /maxTokens|costLimit|budget|tokenCeiling|maxCost/i, "the driver must not read a cost budget");
 	assert.doesNotMatch(driverSrc, /tokensUsed|tokensUsed\s*[<>]/, "the driver must not gate on tokens used");
 	const healthy = Array.from({ length: MAX_LOOP_BATCHES + 1 }, (_, i) => judgeCase("c1", `$ npm test -- --r${i}\nexit code 1\nVERDICT: FAIL`));
@@ -102,11 +102,11 @@ test("no code path can stop a run for cost: the only bounds are evidence and rou
 test("every command the surface advertises has a real handler — no ghost commands after a subsystem is removed", async () => {
 	const { readFileSync } = await import("node:fs");
 	const here = new URL("..", import.meta.url).pathname;
-	const src = readFileSync(join(here, "extensions/zense-harness/src/commands.ts"), "utf8");
+	const src = readFileSync(join(here, "extensions/finisher/src/commands.ts"), "utf8");
 	for (const cmd of SURFACE_COMMANDS) {
 		assert.ok(src.includes(`sub === "${cmd}"`), `SURFACE_COMMANDS advertises "${cmd}" but commands.ts has no branch for it`);
 	}
-	assert.ok(!SURFACE_COMMANDS.includes("distill"), "the distiller role is gone, so /zense distill must not be advertised");
+	assert.ok(!SURFACE_COMMANDS.includes("distill"), "the distiller role is gone, so /finisher distill must not be advertised");
 	assert.ok(!/sub === "distill"/.test(src), "and no orphan branch may linger");
 	assert.ok(!src.includes("runDistill"));
 });

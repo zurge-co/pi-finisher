@@ -8,14 +8,14 @@ import { type State, type SubagentRun } from "./types.ts";
 
 export const createViewers = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const zenseCustom = ctx.zenseCustom;
+	const finisherCustom = ctx.finisherCustom;
 	const OVERLAY_MD = ctx.OVERLAY_MD;
 	const OVERLAY_XL = ctx.OVERLAY_XL;
 	const scrollKeyAction = ctx.scrollKeyAction;
 	const pi = ctx.pi;
 
 	const tailViewer = (ctx: ExtensionContext, run: SubagentRun): Promise<null> =>
-		zenseCustom<null>(ctx, OVERLAY_XL, (tui, theme, _kb, done) => {
+		finisherCustom<null>(ctx, OVERLAY_XL, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const tick = setInterval(() => tui.requestRender(), 1_000);
 			let cacheKey = "";
@@ -95,7 +95,7 @@ export const createViewers = (ctx: HarnessContext) => {
 			);
 			return;
 		}
-		const picked = await zenseCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
+		const picked = await finisherCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
 			const container = new Container();
 			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 			container.addChild(new Text(theme.fg("accent", theme.bold("🧪 Zense sub-agent runs (pick one for a live tail)")), 1, 0));

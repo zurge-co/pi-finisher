@@ -11,13 +11,13 @@ import {
 	readModelLadder,
 	readSwarmConcurrency,
 	swarmSlots,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const repo = (models, config) => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-ladder-"));
-	mkdirSync(join(dir, ".zense"), { recursive: true });
-	if (models !== undefined) writeFileSync(join(dir, ".zense", "models.json"), JSON.stringify(models));
-	if (config !== undefined) writeFileSync(join(dir, ".zense", "config.json"), JSON.stringify(config));
+	mkdirSync(join(dir, ".finisher"), { recursive: true });
+	if (models !== undefined) writeFileSync(join(dir, ".finisher", "models.json"), JSON.stringify(models));
+	if (config !== undefined) writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(config));
 	return dir;
 };
 

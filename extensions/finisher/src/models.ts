@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
 export const readModelsConfig = (cwd: string): Record<string, string> => {
-	const f = join(zenseDir(cwd), "models.json");
+	const f = join(finisherDir(cwd), "models.json");
 	if (!existsSync(f)) return {};
 	try {
 		const raw = JSON.parse(readFileSync(f, "utf8"));
@@ -29,7 +29,7 @@ export const resolveModelPattern = (cwd: string, role: string, mainModel?: { pro
 };
 
 export const writeModelsConfig = (cwd: string, role: string, pattern: string | null): void => {
-	const dir = zenseDir(cwd);
+	const dir = finisherDir(cwd);
 	mkdirSync(dir, { recursive: true });
 	const f = join(dir, "models.json");
 	let cfg: Record<string, unknown> = {};

@@ -44,7 +44,7 @@ export const scopesOverlap = (a: string, b: string): boolean => {
 
 export const planSlice = (slice: CodeSlice, runRoot: string, runId: string, branches: string[] = []): SlicePlan => {
 	if (!isSafeSliceId(slice.id)) throw new Error(`unsafe slice id "${slice.id}" — use lowercase letters, digits, - or _ (max 32 chars, no path separators)`);
-	const branchBase = `zense/swarm/${runId}/${slice.id}`;
+	const branchBase = `finisher/swarm/${runId}/${slice.id}`;
 	let branch = branchBase;
 	for (let n = 2; branches.includes(branch); n++) branch = `${branchBase}-${n}`;
 	const worktreeDir = `${runRoot.replace(/\/+$/, "")}/${slice.id}`;

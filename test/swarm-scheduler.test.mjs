@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runSwarm } from "../extensions/zense-harness/index.ts";
+import { runSwarm } from "../extensions/finisher/index.ts";
 
 const slot = (id, priority, model) => ({ id, priority, ...(model ? { model } : {}) });
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));

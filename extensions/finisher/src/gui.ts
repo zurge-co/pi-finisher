@@ -10,7 +10,7 @@ export const createGui = (ctx: HarnessContext) => {
 	const escGuard = createEscGuard();
 	let escGuardUnsubscribe: (() => void) | undefined;
 
-	const zenseCustom = <T>(
+	const finisherCustom = <T>(
 		ctx: ExtensionContext,
 		options: unknown,
 		factory: (tui: any, theme: any, kb: any, done: (v: T) => void) => any,
@@ -62,7 +62,7 @@ export const createGui = (ctx: HarnessContext) => {
 		return null;
 	};
 
-	const REJECT_WITH_REASON = "__zense_reject_reason__";
+	const REJECT_WITH_REASON = "__finisher_reject_reason__";
 
 	const askRejectReason = async (ctx: ExtensionContext, what: string): Promise<string | undefined> => {
 		try {
@@ -75,9 +75,9 @@ export const createGui = (ctx: HarnessContext) => {
 
 	type SpecSignResult = { picked: string | null; reason?: string };
 
-	const zensePick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint = ""): Promise<string | null> => {
+	const finisherPick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint = ""): Promise<string | null> => {
 		let filter = "";
-		return zenseCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
+		return finisherCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const selectList = new SelectList(items, Math.min(items.length, 12), {
 				selectedPrefix: (t) => theme.fg("accent", t),
@@ -117,5 +117,5 @@ export const createGui = (ctx: HarnessContext) => {
 		}, () => filter === "");
 	};
 
-	return { escGuard, escGuardUnsubscribe, zenseCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, zensePick };
+	return { escGuard, escGuardUnsubscribe, finisherCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, finisherPick };
 };

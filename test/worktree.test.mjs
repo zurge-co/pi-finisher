@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GIT_TIMEOUT_MS, gitOk, excludeFromGitStatus, planSlices } from "../extensions/zense-harness/index.ts";
+import { GIT_TIMEOUT_MS, gitOk, excludeFromGitStatus, planSlices } from "../extensions/finisher/index.ts";
 
 const makeRepo = () => {
 	const base = mkdtempSync(join(tmpdir(), "zense-git-"));
@@ -47,7 +47,7 @@ test("gitOk outside a repo is a plain failure, not a crash", () => {
 
 test("every git call is bounded — a hung subprocess cannot stall a tool call", () => {
 	assert.ok(GIT_TIMEOUT_MS > 0 && GIT_TIMEOUT_MS <= 300_000);
-	const src = readFileSync(join(new URL("..", import.meta.url).pathname, "extensions/zense-harness/src/worktree.ts"), "utf8");
+	const src = readFileSync(join(new URL("..", import.meta.url).pathname, "extensions/finisher/src/worktree.ts"), "utf8");
 	assert.match(src, /timeout: GIT_TIMEOUT_MS/);
 	assert.match(src, /killSignal/);
 });
@@ -55,13 +55,13 @@ test("every git call is bounded — a hung subprocess cannot stall a tool call",
 test("excludeFromGitStatus keeps a generated directory out of the repo's status", () => {
 	const { base, cwd, git } = makeRepo();
 	try {
-		const gen = join(cwd, ".zense", "worktree", "swarm");
+		const gen = join(cwd, ".finisher", "worktree", "swarm");
 		mkdirSync(gen, { recursive: true });
 		writeFileSync(join(gen, "slice.txt"), "x\n");
-		assert.match(git(["status", "--porcelain"]), /\.zense/, "visible before excluding (git folds it into .zense/)");
-		excludeFromGitStatus(cwd, join(cwd, ".zense", "worktree"));
-		assert.equal(git(["status", "--porcelain"]).includes(".zense"), false, "hidden after excluding");
-		excludeFromGitStatus(cwd, join(cwd, ".zense", "worktree"));
+		assert.match(git(["status", "--porcelain"]), /\.finisher/, "visible before excluding (git folds it into .finisher/)");
+		excludeFromGitStatus(cwd, join(cwd, ".finisher", "worktree"));
+		assert.equal(git(["status", "--porcelain"]).includes(".finisher"), false, "hidden after excluding");
+		excludeFromGitStatus(cwd, join(cwd, ".finisher", "worktree"));
 		const lines = readFileSync(join(cwd, ".git", "info", "exclude"), "utf8").split("\n").filter((l) => l.includes("worktree"));
 		assert.equal(lines.length, 1, "excluding twice must not duplicate the entry");
 	} finally {
@@ -71,20 +71,20 @@ test("excludeFromGitStatus keeps a generated directory out of the repo's status"
 
 test("no module creates a worktree for the main agent — only the coder slices do", () => {
 	const here = new URL("..", import.meta.url).pathname;
-	const files = readdirSync(join(here, "extensions/zense-harness/src"));
+	const files = readdirSync(join(here, "extensions/finisher/src"));
 	assert.ok(!files.includes("spec-flow.ts"), "the spec flow is gone");
-	const code = readFileSync(join(here, "extensions/zense-harness/src/code-swarm.ts"), "utf8");
+	const code = readFileSync(join(here, "extensions/finisher/src/code-swarm.ts"), "utf8");
 	assert.match(code, /workerWorktree/);
-	const index = readFileSync(join(here, "extensions/zense-harness/index.ts"), "utf8");
+	const index = readFileSync(join(here, "extensions/finisher/index.ts"), "utf8");
 	assert.ok(!index.includes("applyRedirect"), "no path rewriting anywhere");
 });
 
 test("slice isolation for parallel coders survives: each slice still gets its own checkout", () => {
 	const here = new URL("..", import.meta.url).pathname;
-	const code = readFileSync(join(here, "extensions/zense-harness/src/code-swarm.ts"), "utf8");
+	const code = readFileSync(join(here, "extensions/finisher/src/code-swarm.ts"), "utf8");
 	assert.match(code, /workerWorktree/, "coders still run in per-slice worktrees");
 	assert.match(code, /dropWorkerWorktree/);
-	const plan = readFileSync(join(here, "extensions/zense-harness/src/swarm-code.ts"), "utf8");
+	const plan = readFileSync(join(here, "extensions/finisher/src/swarm-code.ts"), "utf8");
 	assert.match(plan, /planSlices/);
 	const plans = planSlices([{ id: "a", instruction: "x", scope: ["f1"] }, { id: "b", instruction: "y", scope: ["f2"] }], "/tmp/slices", "run1");
 	assert.equal(plans.length, 2);

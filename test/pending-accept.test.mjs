@@ -13,7 +13,7 @@ import {
 	isGitRepo,
 	sanitizeSubject,
 	uncommittedChanges,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const makeRepo = () => {
 	const base = mkdtempSync(join(tmpdir(), "zense-cycle-"));
@@ -24,8 +24,8 @@ const makeRepo = () => {
 	git(["config", "user.email", "t@t"]);
 	git(["config", "user.name", "t"]);
 	writeFileSync(join(cwd, "README.md"), "# init\n");
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "state"), "harness\n");
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "state"), "harness\n");
 	git(["add", "-A"]);
 	git(["commit", "-q", "-m", "init"]);
 	return { base, cwd, git };
@@ -91,10 +91,10 @@ test("the harness state directory is never part of what a cycle sees or reverts"
 	const { base, cwd } = makeRepo();
 	try {
 		const baseline = headOf(cwd);
-		writeFileSync(join(cwd, ".zense", "spec.json"), "{}");
-		assert.deepEqual(changePathsSince(cwd, baseline), [], ".zense is excluded by construction");
+		writeFileSync(join(cwd, ".finisher", "spec.json"), "{}");
+		assert.deepEqual(changePathsSince(cwd, baseline), [], ".finisher is excluded by construction");
 		assert.equal(discardSinceBaseline(cwd, baseline).ok, true);
-		assert.ok(readFileSync(join(cwd, ".zense", "spec.json"), "utf8").length > 0, "discard must not eat harness state");
+		assert.ok(readFileSync(join(cwd, ".finisher", "spec.json"), "utf8").length > 0, "discard must not eat harness state");
 	} finally {
 		rmSync(base, { recursive: true, force: true });
 	}
@@ -120,11 +120,11 @@ test("accept can commit the cycle's work, and says so honestly when there is not
 test("the commit message is one bounded subject line and carries the spec's reason", () => {
 	const long = "a very long title ".repeat(10);
 	assert.ok(sanitizeSubject(long).length <= 72);
-	assert.equal(sanitizeSubject("   "), "zense impl");
+	assert.equal(sanitizeSubject("   "), "finisher impl");
 	const msg = composeCommitMessage({ version: 3, title: "t", intent: "because reasons", scope: [], criteria: [], specDebt: [], approved: true });
 	assert.match(msg, /^t\n/);
 	assert.match(msg, /because reasons/);
-	assert.match(msg, /zense spec v3/);
+	assert.match(msg, /finisher spec v3/);
 });
 
 test("uncommittedChanges reports the repo but never the harness state", () => {
@@ -132,7 +132,7 @@ test("uncommittedChanges reports the repo but never the harness state", () => {
 	try {
 		assert.deepEqual(uncommittedChanges(cwd), []);
 		writeFileSync(join(cwd, "x.txt"), "x\n");
-		writeFileSync(join(cwd, ".zense", "noise"), "n\n");
+		writeFileSync(join(cwd, ".finisher", "noise"), "n\n");
 		const lines = uncommittedChanges(cwd);
 		assert.equal(lines.length, 1, `expected only the repo file, got ${lines.join(" | ")}`);
 		assert.match(lines[0], /x\.txt/);

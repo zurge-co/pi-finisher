@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isSafeSliceId, normalizeScope, parseWorkerFiles, planSlice, planSlices } from "../extensions/zense-harness/index.ts";
+import { isSafeSliceId, normalizeScope, parseWorkerFiles, planSlice, planSlices } from "../extensions/finisher/index.ts";
 
 const slice = (id, scope) => ({ id, instruction: "do it", ...(scope ? { scope } : {}) });
 const unsafe = ["", "../escape", "a/b", "a\\b", "A", "with space", "dots..dir", "-lead", "x".repeat(33), "id\u0000null", "..", "./rel"];
@@ -23,8 +23,8 @@ test("every planned worktree stays inside the run root, whatever the slice id", 
 
 test("duplicate ids and branch collisions never produce two workers on one checkout", () => {
 	assert.throws(() => planSlices([slice("a"), slice("a")], "/tmp/run", "r1"), /duplicate slice id/);
-	const reused = planSlice(slice("a"), "/tmp/run", "r1", ["zense/swarm/r1/a"]);
-	assert.notEqual(reused.branch, "zense/swarm/r1/a");
+	const reused = planSlice(slice("a"), "/tmp/run", "r1", ["finisher/swarm/r1/a"]);
+	assert.notEqual(reused.branch, "finisher/swarm/r1/a");
 	const plans = planSlices([slice("b"), slice("a")], "/tmp/run", "r1");
 	assert.deepEqual(new Set(plans.map((p) => p.worktreeDir)).size, 2);
 	assert.deepEqual(new Set(plans.map((p) => p.branch)).size, 2);

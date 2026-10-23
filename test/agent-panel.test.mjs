@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clip, elapsedLabel, formatPanelRow, liveRuns, panelLines, panelRows, panelTickMs, streamTail } from "../extensions/zense-harness/index.ts";
+import { clip, elapsedLabel, formatPanelRow, liveRuns, panelLines, panelRows, panelTickMs, streamTail } from "../extensions/finisher/index.ts";
 
 const run = (role, extra = {}) => ({ role, status: "running", startedAt: 1_000, at: 1_000, ...extra });
 

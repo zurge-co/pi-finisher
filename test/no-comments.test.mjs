@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { scanSource } from "../extensions/zense-harness/index.ts";
+import { scanSource } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const walk = (dir) =>
@@ -21,10 +21,10 @@ test("the harness sources carry no code comments and no over-long files", () => 
 });
 
 test("a documented exemption still passes, and a bare marker does not", () => {
-	const allowed = scanSource("const a = 1;\n// zense-hygiene-allow: upstream snippet kept verbatim\n", "x.ts");
+	const allowed = scanSource("const a = 1;\n// finisher-hygiene-allow: upstream snippet kept verbatim\n", "x.ts");
 	assert.deepEqual(allowed.violations, []);
 	assert.equal(allowed.ignored.length, 1);
-	const bare = scanSource("const a = 1;\n// zense-hygiene-allow\n", "x.ts");
+	const bare = scanSource("const a = 1;\n// finisher-hygiene-allow\n", "x.ts");
 	assert.equal(bare.violations[0].kind, "exempt-without-reason");
 });
 

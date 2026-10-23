@@ -11,8 +11,8 @@ import {
 	buildRpcSubagentArgs,
 	orphanRoleKeys,
 	modelForRole,
-	ZENSE_TOOL_GLOB,
-} from "../extensions/zense-harness/index.ts";
+	FINISHER_TOOL_GLOB,
+} from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 
@@ -37,15 +37,15 @@ test("the verifier can run commands to prove things but can never write a file",
 	assert.ok(excluded.includes("write"), "a verifier must not write");
 	assert.ok(excluded.includes("edit"), "a verifier must not edit");
 	assert.ok(!excluded.includes("bash"), "a verifier MUST be able to run commands — evidence is the whole point");
-	assert.equal(excluded[0], ZENSE_TOOL_GLOB, "it also cannot re-enter the harness");
+	assert.equal(excluded[0], FINISHER_TOOL_GLOB, "it also cannot re-enter the harness");
 });
 
 test("the coder CAN write, because code mode works by editing files in its own worktree", () => {
-	const excluded = (SUBAGENT_EXCLUDE_TOOLS.swarm ?? []).filter((t) => t !== ZENSE_TOOL_GLOB);
+	const excluded = (SUBAGENT_EXCLUDE_TOOLS.swarm ?? []).filter((t) => t !== FINISHER_TOOL_GLOB);
 	assert.ok(!excluded.includes("write"), "a coder that cannot write cannot do its job");
 	assert.ok(!excluded.includes("edit"));
 	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
-	assert.equal(args[args.indexOf("--exclude-tools") + 1], ZENSE_TOOL_GLOB, "the harness glob is still the only exclusion");
+	assert.equal(args[args.indexOf("--exclude-tools") + 1], FINISHER_TOOL_GLOB, "the harness glob is still the only exclusion");
 });
 
 test("both roles keep their provider extension — a bare boot made the verifier unable to reach any extension-provided model", () => {
@@ -56,16 +56,16 @@ test("both roles keep their provider extension — a bare boot made the verifier
 });
 
 test("every role boots with the harness env guard, so a sub-agent never loads this extension again", () => {
-	const rpcSrc = readFileSync(join(here, "extensions/zense-harness/src/subagent-rpc.ts"), "utf8");
-	assert.match(rpcSrc, /PI_ZENSE_SUBAGENT/, "the rpc runner must set the guard env var");
-	const indexSrc = readFileSync(join(here, "extensions/zense-harness/index.ts"), "utf8");
-	assert.match(indexSrc, /process\.env\.PI_ZENSE_SUBAGENT === "1"/, "the entry point must honour that guard");
+	const rpcSrc = readFileSync(join(here, "extensions/finisher/src/subagent-rpc.ts"), "utf8");
+	assert.match(rpcSrc, /PI_FINISHER_SUBAGENT/, "the rpc runner must set the guard env var");
+	const indexSrc = readFileSync(join(here, "extensions/finisher/index.ts"), "utf8");
+	assert.match(indexSrc, /process\.env\.PI_FINISHER_SUBAGENT === "1"/, "the entry point must honour that guard");
 });
 
 test("no role persists nothing: sub-agents keep their own session so a run can be looked at later", () => {
-	const cfgSrc = readFileSync(join(here, "extensions/zense-harness/src/subagent-config.ts"), "utf8");
+	const cfgSrc = readFileSync(join(here, "extensions/finisher/src/subagent-config.ts"), "utf8");
 	assert.ok(!/--no-session/.test(cfgSrc), "a sub-agent without a session cannot be resumed after the fact");
-	const rpcSrc = readFileSync(join(here, "extensions/zense-harness/src/subagent-rpc.ts"), "utf8");
+	const rpcSrc = readFileSync(join(here, "extensions/finisher/src/subagent-rpc.ts"), "utf8");
 	assert.match(rpcSrc, /sessionId/, "the runner must record the session it used");
 });
 
@@ -79,8 +79,8 @@ test("a stale key in models.json is reported as an orphan, never silently applie
 });
 
 test("the model-facing surface offers steering, so the main agent can act on another worker's finding", () => {
-	const toolsSrc = readFileSync(join(here, "extensions/zense-harness/src/tools.ts"), "utf8");
-	assert.match(toolsSrc, /name: "zense_steer"/);
+	const toolsSrc = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
+	assert.match(toolsSrc, /name: "finisher_steer"/);
 	assert.match(toolsSrc, /steerLive/, "it must reach the live registry");
 	assert.match(toolsSrc, /followUpLive/);
 });

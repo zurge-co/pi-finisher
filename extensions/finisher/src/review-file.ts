@@ -28,7 +28,7 @@ export const buildFileReviewReport = (review: FileReview): string =>
 	[
 		`${review.path} broke the code rules — fix it now, the harness re-checks every write:`,
 		review.message,
-		"If the file cannot express the intent without a comment, rename or restructure instead; a load-bearing reason may stay as `zense-hygiene-allow: <why>`.",
+		"If the file cannot express the intent without a comment, rename or restructure instead; a load-bearing reason may stay as `finisher-hygiene-allow: <why>`.",
 	].join("\n\n");
 
 const heredocTargets = (command: string): string[] => {

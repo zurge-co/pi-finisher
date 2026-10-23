@@ -64,9 +64,9 @@ export interface HarnessContext {
 	armGoalRound: ArmGoalRound;
 	askClarifyQuestion: AskClarify;
 	acceptPending: AcceptPending;
-	zensePick: ZensePick;
+	finisherPick: ZensePick;
 	openAgentsViewer: OpenAgentsViewer;
-	zenseCustom: ZenseCustom;
+	finisherCustom: ZenseCustom;
 	OVERLAY_LG: OverlayOptions;
 	OVERLAY_MD: OverlayOptions;
 	OVERLAY_XL: OverlayOptions;

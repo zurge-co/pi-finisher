@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createEscGuard } from "../extensions/zense-harness/index.ts";
+import { createEscGuard } from "../extensions/finisher/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -138,17 +138,17 @@ test("peek: no dialog open → toggle is a no-op and keys keep passing", () => {
 	assert.equal(g.handleInput(" "), undefined);
 });
 
-test("source: zenseCustom mirrors pi's overlay handle so peek can hide/show it", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/src/gui.ts"), "utf8");
-	assert.match(src, /onHandle:/, "zenseCustom must pass onHandle to capture the overlay handle");
+test("source: finisherCustom mirrors pi's overlay handle so peek can hide/show it", () => {
+	const src = readFileSync(join(here, "..", "extensions/finisher/src/gui.ts"), "utf8");
+	assert.match(src, /onHandle:/, "finisherCustom must pass onHandle to capture the overlay handle");
 	assert.match(src, /setHidden/, "the captured handle must drive OverlayHandle.setHidden");
 	assert.match(src, /canPeek/, "dialogs must be able to opt out of the peek key");
 });
 
 
 test("source: the shared picker unlocks peek only while its filter is empty", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/src/gui.ts"), "utf8");
-	const i = src.indexOf("const zensePick");
+	const src = readFileSync(join(here, "..", "extensions/finisher/src/gui.ts"), "utf8");
+	const i = src.indexOf("const finisherPick");
 	assert.ok(i > 0);
 	const body = src.slice(i, i + 3000);
 	assert.match(body, /filter === ""/, "space must stay a filter key once the human starts typing");

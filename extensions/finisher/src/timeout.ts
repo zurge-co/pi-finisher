@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 900_000;
 export const MAX_BASH_TIMEOUT_SECONDS = 2_147_483;
@@ -23,7 +23,7 @@ export const TIMED_OUT = Symbol("timedOut");
 
 export const readToolTimeout = (cwd: string, tool = "default"): number => {
 	const fromConfig = (): { all?: unknown; per?: unknown } => {
-		const f = join(zenseDir(cwd), "config.json");
+		const f = join(finisherDir(cwd), "config.json");
 		if (!existsSync(f)) return {};
 		try {
 			const raw = JSON.parse(readFileSync(f, "utf8")) as { toolTimeoutMs?: unknown };

@@ -20,13 +20,13 @@ export const takeContextBulletin = (s: { contextBulletin?: string }): string | u
 };
 
 export const buildAcceptBulletin = (specVersion: number, title: string, amendedCount: number): string =>
-	`[zense] spec v${specVersion} "${title}" was accepted + committed on main${amendedCount ? ` (human amended ${amendedCount} file(s) after the grader passed)` : ""} — cycle reset; new work starts at spec v1`;
+	`[finisher] spec v${specVersion} "${title}" was accepted + committed on main${amendedCount ? ` (human amended ${amendedCount} file(s) after the grader passed)` : ""} — cycle reset; new work starts at spec v1`;
 
 export const buildReconcileBulletin = (specVersion: number): string =>
-	`[zense] spec v${specVersion}'s pendingApply was closed by the human outside the flow (committed, or the change dropped) — cycle reset; new work starts at spec v1`;
+	`[finisher] spec v${specVersion}'s pendingApply was closed by the human outside the flow (committed, or the change dropped) — cycle reset; new work starts at spec v1`;
 
 export const buildDiscardBulletin = (specVersion: number): string =>
-	`[zense] spec v${specVersion}'s change was discarded — reverse patch removed it from main — cycle reset; new work starts at spec v1`;
+	`[finisher] spec v${specVersion}'s change was discarded — reverse patch removed it from main — cycle reset; new work starts at spec v1`;
 
 export const freshState = (): State => ({
 	phase: "requirements",

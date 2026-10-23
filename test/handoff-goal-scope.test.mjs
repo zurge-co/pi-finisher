@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendHandoff, clearOtherGoals, goalKey, handoffForGoal, handoffInjection, readHandoff, writeHandoff } from "../extensions/zense-harness/index.ts";
+import { appendHandoff, clearOtherGoals, goalKey, handoffForGoal, handoffInjection, readHandoff, writeHandoff } from "../extensions/finisher/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-goal-scope-"));
 

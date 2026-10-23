@@ -9,14 +9,14 @@ import { resolveModelPattern } from "./models.ts";
 import { SURFACE_COMMANDS } from "./goal-run.ts";
 import { availableModelChoices, readModelsConfig, writeModelsConfig } from "./models.ts";
 import { type AcceptPending, type Escalate, type Flag, type LaunchSubagent, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
-import { zenseDir, type State } from "./types.ts";
+import { finisherDir, type State } from "./types.ts";
 
 export const registerCommands = (ctx: HarnessContext) => {
 	const state = ctx.state;
 	const pi = ctx.pi;
 	const launchSubagent = ctx.launchSubagent;
 	const flag = ctx.flag;
-	const zensePick = ctx.zensePick;
+	const finisherPick = ctx.finisherPick;
 	const openAgentsViewer = ctx.openAgentsViewer;
 
 	pi.registerShortcut(Key.ctrl("_"), {
@@ -24,33 +24,33 @@ export const registerCommands = (ctx: HarnessContext) => {
 		handler: (ctx) => openAgentsViewer(ctx),
 	});
 
-	pi.registerCommand("zense", {
-		description: `Zense: ${SURFACE_COMMANDS.map((c) => `/zense ${c}`).join(" | ")} — choose which model each sub-agent role runs on`,
+	pi.registerCommand("finisher", {
+		description: `Zense: ${SURFACE_COMMANDS.map((c) => `/finisher ${c}`).join(" | ")} — choose which model each sub-agent role runs on`,
 		getArgumentCompletions: (prefix) =>
 			[...SURFACE_COMMANDS]
 				.filter((s) => s.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
 			const [sub] = args.trim().split(/\s+/);
-			if (sub !== "models") return ctx.ui.notify("usage: /zense models", "info");
+			if (sub !== "models") return ctx.ui.notify("usage: /finisher models", "info");
 			if (sub === "models") {
-				const cfgPath = join(zenseDir(ctx.cwd), "models.json");
+				const cfgPath = join(finisherDir(ctx.cwd), "models.json");
 				const cfg = readModelsConfig(ctx.cwd);
 				const mainModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(no active model)";
 				const roles: readonly string[] = [...SUBAGENT_ROLES];
 				const orphans = orphanRoleKeys(cfg, roles);
 				if (ctx.mode !== "tui") {
 					const lines = [
-						`🧪 sub-agent models — config: ${existsSync(cfgPath) ? relative(ctx.cwd, cfgPath) : "(no .zense/models.json — every role uses the main model)"}`,
+						`🧪 sub-agent models — config: ${existsSync(cfgPath) ? relative(ctx.cwd, cfgPath) : "(no .finisher/models.json — every role uses the main model)"}`,
 						`main agent: ${mainModel}`,
 						...roles.map((r) => `  ${r}: ${cfg[r] ? cfg[r] + " (from config)" : mainModel + " (fallback)"}`),
-						"edit by creating .zense/models.json, e.g. { \"verifier\": \"openai/gpt-4o-mini\" } — or open the TUI and use /zense models for an interactive picker",
+						"edit by creating .finisher/models.json, e.g. { \"verifier\": \"openai/gpt-4o-mini\" } — or open the TUI and use /finisher models for an interactive picker",
 						...(orphans.length ? [`⚠ keys with no role any more (ignored, delete when you like): ${orphans.join(", ")}`] : []),
 					];
 					ctx.ui.notify(lines.join("\n"), "info");
 					return;
 				}
-				const role = await zensePick(
+				const role = await finisherPick(
 					ctx,
 					"🧪 pick the sub-agent role to set a model for",
 					roles.map((r) => ({
@@ -62,7 +62,7 @@ export const registerCommands = (ctx: HarnessContext) => {
 				);
 				if (!role) return;
 				const choices = availableModelChoices(ctx);
-				const sel = await zensePick(
+				const sel = await finisherPick(
 					ctx,
 					`🧪 pick a model for role "${role}"`,
 					[

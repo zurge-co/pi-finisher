@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HYGIENE_MAX_LINES, buildCodeRulesPrompt, countLines, formatHygieneViolations, scanComments, scanLength } from "../extensions/zense-harness/index.ts";
+import { HYGIENE_MAX_LINES, buildCodeRulesPrompt, countLines, formatHygieneViolations, scanComments, scanLength } from "../extensions/finisher/index.ts";
 
 const atLimit = Array.from({ length: HYGIENE_MAX_LINES }, (_, i) => `const v${i} = ${i};`).join("\n");
 
@@ -16,8 +16,8 @@ test("the line counter counts what a reader would count: no phantom line for a t
 test("the length rule is exact at the boundary and needs a reason to be waived", () => {
 	assert.deepEqual(scanLength(atLimit, "a.ts"), []);
 	assert.equal(scanLength(`${atLimit}\nconst one = 1;`, "a.ts").length, 1);
-	assert.deepEqual(scanLength(`${atLimit}\nconst one = 1;\n// zense-hygiene-allow: generated table`, "a.ts"), []);
-	assert.equal(scanLength(`${atLimit}\nconst one = 1;\n// zense-hygiene-allow`, "a.ts")[0].kind, "exempt-without-reason");
+	assert.deepEqual(scanLength(`${atLimit}\nconst one = 1;\n// finisher-hygiene-allow: generated table`, "a.ts"), []);
+	assert.equal(scanLength(`${atLimit}\nconst one = 1;\n// finisher-hygiene-allow`, "a.ts")[0].kind, "exempt-without-reason");
 });
 
 test("comment detection is a string-aware scan: what looks inside a literal is not a comment", () => {
@@ -72,5 +72,5 @@ test("the rule text the agent is given states both rules and the waiver form", (
 	const p = buildCodeRulesPrompt();
 	assert.match(p, /No comments in code/);
 	assert.match(p, new RegExp(String(HYGIENE_MAX_LINES)));
-	assert.match(p, /zense-hygiene-allow: <why>/);
+	assert.match(p, /finisher-hygiene-allow: <why>/);
 });

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 import { stackSummary, type HandoffItem } from "./handoff-stack.ts";
 
 export const FRESH_KEY = "freshContext";
@@ -12,7 +12,7 @@ export interface FreshContextConfig {
 	source: "config" | "default" | "broken-config";
 }
 
-export const configPath = (cwd: string): string => join(zenseDir(cwd), "config.json");
+export const configPath = (cwd: string): string => join(finisherDir(cwd), "config.json");
 
 export const readFreshContextConfig = (cwd: string): FreshContextConfig => {
 	const f = configPath(cwd);
@@ -43,7 +43,7 @@ export const writeFreshContextConfig = (cwd: string, enabled: boolean): boolean 
 export const buildFreshSummary = (items: HandoffItem[], limit = 6): string => {
 	const body = stackSummary(items, limit);
 	if (!body) return "";
-	return clipSummary(`[zense fresh context] a task finished; this context was reset on purpose. What earlier work learned that this one must not rediscover:\n${body}\nRe-read the repo and the tracker from disk instead of trusting memory.`);
+	return clipSummary(`[finisher fresh context] a task finished; this context was reset on purpose. What earlier work learned that this one must not rediscover:\n${body}\nRe-read the repo and the tracker from disk instead of trusting memory.`);
 };
 
 export const clipSummary = (text: string, max = FRESH_SUMMARY_MAX): string => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 import { goalKey } from "./goal-driver.ts";
 
 export const HANDOFF_FILE = "handoff.jsonl";
@@ -28,7 +28,7 @@ export interface HandoffAnswerLike {
 	score?: number;
 }
 
-export const handoffPath = (cwd: string): string => join(zenseDir(cwd), HANDOFF_FILE);
+export const handoffPath = (cwd: string): string => join(finisherDir(cwd), HANDOFF_FILE);
 
 export const handoffQuestion = (): Record<string, unknown> => ({
 	keep: {
@@ -107,7 +107,7 @@ export const readHandoff = (cwd: string): HandoffItem[] => {
 };
 
 export const writeHandoff = (cwd: string, items: HandoffItem[]): void => {
-	mkdirSync(zenseDir(cwd), { recursive: true });
+	mkdirSync(finisherDir(cwd), { recursive: true });
 	writeFileSync(handoffPath(cwd), trimStack(items).map((i) => JSON.stringify(i)).join("\n") + (items.length ? "\n" : ""));
 };
 
@@ -139,7 +139,7 @@ export const stackSummary = (items: HandoffItem[], limit = 6): string => {
 export const handoffInjection = (items: HandoffItem[], limit = 6): string | undefined => {
 	const body = stackSummary(items, limit);
 	if (!body) return undefined;
-	return `[zense handoff] what earlier tasks learned that this one must not rediscover:\n${body}`;
+	return `[finisher handoff] what earlier tasks learned that this one must not rediscover:\n${body}`;
 };
 
 export const parseDistilled = (out: string): string | undefined => {

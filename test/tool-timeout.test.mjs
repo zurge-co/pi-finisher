@@ -15,14 +15,14 @@ import {
 	withTimeout,
 	timeoutNote,
 	applyBashTimeout,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-timeout-"));
 
 const writeCfg = (cwd, cfg) => {
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "config.json"), JSON.stringify(cfg));
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify(cfg));
 };
 
 test("a bash call that carries no timeout gets one injected — the hole that let a command run forever", () => {
@@ -69,25 +69,25 @@ test("the budget is configurable, and a broken config still yields a safe defaul
 	assert.equal(readToolTimeout(cwd, "bash"), DEFAULT_TOOL_TIMEOUT_MS, "no config → default");
 	writeCfg(cwd, { toolTimeoutMs: { bash: 45_000 } });
 	assert.equal(readToolTimeout(cwd, "bash"), 45_000, "per-tool wins");
-	assert.equal(readToolTimeout(cwd, "zense_swarm"), DEFAULT_TOOL_TIMEOUT_MS, "an unlisted tool keeps the default");
+	assert.equal(readToolTimeout(cwd, "finisher_swarm"), DEFAULT_TOOL_TIMEOUT_MS, "an unlisted tool keeps the default");
 	writeCfg(cwd, { toolTimeoutMs: 60_000 });
 	assert.equal(readToolTimeout(cwd, "anything"), 60_000, "a single number applies to everything");
 	for (const junk of [{ toolTimeoutMs: { bash: 0 } }, { toolTimeoutMs: { bash: -1 } }, { toolTimeoutMs: { bash: "60s" } }, { toolTimeoutMs: { bash: MIN_TIMEOUT_MS - 1 } }]) {
 		writeCfg(cwd, junk);
 		assert.equal(readToolTimeout(cwd, "bash"), DEFAULT_TOOL_TIMEOUT_MS, `junk ${JSON.stringify(junk)} must fall back`);
 	}
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "config.json"), "{not json");
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "config.json"), "{not json");
 	assert.equal(readToolTimeout(cwd, "bash"), DEFAULT_TOOL_TIMEOUT_MS, "a corrupt file must not break a tool call");
 });
 
 test("a call that never answers is cut off and reported, instead of holding the turn", async () => {
 	const never = new Promise(() => {});
 	const t0 = Date.now();
-	const r = await withTimeout(never, 120, "tool zense_swarm");
+	const r = await withTimeout(never, 120, "tool finisher_swarm");
 	assert.equal(r.timedOut, true, "an unbounded await must resolve as a timeout");
 	assert.ok(Date.now() - t0 < 5_000);
-	assert.match(timeoutNote(r), /tool zense_swarm exceeded its/);
+	assert.match(timeoutNote(r), /tool finisher_swarm exceeded its/);
 });
 
 test("a normal result passes through untouched, and a rejection still propagates as an error", async () => {
@@ -110,13 +110,13 @@ test("no timer survives a finished call, so a bounded tool cannot keep the proce
 });
 
 test("every zense tool and every rpc call is registered through a bound, not a raw await", () => {
-	const tools = readFileSync(join(here, "extensions/zense-harness/src/tools.ts"), "utf8");
+	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
 	const registrations = tools.match(/pi\.registerTool\(/g) ?? [];
 	assert.ok(registrations.length >= 3, "every goal tool must still be registered");
 	assert.equal((tools.match(/pi\.registerTool\(boundedTool\(/g) ?? []).length, registrations.length, "every registration must go through boundedTool");
 	assert.ok(!/pi\.registerTool\(\{\s*\n\s*name:/.test(tools), "no tool may be registered without a bound");
 
-	const rpc = readFileSync(join(here, "extensions/zense-harness/src/subagent-rpc.ts"), "utf8");
+	const rpc = readFileSync(join(here, "extensions/finisher/src/subagent-rpc.ts"), "utf8");
 	for (const call of ["client.start()", "client.getMessages()", "client.getState()", "client.stop()", "r.client.steer(", "r.client.followUp(", "client.abort()"]) {
 		const at = rpc.indexOf(call);
 		assert.ok(at > 0, `${call} must still be used`);
@@ -127,8 +127,8 @@ test("every zense tool and every rpc call is registered through a bound, not a r
 });
 
 test("the sub-agent hooks the same bash-timeout rule, so the guarantee is not main-agent-only", () => {
-	const index = readFileSync(join(here, "extensions/zense-harness/index.ts"), "utf8");
-	const guard = index.indexOf('process.env.PI_ZENSE_SUBAGENT === "1"');
+	const index = readFileSync(join(here, "extensions/finisher/index.ts"), "utf8");
+	const guard = index.indexOf('process.env.PI_FINISHER_SUBAGENT === "1"');
 	const hook = index.indexOf("registerToolTimeoutHook(pi)");
 	assert.ok(guard > 0 && hook > 0, "both must exist");
 	const afterGuard = index.indexOf("registerToolTimeoutHook(pi)", guard);
@@ -136,7 +136,7 @@ test("the sub-agent hooks the same bash-timeout rule, so the guarantee is not ma
 });
 
 test("git runs under a timeout — a hung subprocess cannot stall a tool call", () => {
-	const wt = readFileSync(join(here, "extensions/zense-harness/src/worktree.ts"), "utf8");
+	const wt = readFileSync(join(here, "extensions/finisher/src/worktree.ts"), "utf8");
 	assert.match(wt, /timeout: GIT_TIMEOUT_MS/, "every git subprocess carries a deadline");
 	assert.match(wt, /killSignal/);
 });

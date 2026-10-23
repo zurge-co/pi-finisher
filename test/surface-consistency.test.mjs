@@ -2,10 +2,10 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { RETIRED_COMMANDS, SURFACE_COMMANDS, SURFACE_TOOLS, isLiveTool, isRetiredTool } from "../extensions/zense-harness/index.ts";
+import { RETIRED_COMMANDS, SURFACE_COMMANDS, SURFACE_TOOLS, isLiveTool, isRetiredTool } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
-const commandsSrc = () => readFileSync(join(here, "extensions/zense-harness/src/commands.ts"), "utf8");
+const commandsSrc = () => readFileSync(join(here, "extensions/finisher/src/commands.ts"), "utf8");
 
 test("every command in the surface has a branch, and every branch is in the surface", () => {
 	const src = commandsSrc();
@@ -32,12 +32,12 @@ test("the removed surfaces cannot come back: no memory, no gate, no ext-config m
 	const src = commandsSrc();
 	assert.ok(!src.includes("memory.jsonl"));
 	assert.ok(!src.includes("ext-config"));
-	const kit = readFileSync(join(here, "extensions/zense-harness/src/kit.ts"), "utf8");
+	const kit = readFileSync(join(here, "extensions/finisher/src/kit.ts"), "utf8");
 	assert.ok(!kit.includes("learn"), "no lessons channel");
 	assert.ok(!kit.includes("extConfigDialog"));
-	const types = readFileSync(join(here, "extensions/zense-harness/src/types.ts"), "utf8");
+	const types = readFileSync(join(here, "extensions/finisher/src/types.ts"), "utf8");
 	assert.ok(!types.includes("gateEnabled"));
-	const cfg = readFileSync(join(here, "extensions/zense-harness/src/subagent-config.ts"), "utf8");
+	const cfg = readFileSync(join(here, "extensions/finisher/src/subagent-config.ts"), "utf8");
 	assert.ok(!cfg.includes("subagentExtIncludes"), "the include list had no effect once bare boot was gone");
 	assert.ok(!cfg.includes("findProviderExtension"), "the auto-heal path only existed for bare boot");
 });
@@ -50,11 +50,11 @@ test("retired names stay retired and never overlap the live surface", () => {
 });
 
 test("no tool can ask a human: the ask surface is retired and the decision rule replaces it", () => {
-	const tools = readFileSync(join(here, "extensions/zense-harness/src/tools.ts"), "utf8");
+	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
 	assert.ok(!tools.includes("zense_ask"), "the human picker tool is gone");
 	assert.equal(isLiveTool("zense_ask"), false);
 	assert.equal(isRetiredTool("zense_ask"), true);
-	const decisions = readFileSync(join(here, "extensions/zense-harness/src/decisions.ts"), "utf8");
+	const decisions = readFileSync(join(here, "extensions/finisher/src/decisions.ts"), "utf8");
 	assert.match(decisions, /DECISION NEEDED/);
 	assert.match(decisions, /Never stop to wait for an answer/);
 });

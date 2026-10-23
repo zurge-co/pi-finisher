@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLASSIFIER_PREFERENCE, classifyGateway, decideKeep, describeDecision, parsePreference, preferenceRefs } from "../extensions/zense-harness/index.ts";
+import { CLASSIFIER_PREFERENCE, classifyGateway, decideKeep, describeDecision, parsePreference, preferenceRefs } from "../extensions/finisher/index.ts";
 
 const gateway = (prob, opts = {}) => ({
 	available: async () => opts.model ?? { provider: "typesafe", id: "jev-latest" },

@@ -1,5 +1,5 @@
 export const HYGIENE_MAX_LINES = 500;
-export const HYGIENE_EXEMPT = "zense-hygiene-allow";
+export const HYGIENE_EXEMPT = "finisher-hygiene-allow";
 
 export interface HygieneViolation {
 	path: string;

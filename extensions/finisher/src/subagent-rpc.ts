@@ -34,7 +34,7 @@ export const rpcCliPath = (): string => {
 		},
 		(p) => existsSync(p),
 	);
-	if (!found) throw new Error(`zense: could not locate pi's RPC entry point (${RPC_ENTRY_SPEC}) — sub-agents cannot start without it`);
+	if (!found) throw new Error(`finisher: could not locate pi's RPC entry point (${RPC_ENTRY_SPEC}) — sub-agents cannot start without it`);
 	return found;
 };
 
@@ -91,7 +91,7 @@ export const modelLabel = (m: { provider?: string; id?: string } | undefined): s
 
 const writeHeader = (logPath: string, role: string, prompt: string): void => {
 	mkdirSync(dirname(logPath), { recursive: true });
-	writeFileSync(logPath, `$ pi --mode rpc (zense sub-agent ${role})\n--- task ${prompt.length} chars ---\n--- live output ---\n`);
+	writeFileSync(logPath, `$ pi --mode rpc (finisher sub-agent ${role})\n--- task ${prompt.length} chars ---\n--- live output ---\n`);
 };
 
 const TIMED_OUT = Symbol("timeout");
@@ -122,7 +122,7 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 	const client = new RpcClient({
 		cliPath: rpcCliPath(),
 		cwd: opts.cwd,
-		env: { PI_ZENSE_SUBAGENT: "1" },
+		env: { PI_FINISHER_SUBAGENT: "1" },
 		args: opts.cliArgs ?? [],
 		...(wanted.provider ? { provider: wanted.provider } : {}),
 		...(wanted.model ? { model: wanted.model } : {}),

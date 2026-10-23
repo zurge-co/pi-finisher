@@ -12,14 +12,14 @@ import {
 	withoutHandoffKey,
 	handoffRouteNote,
 	HANDOFF_ASK_PROMPT,
-} from "../extensions/zense-harness/index.ts";
-import { ladderPatterns } from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
+import { ladderPatterns } from "../extensions/finisher/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-handoff-model-"));
 
 const writeJson = (cwd, file, cfg) => {
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", file), JSON.stringify(cfg));
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", file), JSON.stringify(cfg));
 };
 
 test("the handoff slot is read from models.json first, then config.json", () => {
@@ -40,8 +40,8 @@ test("a malformed handoff value is ignored instead of crashing the run", () => {
 	assert.equal(readHandoffModel(cwd), undefined);
 	writeJson(cwd, "models.json", { handoff: 42 });
 	assert.equal(readHandoffModel(cwd), undefined);
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "models.json"), "{not json");
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "models.json"), "{not json");
 	assert.equal(readHandoffModel(cwd), undefined, "a corrupt file must not break a sub-agent run");
 });
 

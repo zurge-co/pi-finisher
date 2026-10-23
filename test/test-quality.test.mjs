@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { analyzeTestFile, assertions, formatTestFindings, isTestFile, testBlocks } from "../extensions/zense-harness/index.ts";
+import { analyzeTestFile, assertions, formatTestFindings, isTestFile, testBlocks } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const walk = (dir) =>
@@ -78,7 +78,7 @@ test("every test file is a real file with real content (no placeholders, no empt
 });
 
 test("weak-test detection is not JavaScript-only", async () => {
-	const { analyzeTestFile: analyze, testBlocksFor } = await import("../extensions/zense-harness/index.ts");
+	const { analyzeTestFile: analyze, testBlocksFor } = await import("../extensions/finisher/index.ts");
 	const py = "def test_law():\n    assert clamp(9, 5, 5) == 5\n\ndef test_filler():\n    pass\n";
 	assert.deepEqual(analyze(py, "pkg/x_test.py").map((f) => f.name + ":" + f.kind), ["test_filler:no-assertion"]);
 	const go = "func TestLaw(t *testing.T) {\n\tif x != 5 { t.Fatalf(1) }\n}\nfunc TestFiller(t *testing.T) {\n}\n";
@@ -87,13 +87,13 @@ test("weak-test detection is not JavaScript-only", async () => {
 });
 
 test("test files are recognised across languages, source files never are", async () => {
-	const { isTestFile } = await import("../extensions/zense-harness/index.ts");
+	const { isTestFile } = await import("../extensions/finisher/index.ts");
 	for (const p of ["test/test_foo.py", "pkg/user_test.py", "svc/handler_test.go", "spec/a_spec.rb", "src/FooTest.java"]) assert.equal(isTestFile(p), true, p);
 	for (const p of ["src/app.py", "src/contest.ts", "src/attest.go", "src/latest.ts"]) assert.equal(isTestFile(p), false, p);
 });
 
 test("one entry point decides every rule, so no path can skip the check", async () => {
-	const { reviewWrittenFile, buildFileReviewReport } = await import("../extensions/zense-harness/index.ts");
+	const { reviewWrittenFile, buildFileReviewReport } = await import("../extensions/finisher/index.ts");
 	const comment = reviewWrittenFile("src/app.py", "# note\nx = 1");
 	assert.equal(comment.ok, false);
 	assert.match(buildFileReviewReport(comment), /no comments|comment/i);
@@ -103,11 +103,11 @@ test("one entry point decides every rule, so no path can skip the check", async 
 	assert.equal(reviewWrittenFile("app/engine.py", big).ok, false);
 	const both = reviewWrittenFile("pkg/x_test.py", `${big}\n# note\ndef test_filler():\n    pass\n`);
 	assert.equal(both.violations.length > 0 && both.weakTests.length > 0, true);
-	assert.match(buildFileReviewReport(both), /zense-hygiene-allow/);
+	assert.match(buildFileReviewReport(both), /finisher-hygiene-allow/);
 });
 
 test("writes hidden inside a bash command are found, plain commands are not", async () => {
-	const { commandWritePaths, scriptWrites, stdinTargets } = await import("../extensions/zense-harness/index.ts");
+	const { commandWritePaths, scriptWrites, stdinTargets } = await import("../extensions/finisher/index.ts");
 	assert.deepEqual(commandWritePaths("cat > src/app.py <<EOF\nprint(1)\nEOF"), ["src/app.py"]);
 	assert.deepEqual(commandWritePaths("tee -a pkg/x_test.py >/dev/null"), ["pkg/x_test.py"]);
 	assert.deepEqual(commandWritePaths("git status --short"), []);

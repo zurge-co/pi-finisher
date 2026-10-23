@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
-export const SURFACE_TOOLS = ["zense_goal", "zense_swarm", "zense_steer"] as const;
+export const SURFACE_TOOLS = ["finisher_goal", "finisher_swarm", "finisher_steer"] as const;
 export const RETIRED_TOOLS = ["zense_spec", "zense_adr", "zense_eval", "zense_review", "zense_accept", "zense_discard", "zense_longrun", "zense_ask"] as const;
 export const SURFACE_COMMANDS = ["models"] as const;
 export const RETIRED_COMMANDS = ["approve", "gate", "longrun", "memory", "ext-config-show", "distill", "resume", "status", "accept", "discard", "agents", "fresh-context", "surface"] as const;
@@ -28,7 +28,7 @@ const readJson = (file: string): Record<string, unknown> => {
 };
 
 export const readConfigSurface = (cwd: string): ConfigSurface => {
-	const dir = zenseDir(cwd);
+	const dir = finisherDir(cwd);
 	const models = readJson(join(dir, "models.json"));
 	const config = readJson(join(dir, "config.json"));
 	const rawPriority = Array.isArray(models.priority) ? models.priority : [];
@@ -59,7 +59,7 @@ export const surfaceLine = (cwd: string): string => {
 	const cfg = readConfigSurface(cwd);
 	return [
 		`tools: ${SURFACE_TOOLS.join(", ")}`,
-		`commands: /zense ${SURFACE_COMMANDS.join(" | ")}`,
+		`commands: /finisher ${SURFACE_COMMANDS.join(" | ")}`,
 		`model ladder: ${cfg.priority.length ? cfg.priority.join(" > ") : "(main session model only)"}`,
 		`concurrency: ${cfg.swarmConcurrency ?? "auto (as many slots as configured)"}`,
 		`token/cost ceiling: none${cfg.ignoredKeys.length ? ` (ignored keys: ${cfg.ignoredKeys.join(", ")})` : ""}`,

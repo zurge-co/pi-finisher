@@ -51,4 +51,4 @@ export interface LongRunRef {
 	activePhase?: string;
 	awaitingFinalApply?: boolean; 	auto?: boolean;              	autoFixRounds?: number;      }
 
-export const zenseDir = (cwd: string) => join(cwd, ".zense");
+export const finisherDir = (cwd: string) => join(cwd, ".finisher");

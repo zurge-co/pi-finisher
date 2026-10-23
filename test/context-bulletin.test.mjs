@@ -6,11 +6,11 @@ import {
 	buildReconcileBulletin,
 	resetCycleState,
 	takeContextBulletin,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 test("buildAcceptBulletin: version/title/amended complete + mentions cycle reset + spec v1 | ≤2 lines", () => {
 	const plain = buildAcceptBulletin(2, "Cycle closure", 0);
-	assert.ok(plain.startsWith("[zense]"));
+	assert.ok(plain.startsWith("[finisher]"));
 	assert.ok(plain.includes("v2") && plain.includes("Cycle closure"));
 	assert.ok(plain.includes("cycle reset") && plain.includes("spec v1"));
 	assert.ok(!plain.includes("amended"), "no amendments → must not mention them");

@@ -1,11 +1,11 @@
 import { gitOk } from "./worktree.ts";
 import { type Spec } from "./types.ts";
 
-export const NOT_ZENSE = ":!.zense";
+export const NOT_ZENSE = ":!.finisher";
 
 export const sanitizeSubject = (title: string): string => {
 	const oneLine = (title || "").replace(/\s+/g, " ").trim();
-	if (!oneLine) return "zense impl";
+	if (!oneLine) return "finisher impl";
 	return oneLine.length <= 72 ? oneLine : oneLine.slice(0, 71).trimEnd() + "…";
 };
 
@@ -31,9 +31,9 @@ export const changePathsSince = (cwd: string, baseline?: string): string[] => {
 };
 
 export const composeCommitMessage = (spec: Spec): string => {
-	const subject = sanitizeSubject(spec.title || `zense impl v${spec.version}`);
+	const subject = sanitizeSubject(spec.title || `finisher impl v${spec.version}`);
 	const body = spec.intent?.trim() ? [spec.intent.trim()] : [];
-	body.push(`zense spec v${spec.version}`);
+	body.push(`finisher spec v${spec.version}`);
 	return `${subject}\n\n${body.join("\n\n")}\n`;
 };
 

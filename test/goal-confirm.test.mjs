@@ -7,7 +7,7 @@ import {
 	goalCases,
 	goalConfirmModeLine,
 	goalGate,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const goal = { goal: "ship the swarm" };
 

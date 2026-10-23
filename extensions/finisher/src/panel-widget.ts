@@ -30,7 +30,7 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		const text = [line, ...live].join("\n");
 		if (text === lastWidget) return;
 		lastWidget = text;
-		ctx.ui.setWidget("zense", text.split("\n"));
+		ctx.ui.setWidget("finisher", text.split("\n"));
 	};
 
 	const ticker: { timer?: ReturnType<typeof setInterval>; ctx?: ExtensionContext; period?: number } = {};

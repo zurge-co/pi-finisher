@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { applyFullscreenDefault } from "../extensions/zense-harness/index.ts";
+import { applyFullscreenDefault } from "../extensions/finisher/index.ts";
 
 test("absent tuiMode → set fullscreen while preserving existing keys", () => {
 	const r = applyFullscreenDefault(JSON.stringify({ theme: "dark", packages: ["npm:pi-zense"] }));

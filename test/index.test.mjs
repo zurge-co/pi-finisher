@@ -3,7 +3,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import test from "node:test";
 import {
 	panelize,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 
 

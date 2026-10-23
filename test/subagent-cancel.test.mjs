@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { raceTimeout, buildRpcSubagentArgs, withZenseToolGlob, SUBAGENT_EXCLUDE_TOOLS } from "../extensions/zense-harness/index.ts";
+import { raceTimeout, buildRpcSubagentArgs, withZenseToolGlob, SUBAGENT_EXCLUDE_TOOLS } from "../extensions/finisher/index.ts";
 
 const dir = () => mkdtempSync(join(tmpdir(), "zense-cancel-"));
 

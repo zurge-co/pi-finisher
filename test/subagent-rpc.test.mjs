@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
 	buildRpcSubagentArgs,
 	withZenseToolGlob,
-	ZENSE_TOOL_GLOB,
+	FINISHER_TOOL_GLOB,
 	finalTextFromMessages,
 	modelLabel,
 	splitModelPattern,
@@ -13,7 +13,7 @@ import {
 	textFromEvent,
 	toolLineFromEvent,
 	isSettled,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 
@@ -23,23 +23,23 @@ test("every role boots with the zense tools excluded, so a sub-agent can never s
 		const at = args.indexOf("--exclude-tools");
 		assert.ok(at >= 0, `${role} must exclude tools`);
 		const list = args[at + 1].split(",");
-		assert.equal(list[0], ZENSE_TOOL_GLOB, `${role} must exclude the harness tools first`);
+		assert.equal(list[0], FINISHER_TOOL_GLOB, `${role} must exclude the harness tools first`);
 		for (const t of tools) assert.ok(list.includes(t), `${role} must still exclude ${t}`);
-		assert.equal(list.filter((t) => t === ZENSE_TOOL_GLOB).length, 1, `${role} must not duplicate the glob`);
+		assert.equal(list.filter((t) => t === FINISHER_TOOL_GLOB).length, 1, `${role} must not duplicate the glob`);
 	}
 });
 
 test("adding the glob is idempotent and never drops a role's own exclusions", () => {
-	assert.deepEqual(withZenseToolGlob(undefined), [ZENSE_TOOL_GLOB]);
-	assert.deepEqual(withZenseToolGlob([]), [ZENSE_TOOL_GLOB]);
-	assert.deepEqual(withZenseToolGlob([ZENSE_TOOL_GLOB]), [ZENSE_TOOL_GLOB]);
-	assert.deepEqual(withZenseToolGlob(["write", ZENSE_TOOL_GLOB, "edit"]), [ZENSE_TOOL_GLOB, "write", "edit"]);
+	assert.deepEqual(withZenseToolGlob(undefined), [FINISHER_TOOL_GLOB]);
+	assert.deepEqual(withZenseToolGlob([]), [FINISHER_TOOL_GLOB]);
+	assert.deepEqual(withZenseToolGlob([FINISHER_TOOL_GLOB]), [FINISHER_TOOL_GLOB]);
+	assert.deepEqual(withZenseToolGlob(["write", FINISHER_TOOL_GLOB, "edit"]), [FINISHER_TOOL_GLOB, "write", "edit"]);
 });
 
 test("the rpc boot keeps a session so the run can be revisited, and never a hand-rolled spawn", () => {
 	const args = buildRpcSubagentArgs(["write"], "swarm");
 	assert.ok(!args.includes("--no-session"), "a sub-agent keeps its own session, so it can be resumed later");
-	const src = readFileSync(join(here, "extensions/zense-harness/src/subagent-rpc.ts"), "utf8");
+	const src = readFileSync(join(here, "extensions/finisher/src/subagent-rpc.ts"), "utf8");
 	assert.match(src, /RpcClient/, "the runner must go through RpcClient, not a hand-rolled spawn");
 	assert.ok(!/spawn\(/.test(src), "no hand-rolled process spawn is left in the rpc runner");
 });

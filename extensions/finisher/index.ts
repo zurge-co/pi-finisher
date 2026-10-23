@@ -8,7 +8,7 @@ import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulleti
 import { gitOk } from "./src/worktree.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
 import { createStateBox } from "./src/state-box.ts";
-import { zenseDir, type State } from "./src/types.ts";
+import { finisherDir, type State } from "./src/types.ts";
 import { type HarnessContext } from "./src/kit.ts";
 import { createGui } from "./src/gui.ts";
 import { createPanelWidget } from "./src/panel-widget.ts";
@@ -59,7 +59,7 @@ const registerToolTimeoutHook = (pi: ExtensionAPI): void => {
 };
 
 export default function (pi: ExtensionAPI) {
-	if (process.env.PI_ZENSE_SUBAGENT === "1") {
+	if (process.env.PI_FINISHER_SUBAGENT === "1") {
 		registerToolTimeoutHook(pi);
 		return;
 	}
@@ -68,7 +68,7 @@ export default function (pi: ExtensionAPI) {
 
 	const box = createStateBox(freshState());
 
-	const persist = () => pi.appendEntry("zense-state", box.get());
+	const persist = () => pi.appendEntry("finisher-state", box.get());
 
 	const flag = (msg: string, ctx: ExtensionContext): void => {
 		box.get().trajectoryFlags.push(msg);
@@ -76,7 +76,7 @@ export default function (pi: ExtensionAPI) {
 
 	const escalate = (kind: string, detail: string, ctx: ExtensionContext): void => {
 		box.get().escalations.push({ kind, detail, at: Date.now() });
-		if (ctx.hasUI) ctx.ui.notify(`🚨 zense escalation (${kind}): ${detail}`, "warning");
+		if (ctx.hasUI) ctx.ui.notify(`🚨 finisher escalation (${kind}): ${detail}`, "warning");
 	};
 
 	const kit = {
@@ -93,7 +93,7 @@ export default function (pi: ExtensionAPI) {
 	kit.OVERLAY_LG = { width: "92%", minWidth: 60, maxHeight: "85%" };
 	kit.OVERLAY_MD = { width: "80%", minWidth: 56, maxHeight: "80%" };
 	kit.OVERLAY_XL = { width: "95%", minWidth: 60, maxHeight: "90%" };
-	kit.REJECT_WITH_REASON = "__zense_reject_reason__";
+	kit.REJECT_WITH_REASON = "__finisher_reject_reason__";
 
 	const gui = createGui(kit);
 	Object.assign(kit, gui);
@@ -120,7 +120,7 @@ export default function (pi: ExtensionAPI) {
 			mkdirSync(dirname(settingsPath), { recursive: true });
 			writeFileSync(settingsPath, merged.text);
 			ctx.ui.notify(
-				"🖥 zense: fullscreen TUI mode is now the default in ~/.pi/agent/settings.json — takes effect on the next pi launch (this session: /settings → TUI mode; to opt out: change tuiMode in that file)",
+				"🖥 finisher: fullscreen TUI mode is now the default in ~/.pi/agent/settings.json — takes effect on the next pi launch (this session: /settings → TUI mode; to opt out: change tuiMode in that file)",
 				"info",
 			);
 		} catch {
@@ -139,7 +139,7 @@ export default function (pi: ExtensionAPI) {
 			kit.escGuardUnsubscribe = ctx.ui.onTerminalInput(kit.escGuard.handleInput);
 		}
 		for (const e of ctx.sessionManager.getEntries())
-			if (e.type === "custom" && e.customType === "zense-state")
+			if (e.type === "custom" && e.customType === "finisher-state")
 				box.set({ ...freshState(), ...(e.data as State) });
 		kit.updateWidget(ctx);
 	});
@@ -184,7 +184,7 @@ export default function (pi: ExtensionAPI) {
 		const summary = buildFreshSummary(readHandoff(ctx.cwd));
 		box.get().freshResetAt = Date.now();
 		persist();
-		return { entries: [freshCompactionEntry(summary || "[zense fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.")] };
+		return { entries: [freshCompactionEntry(summary || "[finisher fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.")] };
 	});
 
 	pi.on("agent_end", async (ev, ctx) => {

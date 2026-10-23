@@ -65,7 +65,7 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 			run.streamTail = undefined;
 			if (r.usedModel) run.model = r.usedModel;
 			if (modelPattern && r.usedModel && !modelMatchesPattern(r.usedModel, modelPattern)) {
-				ctx.ui.notify(`⚠ sub-agent model mismatch: ${role} — config asked for "${modelPattern}" but actually ran "${r.usedModel}" (pi fallback? check .zense/models.json / /zense models)`, "warning");
+				ctx.ui.notify(`⚠ sub-agent model mismatch: ${role} — config asked for "${modelPattern}" but actually ran "${r.usedModel}" (pi fallback? check .finisher/models.json / /finisher models)`, "warning");
 			}
 			if (r.ok && r.output.trim()) {
 				const captured = parseDecisions(role, r.output);

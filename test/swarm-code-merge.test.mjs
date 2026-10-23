@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findOverlaps, mergeOrder, mergeReport, mergeSignature, planMerge, sliceViolations } from "../extensions/zense-harness/index.ts";
+import { findOverlaps, mergeOrder, mergeReport, mergeSignature, planMerge, sliceViolations } from "../extensions/finisher/index.ts";
 
 const out = (id, paths, ok = true) => ({ id, ok, paths });
 

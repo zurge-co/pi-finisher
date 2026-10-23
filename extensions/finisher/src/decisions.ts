@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
 export const DECISION_MARKER = "DECISION NEEDED:";
 export const DECISIONS_FILE = "decisions.md";
@@ -13,7 +13,7 @@ export interface AgentDecision {
 	assumption: string;
 }
 
-export const decisionsPath = (cwd: string): string => join(zenseDir(cwd), DECISIONS_FILE);
+export const decisionsPath = (cwd: string): string => join(finisherDir(cwd), DECISIONS_FILE);
 
 export const parseDecisions = (from: string, output: string, at = Date.now()): AgentDecision[] => {
 	const out: AgentDecision[] = [];
@@ -55,7 +55,7 @@ export const renderDecisions = (items: AgentDecision[]): string => {
 export const writeDecisionsFile = (cwd: string, goal: string, items: AgentDecision[]): string | undefined => {
 	if (!items.length) return undefined;
 	try {
-		mkdirSync(zenseDir(cwd), { recursive: true });
+		mkdirSync(finisherDir(cwd), { recursive: true });
 		const p = decisionsPath(cwd);
 		const body = [`# decisions — ${goal.slice(0, 120)}`, "", ...items.map((d) => `- [${d.from}] ${d.question}${d.assumption ? ` → ${d.assumption}` : ""} (${new Date(d.at).toISOString()})`)].join("\n");
 		appendFileSync(p, `\n${body}\n`);

@@ -10,7 +10,7 @@ import { buildCodeWorkerPrompt, detectTestCommand, mergeReport, parseWorkerFiles
 import { buildFanOutPrompt, runSwarm, type FanOutArgs, type SwarmSlot, type SwarmTask } from "./swarm.ts";
 import { type State } from "./types.ts";
 import { excludeFromGitStatus, gitOk, linkDeps } from "./worktree.ts";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 import { mkdirSync } from "node:fs";
 
 export const createCodeSwarm = (ctx: HarnessContext) => {
@@ -27,7 +27,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		mkdirSync(dirname(dir), { recursive: true });
 		const have = gitIn(repo, ["rev-parse", "--verify", "-q", branch]).ok;
 		const add = have ? gitIn(repo, ["worktree", "add", dir, branch]) : gitIn(repo, ["worktree", "add", dir, "-b", branch]);
-		if (add.ok) excludeFromGitStatus(repo, join(zenseDir(repo), "worktree"));
+		if (add.ok) excludeFromGitStatus(repo, join(finisherDir(repo), "worktree"));
 		if (add.ok) linkDeps(repo, dir);
 		return add.ok;
 	};
@@ -69,9 +69,9 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 	): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown>; isError?: boolean }> => {
 		let plans: SlicePlan[];
 		try {
-			plans = planSlices(slices, join(zenseDir(ctx.cwd), "worktree", "swarm"), new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
+			plans = planSlices(slices, join(finisherDir(ctx.cwd), "worktree", "swarm"), new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
 		} catch (e) {
-			return { content: [{ type: "text", text: `zense_swarm code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
+			return { content: [{ type: "text", text: `finisher_swarm code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
 		}
 		const outcomes: SliceOutcome[] = [];
 		const byPlan = new Map(plans.map((pl) => [pl.id, pl]));
@@ -152,7 +152,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		if (failed.length) lines.push(`failed coder(s): ${failed.map((f) => f.id).join(", ")}`);
 		if (failedApplies.length) lines.push(`apply failed (resolve by hand): ${failedApplies.join(" · ")}`);
 		if (mergePlan.overlaps.length) lines.push("overlapping slices were NOT merged — split the work so each file has one owner, or merge those by hand");
-		lines.push("leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under .zense/worktree/swarm/");
+		lines.push("leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under .finisher/worktree/swarm/");
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
 			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, results },

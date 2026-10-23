@@ -12,7 +12,7 @@ import {
 	readFreshContextConfig,
 	shouldReset,
 	writeFreshContextConfig,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-fresh-"));
 
@@ -34,8 +34,8 @@ test("the switch is a real off: it survives the round trip and wins over the def
 
 test("a broken config file never blocks the run — it falls back to the default and says so", () => {
 	const cwd = tmpRepo();
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "config.json"), "{ this is not json");
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "config.json"), "{ this is not json");
 	const cfg = readFreshContextConfig(cwd);
 	assert.equal(cfg.enabled, true);
 	assert.equal(cfg.source, "broken-config");
@@ -87,7 +87,7 @@ test("the status line tells the human both facts they need: the switch and the s
 test("an empty stack is the normal case under a strict classifier, and it still resets cleanly", () => {
 	const empty = buildFreshSummary([]);
 	assert.equal(empty, "");
-	const directive = empty || "[zense fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.";
+	const directive = empty || "[finisher fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.";
 	const entry = freshCompactionEntry(directive);
 	assert.equal(entry.firstKeptEntryId, null, "an empty stack must still retain nothing");
 	assert.ok(entry.summary.length > 0, "the next task still gets one line of orientation");

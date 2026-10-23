@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGoalToolText, buildReport, freshGoalRun, goalKey, judgeCase, nextGoalDriverStep, resumeOrStart } from "../extensions/zense-harness/index.ts";
+import { buildGoalToolText, buildReport, freshGoalRun, goalKey, judgeCase, nextGoalDriverStep, resumeOrStart } from "../extensions/finisher/index.ts";
 
 const pass = (id) => judgeCase(id, `$ node -e "run()"\nexit code 0\nVERDICT: PASS`);
 const fail = (id) => judgeCase(id, `$ node -e "run()"\nexit code 1\nVERDICT: FAIL`);

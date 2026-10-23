@@ -1,11 +1,11 @@
 # AGENTS.md — working effectively in this repo
 
-pi-zense: a **goal-confirm autonomous runner** shipped as a **pi extension** (`extensions/zense-harness/`) plus a dark theme (`themes/`). Confirm the goal once; the harness then fans work out over the model ladder, judges every case from executed evidence, drives fix→verify rounds, and reports once. Tests are plain `node:test` files importing the extension.
+pi-finisher: a **goal-confirm autonomous runner** shipped as a **pi extension** (`extensions/finisher/`) plus a dark theme (`themes/`). Confirm the goal once; the harness then fans work out over the model ladder, judges every case from executed evidence, drives fix→verify rounds, and reports once. Tests are plain `node:test` files importing the extension.
 
 ## Non-negotiable code rules
 
-1. **No comments in code.** No `//` and no `/* */` in `.ts`/`.mjs`/`.sh`. Names and structure carry the intent. The only exception is a load-bearing reason that carries the marker `zense-hygiene-allow: <why>` — a bare marker is itself a violation.
-2. **Every file stays at or under 500 lines.** Split instead of growing. `extensions/zense-harness/index.ts` is a thin entry point (hooks + wiring) and must stay well under that.
+1. **No comments in code.** No `//` and no `/* */` in `.ts`/`.mjs`/`.sh`. Names and structure carry the intent. The only exception is a load-bearing reason that carries the marker `finisher-hygiene-allow: <why>` — a bare marker is itself a violation.
+2. **Every file stays at or under 500 lines.** Split instead of growing. `extensions/finisher/index.ts` is a thin entry point (hooks + wiring) and must stay well under that.
 3. **Tests are proof, not coverage.** Write the few that establish a real property — a bound holds for every input, an ordering is total, a boundary is exact, an invariant survives. A test that would still pass with the logic broken is worse than no test. Do not add ceremony assertions to raise the count.
 4. After any edit: `npm run typecheck && npm test`. Both are fast. `test/module-budget.test.mjs` and `test/no-comments.test.mjs` enforce rules 1–2 on the real tree.
 
@@ -25,31 +25,31 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 
 1. **Do not read `index.ts` end-to-end** — it is wiring. Find the concern in the module map and read that one file; every module is sized to fit in a single read.
 2. **Find a symbol by grepping, then read only the owning module:**
-   `grep -rn "^export .*<name>" extensions/zense-harness/src extensions/zense-harness/index.ts`
-3. **Tests import named exports from the entry point** (`../extensions/zense-harness/index.ts`), which re-exports all of `src/`. Add new helpers to the right `src/` module and they are importable from `index.ts` automatically.
+   `grep -rn "^export .*<name>" extensions/finisher/src extensions/finisher/index.ts`
+3. **Tests import named exports from the entry point** (`../extensions/finisher/index.ts`), which re-exports all of `src/`. Add new helpers to the right `src/` module and they are importable from `index.ts` automatically.
 4. Source-guard tests must point at the file that actually owns the code (they were retargeted from `index.ts` to `src/gui.ts`, `src/tools.ts`, `src/commands.ts`, `src/panel-widget.ts`, `src/subagent-rpc.ts` in the splits) — never re-broaden them to `index.ts`.
 
 ## Repo map
 
 | Path | Contents |
 | --- | --- |
-| `extensions/zense-harness/index.ts` | Entry point: the `HarnessContext` wiring, session hooks, the tool-timeout `tool_call` hook, hygiene `tool_result` check |
-| `extensions/zense-harness/src/` | All helpers — one concern per file (map below) |
+| `extensions/finisher/index.ts` | Entry point: the `HarnessContext` wiring, session hooks, the tool-timeout `tool_call` hook, hygiene `tool_result` check |
+| `extensions/finisher/src/` | All helpers — one concern per file (map below) |
 | `test/*.test.mjs` | `node:test` suites; named imports from the entry point; a few read module source for regression guards |
 | `themes/` | Zense dark theme |
 | `scripts/release.sh` | Release script (`npm run release`) |
 
-## `extensions/zense-harness/src/` module map
+## `extensions/finisher/src/` module map
 
 | Module | What lives here |
 | --- | --- |
-| `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`, `Tracker`) + `zenseDir` |
+| `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`, `Tracker`) + `finisherDir` |
 | `kit.ts` | `HarnessContext` — the shared plumbing type every kit receives |
 | `state-box.ts` | Mutable state holder (`createStateBox`) so kits see one live `State` |
 | `panel-widget.ts` | The live widget: `updateWidget` (status line + one row per running agent), `rescheduleTicker` |
 | `agent-panel.ts` | Pure panel rendering: `panelRows`/`panelLines`/`panelTickMs`, `clip`, `elapsedLabel`, `streamTail` |
 | `subagent-launch.ts` | `launchSubagent`: one RPC sub-agent per role (timeout, cancel, live tail, model override) + handoff capture + provider-missing auto-heal |
-| `subagent-runner.ts` | `runSubagent`: spawn `pi --mode json`, stream/kill/timeout, JSONL log under `.zense/subagents/` (+ `fmtTok`) |
+| `subagent-runner.ts` | `runSubagent`: spawn `pi --mode json`, stream/kill/timeout, JSONL log under `.finisher/subagents/` (+ `fmtTok`) |
 | `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes, provider diagnosis |
 | `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
 | `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `pickSlot`, `runSwarm` retry/failover |
@@ -60,15 +60,15 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, the one-shot confirm prompt) |
 | `code-hygiene.ts` | Comment/length scanner (string- and regex-aware) + the rule text given to agents |
 | `hygiene-hook.ts` | The `tool_result` enforcement hook |
-| `gui.ts` | TUI dialogs: `zenseCustom`, overlay sizes, `zensePick`, ext-config checkbox, clarify questions |
+| `gui.ts` | TUI dialogs: `finisherCustom`, overlay sizes, `finisherPick`, ext-config checkbox, clarify questions |
 | `viewers.ts` | Live sub-agent tail viewer + `openAgentsViewer` |
-| `tools.ts` | `zense_ask`, `zense_swarm`, `zense_goal` registration |
-| `commands.ts` | `/zense …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
+| `tools.ts` | `finisher_ask`, `finisher_swarm`, `finisher_goal` registration |
+| `commands.ts` | `/finisher …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
 | `spec-flow.ts` | `commitSpec`, `approveCurrentSpec`, pending-apply accept |
 | `spec-changes.ts` | Spec diff → change summary, spec markdown, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
 | `worktree.ts` | Bounded `gitOk`, `excludeFromGitStatus`, `linkDeps` (slice deps), `excludeInWorktree` |
 | `pending-apply.ts` | Cycle bookkeeping: `changePathsSince`, `discardSinceBaseline`, `commitWorkingTree` |
-| `resume.ts` | `/zense resume` disk discovery |
+| `resume.ts` | `/finisher resume` disk discovery |
 | `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |
 | `evidence.ts` | Check probes, repo facts, git change summary, `lintSpecChecks` |
 | `eval-review.ts` | Grader/reviewer contracts (still used by the verify path's prompts) |
@@ -76,7 +76,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `models.ts` | Per-role model config, picker choices, `panelize` |
 | `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
 | `decompose.ts` | Planner subtasks / draft merge (kept for the compile path) |
-| `ask.ts` | `zense_ask` policy scanning + answer formatting |
+| `ask.ts` | `finisher_ask` policy scanning + answer formatting |
 | `handoff-stack.ts` | The cross-task knowledge stack: what survives a context reset (dedupe, cap, one-line condensation) |
 | `handoff-classify.ts` | The keep/drop verdict (classifier or chat ask) |
 | `handoff-model.ts` | The `handoff` ladder slot: read it, route it to classify() or an ask |
@@ -85,7 +85,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `fresh-context.ts` | The task-boundary reset: config switch, retain-none summary, status line |
 | `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort |
 | `subagent-log.ts` | Sub-agent log paths + `fmtTok` |
-| `ladder-model.ts` | The `zense/auto` virtual model that routes each request across the priority ladder |
+| `ladder-model.ts` | The `finisher/auto` virtual model that routes each request across the priority ladder |
 | `timeout.ts` | The timeout rule: bash deadline injection, `withTimeout`/`settleWithTimeout`, `readToolTimeout` |
 
 ## Commands

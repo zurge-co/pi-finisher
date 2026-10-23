@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { HYGIENE_MAX_LINES, countLines } from "../extensions/zense-harness/index.ts";
+import { HYGIENE_MAX_LINES, countLines } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const walk = (dir) =>
@@ -21,9 +21,9 @@ test("every extension source file stays under the read-in-one-go budget", () => 
 });
 
 test("the entry point is only wiring: no file carries the whole harness", () => {
-	const index = countLines(readFileSync(join(here, "extensions/zense-harness/index.ts"), "utf8"));
+	const index = countLines(readFileSync(join(here, "extensions/finisher/index.ts"), "utf8"));
 	assert.ok(index < 500, `index.ts is ${index} lines — it must stay a thin entry point`);
-	const src = readdirSync(join(here, "extensions/zense-harness/src")).filter((f) => f.endsWith(".ts"));
+	const src = readdirSync(join(here, "extensions/finisher/src")).filter((f) => f.endsWith(".ts"));
 	assert.ok(src.length >= 20, `the harness must be split across many modules, found ${src.length}`);
 });
 

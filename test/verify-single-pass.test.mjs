@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildFanOutPrompt } from "../extensions/zense-harness/index.ts";
+import { buildFanOutPrompt } from "../extensions/finisher/index.ts";
 import {
 	buildHumanTestNote,
 	buildReplanPrompt,
@@ -12,7 +12,7 @@ import {
 	judgeCase,
 	MAX_LOOP_BATCHES,
 	renderVerifyReport,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const pass = (id) => judgeCase(id, `$ node -e "run()"\nexit code 0\nVERDICT: PASS`);
@@ -20,7 +20,7 @@ const fail = (id) => judgeCase(id, `$ node -e "run()"\nexit code 1\nVERDICT: FAI
 const unverified = (id) => judgeCase(id, "VERDICT: UNVERIFIED — needs a browser");
 
 test("a single verification pass decides the whole run — there is no per-round retry machine", () => {
-	const src = readFileSync(join(here, "extensions/zense-harness/src/verify-loop.ts"), "utf8");
+	const src = readFileSync(join(here, "extensions/finisher/src/verify-loop.ts"), "utf8");
 	for (const gone of ["MAX_VERIFY_ROUNDS", "nextVerifyRound", "advanceLoop", "caseRounds"]) assert.ok(!src.includes(gone), `${gone} must be gone`);
 	assert.match(src, /decideOnce/);
 });

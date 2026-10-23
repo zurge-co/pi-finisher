@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DefaultPackageManager, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
 export const SUBAGENT_ROLES = ["swarm", "verifier"] as const;
 export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
@@ -29,7 +29,7 @@ export const subagentTimeout = (role: string, cwd?: string, fallbackCwd?: string
 	for (const dir of [cwd, fallbackCwd]) {
 		if (!dir) continue;
 		try {
-			const cfgPath = join(zenseDir(dir), "config.json");
+			const cfgPath = join(finisherDir(dir), "config.json");
 			if (!existsSync(cfgPath)) continue;
 			const cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as { subagentTimeoutMs?: Record<string, number> };
 			const v = cfg.subagentTimeoutMs?.[role] ?? cfg.subagentTimeoutMs?.default;
@@ -84,20 +84,20 @@ export const diagnoseProviderMissing = (
 export const buildProviderMissingGuidance = (role: string, providerId: string): string =>
 	[
 		`provider "${providerId}" is unavailable in the sub-agent (${role}) — that provider is served by an extension that is not installed or not enabled`,
-		`fix: install/enable the extension providing "${providerId}", or change this role's model with /zense models`,
+		`fix: install/enable the extension providing "${providerId}", or change this role's model with /finisher models`,
 		`if it is installed and enabled, suspect auth: pi login ${providerId} or set the provider's API-key env var`,
 	].join("\n");
 
-export const ZENSE_TOOL_GLOB = "zense_*";
+export const FINISHER_TOOL_GLOB = "finisher_*";
 
 export const withZenseToolGlob = (excludeTools?: string[]): string[] => {
-	const base = (excludeTools ?? []).filter((t) => t !== ZENSE_TOOL_GLOB);
-	return [ZENSE_TOOL_GLOB, ...base];
+	const base = (excludeTools ?? []).filter((t) => t !== FINISHER_TOOL_GLOB);
+	return [FINISHER_TOOL_GLOB, ...base];
 };
 
 export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {
 	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : undefined);
-	const argv = ["PI_ZENSE_SUBAGENT=1", "pi", "--mode", "json"];
+	const argv = ["PI_FINISHER_SUBAGENT=1", "pi", "--mode", "json"];
 	if (flags?.length) argv.push(...flags);
 	if (excludeTools?.length) argv.push("--exclude-tools", withZenseToolGlob(excludeTools).join(","));
 	if (modelPattern) argv.push("--model", modelPattern);

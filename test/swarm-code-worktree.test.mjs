@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildCodeWorkerPrompt, planSlices, scopesOverlap } from "../extensions/zense-harness/index.ts";
+import { buildCodeWorkerPrompt, planSlices, scopesOverlap } from "../extensions/finisher/index.ts";
 
 const slice = (id, scope, instruction = "do it") => ({ id, instruction, ...(scope ? { scope } : {}) });
 
@@ -23,7 +23,7 @@ test("a slice gets exactly one worktree and one branch, and no two slices share 
 	for (const plans1 of plans) {
 		assert.equal(new Set(plans1.map((p) => p.worktreeDir)).size, plans1.length);
 		assert.equal(new Set(plans1.map((p) => p.branch)).size, plans1.length);
-		assert.ok(plans1.every((p) => p.branch.startsWith("zense/swarm/r1/")));
+		assert.ok(plans1.every((p) => p.branch.startsWith("finisher/swarm/r1/")));
 		assert.ok(plans1.every((p) => p.worktreeDir.endsWith(`/${p.id}`)));
 	}
 });

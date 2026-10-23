@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir } from "./types.ts";
+import { finisherDir } from "./types.ts";
 
 export const SWARM_SLOT_KEYS = ["priority1", "priority2", "priority3", "priority4", "priority5"] as const;
 export const SWARM_DEFAULT_CONCURRENCY = 5;
@@ -83,7 +83,7 @@ const readJsonObject = (file: string): Record<string, unknown> => {
 	return {};
 };
 
-const readZenseJson = (cwd: string, name: string): Record<string, unknown> => readJsonObject(join(zenseDir(cwd), name));
+const readZenseJson = (cwd: string, name: string): Record<string, unknown> => readJsonObject(join(finisherDir(cwd), name));
 
 export const readModelLadder = (cwd: string): string[] =>
 	[...ladderPatterns(readZenseJson(cwd, "models.json")), ...ladderPatterns(readZenseJson(cwd, "config.json"))].filter((m, i, all) => all.indexOf(m) === i).slice(0, SWARM_LADDER_MAX);
@@ -196,9 +196,9 @@ export const fanOutPrompt = (instruction: string, taskId: string): string =>
 	].join("\n");
 
 export const SWARM_ROUTING_GUIDELINE = [
-	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call zense_swarm instead of serialising the work through yourself.",
-	"The swarm runs the configured model ladder (priority1..priority5 in .zense/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
-	"A goal is only done when zense_swarm verify returns VERDICT: PASS for it; on FAIL keep fixing the real cause and verify again, reporting only at the end.",
+	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call finisher_swarm instead of serialising the work through yourself.",
+	"The swarm runs the configured model ladder (priority1..priority5 in .finisher/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
+	"A goal is only done when finisher_swarm verify returns VERDICT: PASS for it; on FAIL keep fixing the real cause and verify again, reporting only at the end.",
 ].join("\n");
 
 export interface FanOutArgs {

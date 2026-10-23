@@ -12,13 +12,13 @@ import {
 	registerLadderModel,
 	ladderRoutable,
 	splitPattern,
-} from "../extensions/zense-harness/index.ts";
+} from "../extensions/finisher/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-ladder-"));
 
 const writeModels = (cwd, cfg) => {
-	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "models.json"), JSON.stringify(cfg));
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	writeFileSync(join(cwd, ".finisher", "models.json"), JSON.stringify(cfg));
 };
 
 test("a pattern splits into provider/model, and a thinking suffix is recognised only when it is a real level", () => {
@@ -68,7 +68,7 @@ test("the virtual model is registered even with no ladder, because it is the rou
 	assert.equal(registerLadderModel({ register: (m) => registered.push(m), readLadder: () => ladderFromConfig(withLadder) }), true);
 	assert.equal(registered[0].provider, LADDER_PROVIDER);
 	assert.equal(registered[0].id, LADDER_MODEL_ID);
-	assert.match(ladderLabel(["a/one"]), /zense\/auto → a\/one/);
+	assert.match(ladderLabel(["a/one"]), /finisher\/auto → a\/one/);
 	assert.match(ladderLabel([]), /not registered/);
 });
 
