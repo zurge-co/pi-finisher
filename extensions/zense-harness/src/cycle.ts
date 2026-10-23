@@ -36,6 +36,5 @@ export const freshState = (): State => ({
 	tokensUsed: 0,
 	escalations: [],
 	trajectoryFlags: [],
-	gateEnabled: true,
 	subagentRuns: [],
 });

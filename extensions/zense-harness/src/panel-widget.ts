@@ -1,12 +1,11 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fmtTok } from "./subagent-log.ts";
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./agent-panel.ts";
-import { type Learn, type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { type State, type SubagentRun } from "./types.ts";
 
 export const createPanelWidget = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const learn = ctx.learn;
 	const persist = ctx.persist;
 	const pi = ctx.pi;
 

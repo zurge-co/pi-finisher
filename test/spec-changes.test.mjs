@@ -208,13 +208,13 @@ test("sameGoalLines: whitespace/punctuation/order-insensitive; two empty lists a
 	assert.equal(sameGoalLines({ intent: "" }, { crossCheck: [] }), false);
 });
 
-test("decideSpecApproval: tracker > gate-off > goals-unchanged > ask; no UI stays unsigned", () => {
-	assert.deepEqual(decideSpecApproval({ signMode: "auto", gateEnabled: true, goalsUnchanged: false, hasUI: true, tui: true }), { kind: "auto", reason: "tracker" });
-	assert.deepEqual(decideSpecApproval({ gateEnabled: false, goalsUnchanged: false, hasUI: false, tui: false }), { kind: "auto", reason: "gate-off" });
-	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: true, hasUI: true, tui: true }), { kind: "auto", reason: "goals-unchanged" });
-	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: false, hasUI: true, tui: true }), { kind: "ask", mode: "tui" });
-	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: false, hasUI: true, tui: false }), { kind: "ask", mode: "select" });
-	assert.deepEqual(decideSpecApproval({ gateEnabled: true, goalsUnchanged: false, hasUI: false, tui: false }), { kind: "unsigned", reason: "no-ui" });
+test("decideSpecApproval: tracker > goals-unchanged > ask; no UI stays unsigned", () => {
+	assert.deepEqual(decideSpecApproval({ signMode: "auto", goalsUnchanged: false, hasUI: true, tui: true }), { kind: "auto", reason: "tracker" });
+	assert.deepEqual(decideSpecApproval({ goalsUnchanged: true, hasUI: true, tui: true }), { kind: "auto", reason: "goals-unchanged" });
+	assert.deepEqual(decideSpecApproval({ goalsUnchanged: false, hasUI: true, tui: true }), { kind: "ask", mode: "tui" });
+	assert.deepEqual(decideSpecApproval({ goalsUnchanged: false, hasUI: true, tui: false }), { kind: "ask", mode: "select" });
+	assert.deepEqual(decideSpecApproval({ goalsUnchanged: false, hasUI: false, tui: false }), { kind: "unsigned", reason: "no-ui" });
+	assert.ok(!("gateEnabled" in ({ goalsUnchanged: false, hasUI: true, tui: true })), "the gate switch is gone for good");
 });
 
 test("rejectionDirective: every dialog's reason reaches the agent with a concrete next step", () => {

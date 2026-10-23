@@ -128,19 +128,17 @@ export const sameGoalLines = (
 };
 
 export type SpecApprovalDecision =
-	| { kind: "auto"; reason: "tracker" | "gate-off" | "goals-unchanged" }
+	| { kind: "auto"; reason: "tracker" | "goals-unchanged" }
 	| { kind: "ask"; mode: "tui" | "select" }
 	| { kind: "unsigned"; reason: "no-ui" };
 
 export const decideSpecApproval = (opts: {
 	signMode?: "ask" | "auto";
-	gateEnabled: boolean;
 	goalsUnchanged: boolean;
 	hasUI: boolean;
 	tui: boolean;
 }): SpecApprovalDecision => {
 	if (opts.signMode === "auto") return { kind: "auto", reason: "tracker" };
-	if (!opts.gateEnabled) return { kind: "auto", reason: "gate-off" };
 	if (opts.goalsUnchanged) return { kind: "auto", reason: "goals-unchanged" };
 	if (opts.hasUI && opts.tui) return { kind: "ask", mode: "tui" };
 	if (opts.hasUI) return { kind: "ask", mode: "select" };

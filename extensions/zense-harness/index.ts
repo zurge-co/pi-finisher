@@ -41,7 +41,6 @@ export * from "./src/evidence.ts";
 export * from "./src/eval-review.ts";
 export * from "./src/adr-deny.ts";
 export * from "./src/subagent-log.ts";
-export * from "./src/memory.ts";
 export * from "./src/models.ts";
 export * from "./src/swarm.ts";
 export * from "./src/code-hygiene.ts";
@@ -79,19 +78,12 @@ export default function (pi: ExtensionAPI) {
 
 	const persist = () => pi.appendEntry("zense-state", box.get());
 
-	const learn = (ctx: ExtensionContext, note: string): void => {
-		mkdirSync(zenseDir(ctx.cwd), { recursive: true });
-		appendFileSync(join(zenseDir(ctx.cwd), "memory.jsonl"), JSON.stringify({ at: Date.now(), phase: box.get().phase, note }) + "\n");
-	};
-
 	const flag = (msg: string, ctx: ExtensionContext): void => {
 		box.get().trajectoryFlags.push(msg);
-		learn(ctx, `flag: ${msg}`);
 	};
 
 	const escalate = (kind: string, detail: string, ctx: ExtensionContext): void => {
 		box.get().escalations.push({ kind, detail, at: Date.now() });
-		learn(ctx, `escalation[${kind}]: ${detail}`);
 		if (ctx.hasUI) ctx.ui.notify(`🚨 zense escalation (${kind}): ${detail}`, "warning");
 	};
 
@@ -101,7 +93,6 @@ export default function (pi: ExtensionAPI) {
 			return box.get();
 		},
 		persist,
-		learn,
 		flag,
 		escalate,
 	} as unknown as HarnessContext;
@@ -144,7 +135,6 @@ export default function (pi: ExtensionAPI) {
 			if (!merged || !merged.changed) return;
 			mkdirSync(dirname(settingsPath), { recursive: true });
 			writeFileSync(settingsPath, merged.text);
-			learn(ctx, "fullscreen default: tuiMode=fullscreen (install default — takes effect on the next pi launch)");
 			ctx.ui.notify(
 				"🖥 zense: fullscreen TUI mode is now the default in ~/.pi/agent/settings.json — takes effect on the next pi launch (this session: /settings → TUI mode; to opt out: change tuiMode in that file)",
 				"info",
@@ -157,9 +147,7 @@ export default function (pi: ExtensionAPI) {
 		ensureFullscreenDefault(ctx);
 		try {
 			const registered = registerLadderModel({ register: (m) => pi.registerVirtualModel(m as never), readLadder: () => ladderFromConfig(ctx.cwd) });
-			if (registered) learn(ctx, `virtual model registered: zense/auto → ${ladderFromConfig(ctx.cwd).join(" > ")}`);
 		} catch (err) {
-			learn(ctx, `virtual model registration skipped: ${err instanceof Error ? err.message : String(err)}`);
 		}
 		kit.escGuard.reset();
 		if (ctx.mode === "tui") {
@@ -221,7 +209,6 @@ export default function (pi: ExtensionAPI) {
 		const summary = buildFreshSummary(readHandoff(ctx.cwd));
 		box.get().freshResetAt = Date.now();
 		persist();
-		learn(ctx, `fresh context: task finished — hard reset (retain-none), handoff head ${summary ? `${summary.split("\n").length - 2} item(s)` : "empty"}`);
 		return { entries: [freshCompactionEntry(summary || "[zense fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.")] };
 	});
 

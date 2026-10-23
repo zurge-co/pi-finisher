@@ -2,12 +2,11 @@ import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildFileReviewReport, commandWritePaths, reviewWrittenFile, scriptWrites, stdinTargets, type FileReview } from "./review-file.ts";
-import { type Learn, type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { type State } from "./types.ts";
 
 export const createHygieneHook = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const learn = ctx.learn;
 	const persist = ctx.persist;
 	const pi = ctx.pi;
 	const updateWidget = ctx.updateWidget;
@@ -47,7 +46,6 @@ export const createHygieneHook = (ctx: HarnessContext) => {
 		state.hygieneViolations = bad.flatMap((r) => r.violations);
 		persist();
 		updateWidget(ctx);
-		for (const r of bad) learn(ctx, `code-rules: ${r.path} — ${r.violations.length} rule violation(s), ${r.weakTests.length} weak test(s)`);
 		const content = Array.isArray(ev.content) ? [...ev.content] : [];
 		content.push({ type: "text", text: `\n⚠ ${bad.map(buildFileReviewReport).join("\n\n")}` });
 		return { content, isError: true };

@@ -4,7 +4,7 @@ import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { freshState, resetCycleState } from "./cycle.ts";
 import { commitWorkingTree, composeCommitMessage, headOf } from "./pending-apply.ts";
 import { buildAcceptBulletin } from "./cycle.ts";
-import { type AcceptPending, type AskRejectReason, type Learn, type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { type AcceptPending, type AskRejectReason, type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { lintSpecChecks } from "./evidence.ts";
 import { gitOk } from "./worktree.ts";
 import { buildSpecChanges, decideSpecApproval, renderSpecMd, sameGoalLines, syncApprovedSpecFiles } from "./spec-changes.ts";
@@ -13,7 +13,6 @@ import { zenseDir, type Criterion, type Spec, type State } from "./types.ts";
 
 export const createSpecFlow = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const learn = ctx.learn;
 	const persist = ctx.persist;
 	const askRejectReason = ctx.askRejectReason;
 	const pi = ctx.pi;
@@ -22,14 +21,11 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 	const approveCurrentSpec = (ctx: ExtensionContext) => {
 		if (!state.spec) return false;
 		const cases = goalCases(state.spec);
-		learn(ctx, `goal confirmed once on spec v${state.spec.version} — ${cases.length} case(s), no further approval in this run: ${cases.slice(0, 3).join(" | ").slice(0, 240)}`);
 		state.spec.approved = true;
 		state.spec.approvedAt = Date.now();
 		state.phase = "implementation";
 		state.baselineHead = headOf(ctx.cwd);
-		learn(ctx, `cycle baseline ${state.baselineHead?.slice(0, 12) ?? "(no git)"} — the agent works directly in the repo`);
 		syncApprovedSpecFiles(ctx.cwd, state.spec, { json: state.specJsonPath, md: state.specMdPath });
-		learn(ctx, `signed spec v${state.spec.version}`);
 		persist();
 		updateWidget(ctx);
 		ctx.ui.notify(`🔏 Spec v${state.spec.version} signed — implementation gate open.`, "info");
@@ -80,8 +76,7 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 		if (prevSpec && version >= 2) {
 			const changes = buildSpecChanges(prevSpec, state.spec);
 			state.spec.changesFrom = changes;
-			if (changes.length === 1 && changes[0].startsWith("⚠️"))
-				learn(ctx, `spec v${version} re-spec identical to v${version - 1} (no changes)`);
+			if (changes.length === 1 && changes[0].startsWith("⚠️")) state.spec.changesFrom = changes;
 		}
 		state.specSource = source;
 		mkdirSync(zenseDir(ctx.cwd), { recursive: true });
@@ -102,7 +97,6 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 		const goalsUnchanged = !!prevSpec?.approved && sameGoalLines(prevSpec, state.spec);
 		const decision = decideSpecApproval({
 			signMode: opts?.sign,
-			gateEnabled: state.gateEnabled,
 			goalsUnchanged,
 			hasUI: ctx.hasUI,
 			tui: ctx.mode === "tui",
@@ -115,13 +109,8 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 			if (decision.reason === "tracker") {
 				state.spec.approvedBy = opts?.provenance;
 				if (opts?.baselineOverride) state.baselineHead = opts.baselineOverride;
-				if (opts?.provenance) learn(ctx, `spec v${version} auto-approved by ${opts.provenance} (tracker signature)`);
-			} else if (decision.reason === "gate-off") {
-				state.spec.approvedBy = "gate-off";
-				learn(ctx, `spec v${version} auto-approved: gate OFF (no sign prompt)`);
 			} else {
 				state.spec.approvedBy = `goals-unchanged:v${prevSpec?.version ?? "?"}`;
-				learn(ctx, `spec v${version} auto-approved: goal cases unchanged from v${prevSpec?.version ?? "?"} (no re-sign)`);
 			}
 			signed = true;
 			approveCurrentSpec(ctx);
@@ -137,7 +126,6 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 			if (signed) approveCurrentSpec(ctx);
 			else rejection = await askRejectReason(ctx, `Not signing spec v${version}`);
 		}
-		if (rejection) learn(ctx, `spec v${version} rejected at signing: ${rejection.slice(0, 300)}`);
 		persist();
 		updateWidget(ctx);
 		return { version, signed, mdPath, ...(approvedHow ? { approvedHow } : {}), ...(rejection ? { rejection } : {}), ...(state.spec.changesFrom?.length ? { changes: state.spec.changesFrom } : {}), ...(lintNotes.length ? { lint: lintNotes } : {}) };
@@ -155,7 +143,6 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 		if (commit && !commit.ok) return { ok: false, text: `⚠️ commit failed: ${commit.msg}` };
 		const headNow = (commit?.sha ?? headOf(ctx.cwd) ?? "").slice(0, 12);
 		state.escalations.push({ kind: "accepted", detail: `cycle v${v} accepted at ${headNow}`, at: Date.now() });
-		learn(ctx, `cycle v${v} accepted @${headNow}${commit?.sha ? " (committed on human request)" : " (left uncommitted in the repo)"}`);
 		if (notifyViaBulletin) state.contextBulletin = buildAcceptBulletin(v, specTitle, 0);
 		resetCycleState(state);
 		persist();

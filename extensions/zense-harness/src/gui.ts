@@ -2,7 +2,7 @@ import { Container, Key, Markdown, SelectList, Spacer, Text, matchesKey, truncat
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createEscGuard } from "./esc-guard.ts";
 import { panelize } from "./models.ts";
-import { type AskClarify, type AskRejectReason, type ExtConfigDialog, type ScrollKeyAction, type ZenseCustom, type ZensePick, type HarnessContext } from "./kit.ts";
+import { type AskClarify, type AskRejectReason, type ScrollKeyAction, type ZenseCustom, type ZensePick, type HarnessContext } from "./kit.ts";
 import { type ClarifyQuestion } from "./spec-draft.ts";
 
 export const createGui = (ctx: HarnessContext) => {
@@ -76,51 +76,6 @@ export const createGui = (ctx: HarnessContext) => {
 
 	type SpecSignResult = { picked: string | null; reason?: string };
 
-	const extConfigDialog = (ctx: ExtensionContext, role: string, items: { path: string; label: string; checked: boolean }[]): Promise<string[] | null> =>
-		zenseCustom<string[] | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
-			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
-			let cursor = 0;
-			const checked = items.map((i) => i.checked);
-			const visRows = () => Math.max(6, Math.floor(tui.terminal.rows * 0.6));
-			return {
-				render: (w: number) => {
-					const h = visRows();
-					const start = Math.max(0, Math.min(cursor - 2, Math.max(0, items.length - h)));
-					const out: string[] = [];
-					out.push(...border.render(w));
-					out.push(...new Text(theme.fg("accent", theme.bold(`🧩 sub-agent extensions — role "${role}" (default: bare boot · space = opt into loading)`)), 1, 0).render(w));
-					out.push(...new Text(theme.fg("dim", "↑↓ move • space toggle • a = load all • n = load none • enter save • esc cancel"), 1, 0).render(w));
-					for (let i = start; i < Math.min(items.length, start + h); i++) {
-						const box = checked[i] ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
-						const mark = i === cursor ? theme.fg("accent", "▸") : " ";
-						const line = ` ${mark} ${box} ${items[i].label}`;
-						out.push(i === cursor ? theme.bold(line) : line);
-					}
-					if (items.length > h) out.push(...new Text(theme.fg("dim", `— ${start + 1}-${Math.min(start + h, items.length)}/${items.length} —`), 1, 0).render(w));
-					out.push(...new Text(theme.fg("dim", `${checked.filter(Boolean).length}/${items.length} extensions will load`), 1, 0).render(w));
-					out.push(...border.render(w));
-					return panelize(theme, out, w);
-				},
-				invalidate: () => {},
-				handleInput: (data: string) => {
-					if (matchesKey(data, Key.up)) cursor = Math.max(0, cursor - 1);
-					else if (matchesKey(data, Key.down)) cursor = Math.min(items.length - 1, cursor + 1);
-					else if (data === " ") checked[cursor] = !checked[cursor];
-					else if (data === "a") checked.fill(true);
-					else if (data === "n") checked.fill(false);
-					else if (matchesKey(data, Key.enter)) {
-						done(items.filter((_, i) => checked[i]).map((it) => it.path));
-						return;
-					} else if (matchesKey(data, Key.escape)) {
-						done(null);
-						return;
-					}
-					tui.requestRender();
-				},
-			};
-		},
-		() => false);
-
 	const zensePick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint = ""): Promise<string | null> => {
 		let filter = "";
 		return zenseCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
@@ -175,5 +130,5 @@ export const createGui = (ctx: HarnessContext) => {
 		return picked;
 	};
 
-	return { escGuard, escGuardUnsubscribe, zenseCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, extConfigDialog, zensePick, askClarifyQuestion };
+	return { escGuard, escGuardUnsubscribe, zenseCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, zensePick, askClarifyQuestion };
 };

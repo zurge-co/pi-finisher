@@ -91,12 +91,3 @@ export const boundToolExecute = <A extends any[]>(name: string, cwdOf: (args: un
 		return { content: [{ type: "text", text: timeoutNote(r) }], details: { timedOut: true, tool: name }, isError: true };
 	};
 
-export const wrapToolDefinition = <T extends ToolLike>(def: T, cwdOf: (args: unknown[]) => string): T => ({
-	...def,
-	execute: boundToolExecute(def.name, cwdOf, def.execute as (...a: any[]) => Promise<unknown>) as T["execute"],
-});
-
-export const cwdFromArgs = (args: unknown[]): string => {
-	const ctx = args[args.length - 1] as { cwd?: string } | undefined;
-	return typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
-};

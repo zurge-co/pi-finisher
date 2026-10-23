@@ -4,7 +4,7 @@ import { askPolicyError, askQuestionScan, formatAskAnswers, ASK_NO_UI_TEXT, type
 import { buildGoalToolText, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
 import { goalCases } from "./goal-confirm.ts";
-import { type ArmGoalRound, type AskClarify, type LaunchSubagent, type Learn, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { type ArmGoalRound, type AskClarify, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, readSwarmConcurrency, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
 import { MAX_VERIFY_ROUNDS, advanceLoop, buildFixPrompt, buildReport, freshVerifyLoop, judgeCase, nextVerifyRound, renderVerifyReport } from "./verify-loop.ts";
 import { type State } from "./types.ts";
@@ -14,7 +14,6 @@ import { type TSchema } from "typebox";
 import { liveByRole, steerLive, followUpLive } from "./subagent-rpc.ts";
 
 export const registerTools = (ctx: HarnessContext) => {
-	const learn = ctx.learn;
 	const persist = ctx.persist;
 	const pi = ctx.pi;
 	const state = ctx.state;
@@ -58,11 +57,6 @@ export const registerTools = (ctx: HarnessContext) => {
 			),
 		}),
 		async execute(_id, p, _s, _o, ctx) {
-			if (!state.gateEnabled)
-				return {
-					content: [{ type: "text", text: "gate is OFF — human questions are disabled. Decide from the repo/context yourself, record the decision as an explicit assumption + specDebt entry, and proceed (no picker was opened)." }],
-					details: { gateOff: true, asked: 0 },
-				};
 			const { questions: qsAll, violations } = askQuestionScan(p.questions);
 			if (violations.length) return { content: [{ type: "text", text: askPolicyError(violations) }], details: { violations }, isError: true };
 			if (!qsAll.length) return { content: [{ type: "text", text: "zense_ask: no usable question — pass at least one non-empty question text" }], details: {}, isError: true };
@@ -71,7 +65,6 @@ export const registerTools = (ctx: HarnessContext) => {
 			const answers: AskAnswer[] = [];
 			for (const q of qs)
 				answers.push({ question: q.question, answer: await askClarifyQuestion(ctx as ExtensionContext, q) });
-			learn(ctx as ExtensionContext, `zense_ask: ${qs.length} question(s), ${answers.filter((a) => a.answer === undefined).length} skipped`);
 			return { content: [{ type: "text", text: formatAskAnswers(answers) }], details: { answers } };
 		},
 	}));
@@ -137,7 +130,6 @@ export const registerTools = (ctx: HarnessContext) => {
 			const body = results
 				.map((r) => `## ${r.id} ${r.ok ? "✓" : "✗"}${r.model ? ` [${r.model}]` : ""}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ""}\n${r.output.trim() || "(no output)"}`)
 				.join("\n\n");
-			learn(ctx, `swarm ${p.mode}: ${swarmSummaryLine(results)} — ladder ${ladder.join(" > ")} (${source})${notes}`);
 			if (p.mode === "verify") {
 				const report = buildReport(results.map((r) => judgeCase(r.id, r.output, r.ok ? {} : { exitCode: 1 })));
 				const active = state.goalDriver as GoalRunState | undefined;
@@ -150,7 +142,6 @@ export const registerTools = (ctx: HarnessContext) => {
 					state.verifyLoop = step.state.loop;
 					persist();
 					updateWidget(ctx);
-					learn(ctx, `goal driver: ${step.action} round ${step.round}/${MAX_VERIFY_ROUNDS} — ${step.state.outcome ?? "running"}`);
 					if (step.action === "fix") armGoalRound(step.text);
 					return {
 						content: [{ type: "text", text: [buildGoalToolText({ ...driver, loop }, step), "", body].join("\n") }],
@@ -160,7 +151,6 @@ export const registerTools = (ctx: HarnessContext) => {
 				}
 				state.verifyLoop = advanceLoop(loop, report);
 				persist();
-				learn(ctx, `verify: ${report.allPass ? "PASS" : "not verified"} round ${state.verifyLoop.round}/${MAX_VERIFY_ROUNDS} — ${report.cases.map((c) => `${c.caseId}:${c.verdict}`).join(", ")}`);
 				const fix = decision.kind === "retry" ? buildFixPrompt(report, decision.round, MAX_VERIFY_ROUNDS) : decision.kind === "stop" ? `⛔ verify stopped (${decision.halt ? "bound" : "no new evidence"}): ${decision.reason}` : "";
 				return {
 					content: [{ type: "text", text: [renderVerifyReport(report, state.verifyLoop), fix, "", body].filter(Boolean).join("\n") }],
@@ -204,7 +194,6 @@ export const registerTools = (ctx: HarnessContext) => {
 			if (cases.length && state.spec) state.spec.crossCheck = cases;
 			persist();
 			updateWidget(ctx);
-			learn(ctx, `goal confirmed once: ${goal.slice(0, 160)}${cases.length ? ` (${cases.length} case(s))` : ""} — round ${started.loop.round}`);
 			const next = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 			return {
 				content: [{ type: "text", text: buildGoalToolText(started, { action: "fix", round: started.loop.round, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then prove it:
@@ -253,7 +242,6 @@ prove it with real commands (zense_swarm mode=verify or your own runs); no furth
 					details: { sent: 0, role, mode: how, live: live.map((r) => r.role) },
 					isError: true,
 				};
-			learn(ctx, `steer: ${how} sent to ${n} live ${role} agent(s) — ${message.slice(0, 160)}`);
 			return {
 				content: [{ type: "text", text: `${how === "followUp" ? "follow-up queued for" : "steered"} ${n} live ${role} agent(s):\n${message}\n\n${how === "followUp" ? "it will be handled after the agent finishes its current work" : "it lands after the current turn's tool calls, before the next model request"}` }],
 				details: { sent: n, role, mode: how },

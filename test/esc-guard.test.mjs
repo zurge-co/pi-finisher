@@ -145,13 +145,6 @@ test("source: zenseCustom mirrors pi's overlay handle so peek can hide/show it",
 	assert.match(src, /canPeek/, "dialogs must be able to opt out of the peek key");
 });
 
-test("source: the checkbox ext-config dialog declines peek (space is its toggle)", () => {
-	const src = readFileSync(join(here, "..", "extensions/zense-harness/src/gui.ts"), "utf8");
-	const i = src.indexOf("const extConfigDialog");
-	assert.ok(i > 0);
-	const body = src.slice(i, i + 4000);
-	assert.match(body, /\(\) => false/, "canPeek must be false where space already means toggle");
-});
 
 test("source: the shared picker unlocks peek only while its filter is empty", () => {
 	const src = readFileSync(join(here, "..", "extensions/zense-harness/src/gui.ts"), "utf8");

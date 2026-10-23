@@ -1,0 +1,55 @@
+import { strict as assert } from "node:assert";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { RETIRED_COMMANDS, SURFACE_COMMANDS, SURFACE_TOOLS, isLiveTool, isRetiredTool } from "../extensions/zense-harness/index.ts";
+
+const here = new URL("..", import.meta.url).pathname;
+const commandsSrc = () => readFileSync(join(here, "extensions/zense-harness/src/commands.ts"), "utf8");
+
+test("every command in the surface has a branch, and every branch is in the surface", () => {
+	const src = commandsSrc();
+	for (const cmd of SURFACE_COMMANDS) {
+		assert.ok(src.includes(`sub === "${cmd}"`), `SURFACE_COMMANDS advertises "${cmd}" with no handler`);
+	}
+	const branches = [...src.matchAll(/sub === "([a-z-]+)"/g)].map((m) => m[1]);
+	for (const b of new Set(branches)) {
+		assert.ok((SURFACE_COMMANDS).includes(b), `branch "${b}" is reachable but not advertised`);
+	}
+});
+
+test("the description and completions are generated from the same list, so they cannot drift", () => {
+	const src = commandsSrc();
+	assert.ok(src.includes("[...SURFACE_COMMANDS]"), "completions must come from SURFACE_COMMANDS");
+	const desc = src.slice(src.indexOf('description: "Zense harness'), src.indexOf('getArgumentCompletions'));
+	for (const cmd of SURFACE_COMMANDS) assert.ok(desc.includes(cmd), `the description must list "${cmd}"`);
+	for (const dead of ["approve", "gate", "memory", "ext-config"]) assert.ok(!desc.includes(dead), `the description still advertises the removed "${dead}"`);
+});
+
+test("the removed surfaces cannot come back: no memory, no gate, no ext-config machinery", () => {
+	const src = commandsSrc();
+	assert.ok(!src.includes("memory.jsonl"));
+	assert.ok(!src.includes("ext-config"));
+	const kit = readFileSync(join(here, "extensions/zense-harness/src/kit.ts"), "utf8");
+	assert.ok(!kit.includes("learn"), "no lessons channel");
+	assert.ok(!kit.includes("extConfigDialog"));
+	const types = readFileSync(join(here, "extensions/zense-harness/src/types.ts"), "utf8");
+	assert.ok(!types.includes("gateEnabled"));
+	const cfg = readFileSync(join(here, "extensions/zense-harness/src/subagent-config.ts"), "utf8");
+	assert.ok(!cfg.includes("subagentExtIncludes"), "the include list had no effect once bare boot was gone");
+	assert.ok(!cfg.includes("findProviderExtension"), "the auto-heal path only existed for bare boot");
+});
+
+test("retired names stay retired and never overlap the live surface", () => {
+	for (const c of ["approve", "gate", "longrun", "memory", "ext-config-show", "distill"]) assert.ok(RETIRED_COMMANDS.includes(c), `${c} must be retired`);
+	assert.deepEqual(SURFACE_COMMANDS.filter((c) => RETIRED_COMMANDS.includes(c)), [], "a name cannot be both live and retired");
+	for (const t of SURFACE_TOOLS) assert.equal(isLiveTool(t), true);
+	for (const t of ["zense_spec", "zense_adr", "zense_eval", "zense_review", "zense_longrun"]) assert.equal(isRetiredTool(t), true);
+});
+
+test("the ask tool no longer has a gate-off escape hatch — it always asks when there is a UI", () => {
+	const tools = readFileSync(join(here, "extensions/zense-harness/src/tools.ts"), "utf8");
+	assert.ok(!tools.includes("gateEnabled"), "the switch cannot be set any more, so the branch is dead");
+	assert.ok(!tools.includes("gateOff"));
+	assert.match(tools, /if \(!ctx\.hasUI\)/, "a non-UI session still declines without hanging");
+});

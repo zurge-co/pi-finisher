@@ -5,24 +5,21 @@ import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-cod
 import { buildDiscardBulletin, resetCycleState } from "./cycle.ts";
 import { subagentLogPath } from "./subagent-log.ts";
 import { runRpcSubagent } from "./subagent-rpc.ts";
-import { SUBAGENT_ROLES, orphanRoleKeys, subagentStripFlagsAsync, subagentTimeout } from "./subagent-config.ts";
+import { SUBAGENT_ROLES, orphanRoleKeys, subagentTimeout } from "./subagent-config.ts";
 import { resolveModelPattern } from "./models.ts";
 import { changePathsSince, discardSinceBaseline } from "./pending-apply.ts";
-import { subagentExtIncludes, writeSubagentExtIncludes, listInstalledExtensions, zenseGlobalConfigDir, extDisplayLabel } from "./subagent-config.ts";
 import { discoverResumeState, loadSpecFromDisk } from "./resume.ts";
 import { gitOk } from "./worktree.ts";
 import { isGitRepo, uncommittedChanges } from "./pending-apply.ts";
-import { surfaceLine } from "./goal-run.ts";
+import { SURFACE_COMMANDS, surfaceLine } from "./goal-run.ts";
 import { freshStatusLine, readFreshContextConfig, writeFreshContextConfig } from "./fresh-context.ts";
 import { readHandoff, writeHandoff } from "./handoff-stack.ts";
-import { memorySummaryLines, aggregateMemory } from "./memory.ts";
 import { availableModelChoices, readModelsConfig, writeModelsConfig } from "./models.ts";
-import { type AcceptPending, type Escalate, type ExtConfigDialog, type Flag, type LaunchSubagent, type Learn, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
+import { type AcceptPending, type Escalate, type Flag, type LaunchSubagent, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
 import { zenseDir, type State } from "./types.ts";
 
 export const registerCommands = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const learn = ctx.learn;
 	const persist = ctx.persist;
 	const pi = ctx.pi;
 	const updateWidget = ctx.updateWidget;
@@ -31,60 +28,12 @@ export const registerCommands = (ctx: HarnessContext) => {
 	const escalate = ctx.escalate;
 	const flag = ctx.flag;
 	const zensePick = ctx.zensePick;
-	const extConfigDialog = ctx.extConfigDialog;
 	const openAgentsViewer = ctx.openAgentsViewer;
 
 	pi.registerShortcut(Key.ctrl("_"), {
 		description: "Zense: watch sub-agent runs live (live tail)",
 		handler: (ctx) => openAgentsViewer(ctx),
 	});
-
-	const runExtConfig = async (ctx: ExtensionContext, role: string, action?: string, vals: string[] = []): Promise<void> => {
-		const exts = (await listInstalledExtensions(ctx.cwd)).filter((e) => e.enabled);
-		const cur = new Set(subagentExtIncludes(role, ctx.cwd));
-		const apply = (includes: string[]) => {
-			const { globalSeeded } = writeSubagentExtIncludes(ctx.cwd, role, includes);
-			ctx.ui.notify(
-				`✅ ${role}: will load ${includes.length}/${exts.length} extensions${includes.length ? "" : " (bare boot)"} — saved to local .zense/config.json${globalSeeded ? " (+ first-time global seed ~/.pi/agent/zense/config.json)" : ""} · takes effect on the next sub-agent run`,
-				"info",
-			);
-		};
-		if (ctx.mode === "tui" && !action) {
-			const includes = await extConfigDialog(
-				ctx,
-				role,
-				exts.map((e) => ({ path: e.path, label: `${extDisplayLabel(e)} · ${e.source}`, checked: cur.has(e.path) })),
-			);
-			if (includes === null) return ctx.ui.notify("cancelled — config unchanged", "info");
-			apply(includes);
-			return;
-		}
-		if (action === "all") apply(exts.map((e) => e.path));
-		else if (action === "none" || action === "default") apply([]);
-		else if (action === "on" || action === "off") {
-			const target = vals.join(" ").trim();
-			if (!target) return ctx.ui.notify(`missing target — /zense ext-config-show ${role} ${action} <index|path>`, "warning");
-			const asNum = Number(target);
-			const hit =
-				Number.isInteger(asNum) && asNum >= 1 && asNum <= exts.length ? exts[asNum - 1].path : exts.find((e) => e.path.includes(target))?.path;
-			if (!hit) return ctx.ui.notify(`extension "${target}" not found — see the list with /zense ext-config-show ${role} (no action)`, "warning");
-			const next = new Set(cur);
-			if (action === "on") next.add(hit);
-			else next.delete(hit);
-			apply([...next]);
-		} else if (!action) {
-			ctx.ui.notify(
-				[
-					`installed (enabled) extensions — ${role} loads ${cur.size}/${exts.length}:`,
-					...exts.map((e, i) => `  ${i + 1}. ${cur.has(e.path) ? "[x]" : "[ ]"} ${e.path}`),
-					`toggle: /zense ext-config ${role} on|off <index|path> · all = load everything · none = load nothing (default)`,
-				].join("\n"),
-				"info",
-			);
-		} else {
-			return ctx.ui.notify(`unknown action: "${action}" — no action (TUI=checkbox / non-TUI=list) | all | none | on|off <index|path>`, "warning");
-		}
-	};
 
 	const resumeZense = (ctx: ExtensionContext): void => {
 		if (state.spec)
@@ -103,19 +52,18 @@ export const registerCommands = (ctx: HarnessContext) => {
 		state.phase = disk.approved ? "implementation" : "requirements";
 		state.specJsonPath = disc.specJsonPath;
 		state.specMdPath = disc.specMdPath;
-		learn(ctx, `resumed spec v${disk.version} from disk (approved=${disk.approved}) — working directly in the repo`);
 		persist();
 		updateWidget(ctx);
 		ctx.ui.notify(
-			`🔁 resumed spec v${disk.version}${disk.approved ? " (signed — implementation gate open)" : " (unsigned — gate closed; sign via /zense approve)"}: ${disk.title}\nworking directly in the repo (no worktree)`,
+			`🔁 resumed spec v${disk.version}${disk.approved ? " (signed — implementation open)" : " (unsigned — sign it with zense_spec)"}: ${disk.title}\nworking directly in the repo (no worktree)`,
 			"info",
 		);
 	};
 
 	pi.registerCommand("zense", {
-		description: "Zense harness (zense = human signature/sign): status | resume | approve | accept | discard | agents | gate on|off | memory | models | ext-config-show",
+		description: "Zense harness (zense = human signature/sign): status | resume | accept | discard | agents | models | fresh-context | surface",
 		getArgumentCompletions: (prefix) =>
-			["status", "resume", "accept", "discard", "agents", "memory", "models", "ext-config-show", "fresh-context", "surface"]
+			[...SURFACE_COMMANDS]
 				.filter((s) => s.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
@@ -143,7 +91,6 @@ export const registerCommands = (ctx: HarnessContext) => {
 					return ctx.ui.notify(`⚠ discard: ${dr.msg}`, "warning");
 				}
 				const v = state.spec?.version ?? 1;
-				learn(ctx, `cycle v${v} discarded — ${dr.msg}`);
 				state.contextBulletin = buildDiscardBulletin(v);
 				resetCycleState(state);
 				persist();
@@ -158,29 +105,16 @@ export const registerCommands = (ctx: HarnessContext) => {
 					const enabled = action === "on";
 					const ok = writeFreshContextConfig(ctx.cwd, enabled);
 					if (!ok) return ctx.ui.notify("could not write .zense/config.json", "warning");
-					learn(ctx, `fresh context: ${enabled ? "ON" : "OFF"} (via /zense fresh-context ${action})`);
 					return ctx.ui.notify(`🧠 fresh context ${enabled ? "ON — each finished task resets the context, keeping only the handoff stack" : "OFF — context keeps accumulating across tasks"}`, "info");
 				}
 				if (action === "clear") {
 					writeHandoff(ctx.cwd, []);
-					learn(ctx, "handoff stack cleared by the human");
 					return ctx.ui.notify("🧹 handoff stack cleared — the next fresh context carries nothing", "info");
 				}
 				if (action === "status") return ctx.ui.notify(freshStatusLine(readFreshContextConfig(ctx.cwd), readHandoff(ctx.cwd)), "info");
 				return ctx.ui.notify("usage: /zense fresh-context [on|off|status|clear]", "info");
 		} else if (sub === "agents") {
 				await openAgentsViewer(ctx);
-			} else if (sub === "memory") {
-				if (rest[0] === "json") {
-					const f = join(zenseDir(ctx.cwd), "memory.jsonl");
-					ctx.ui.notify(existsSync(f) ? readFileSync(f, "utf8").slice(-2000) : "(empty)", "info");
-				} else {
-					const lines = memorySummaryLines(ctx.cwd);
-					ctx.ui.notify(
-						lines.length ? [...lines, "(raw: /zense memory json)"].join("\n") : "📚 memory is empty — lessons accumulate on every escalation/flag/eval/sub-agent failure",
-						"info",
-					);
-				}
 			} else if (sub === "models") {
 				const cfgPath = join(zenseDir(ctx.cwd), "models.json");
 				const cfg = readModelsConfig(ctx.cwd);
@@ -234,34 +168,10 @@ export const registerCommands = (ctx: HarnessContext) => {
 				}
 				writeModelsConfig(ctx.cwd, role, pattern);
 				ctx.ui.notify(`✅ ${role}: ${pattern} — wrote ${relative(ctx.cwd, cfgPath)} (takes effect on the next sub-agent run)`, "info");
-			} else if (sub === "ext-config-show" || sub === "ext-config") {
-				const roles: readonly string[] = [...SUBAGENT_ROLES];
-				const [role, action, ...vals] = rest;
-				if (!role || !roles.includes(role)) {
-					ctx.ui.notify(
-						[
-							"🧩 sub-agent extension loading (per role) — default: bare boot, no extensions · tick to opt specific ones back in",
-							...roles.map((r) => {
-								const inc = subagentExtIncludes(r, ctx.cwd);
-								return `  ${r}: ${inc.length ? `loads ${inc.length}` : "bare boot (no extensions)"}`;
-							}),
-							`persist: local ${join(zenseDir(ctx.cwd), "config.json")} · global ${join(zenseGlobalConfigDir(), "config.json")} (first-time seed + fallback)`,
-							"configure: /zense:ext-config:swarm | :verifier (TUI = instant checkboxes) or /zense ext-config-show <role> all|none|on|off <index|path>",
-						].join("\n"),
-						"info",
-					);
-					return;
-				}
-				await runExtConfig(ctx, role, action, vals);
 			} else {
-				ctx.ui.notify("usage: /zense status|resume|approve|accept [commit]|discard|agents|gate on|off|memory|models|ext-config-show|fresh-context on|off|status|clear", "info");
+				ctx.ui.notify(`usage: /zense ${SURFACE_COMMANDS.join("|")} · accept [commit] · fresh-context on|off|status|clear`, "info");
 			}
 		},
 	});
 
-	for (const role of SUBAGENT_ROLES)
-		pi.registerCommand(`zense:ext-config:${role}`, {
-			description: `which extensions sub-agent "${role}" loads (default: bare boot — opt in by ticking; saved to local .zense + first-time global seed)`,
-			handler: async (_args, ctx) => runExtConfig(ctx as ExtensionContext, role),
-		});
 };

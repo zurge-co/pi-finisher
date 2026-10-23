@@ -191,10 +191,3 @@ export const followUpLive = async (role: string, message: string): Promise<numbe
 	return live.length;
 };
 
-export const liveRunSummary = (): { role: string; aliveMs: number }[] => liveByRole().map((r) => ({ role: r.role, aliveMs: Date.now() - r.startedAt }));
-
-export const abortAllLive = async (): Promise<number> => {
-	const all = liveByRole();
-	for (const r of all) await boundedCall(r.client.abort(), `rpc abort (${r.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined);
-	return all.length;
-};

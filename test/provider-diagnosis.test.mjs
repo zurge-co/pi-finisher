@@ -8,12 +8,8 @@ import {
 	PROVIDER_MISSING_RX,
 	buildProviderMissingGuidance,
 	diagnoseProviderMissing,
-	findProviderExtension,
-	mergeExtInclude,
 	providerIdOfModelPattern,
-	subagentExtIncludes,
 	usedProviderOf,
-	writeSubagentExtIncludes,
 } from "../extensions/zense-harness/index.ts";
 
 const mkTmp = () => mkdtempSync(join(tmpdir(), "zense-provdiag-"));
@@ -28,44 +24,9 @@ test("providerIdOfModelPattern / usedProviderOf: provider is everything before '
 	assert.equal(usedProviderOf("noSlash"), undefined);
 });
 
-test("findProviderExtension: finds the extension with registerProvider + the provider id; prefers a /provider/ path segment", () => {
-	const exts = [
-		{ path: "/x/pkg/extensions/quota/index.ts", enabled: true, source: "npm:pkg", scope: "user" },
-		{ path: "/x/pkg/extensions/provider/index.ts", enabled: true, source: "npm:pkg", scope: "user" },
-	];
-	const reader = (p) =>
-		p.endsWith("provider/index.ts")
-			? 'import { registerSyntheticProvider } from "./x";\nregisterProvider(pi);\n// synthetic\nid: "synthetic"'
-			: "export default function (pi) {}\n";
-	const hit = findProviderExtension("synthetic", exts, reader);
-	assert.equal(hit.path, "/x/pkg/extensions/provider/index.ts");
-	assert.ok(hit.label.length > 0);
-});
 
-test("findProviderExtension: skips disabled / unreadable files / no registerProvider", () => {
-	const exts = [
-		{ path: "/x/a/provider/index.ts", enabled: false, source: "", scope: "user" },
-		{ path: "/x/b/provider/index.ts", enabled: true, source: "", scope: "user" },
-		{ path: "/x/c/other/index.ts", enabled: true, source: "", scope: "user" },
-	];
-	const reader = (p) => (p === "/x/b/provider/index.ts" ? undefined : "synthetic synthetic\n");
-	assert.equal(findProviderExtension("synthetic", exts, reader), undefined);
-});
 
-test("findProviderExtension: multiple top-score ties = ambiguous → undefined (never guesses)", () => {
-	const exts = [
-		{ path: "/x/pkgA/extensions/provider/index.ts", enabled: true, source: "", scope: "user" },
-		{ path: "/x/pkgB/extensions/provider/index.ts", enabled: true, source: "", scope: "user" },
-	];
-	const reader = () => 'registerProvider(pi); // synthetic\nid: "synthetic"';
-	assert.equal(findProviderExtension("synthetic", exts, reader), undefined);
-});
 
-test("mergeExtInclude: appends once (idempotent — an existing path returns the same identity)", () => {
-	const cur = ["/x/a.ts"];
-	const merged = mergeExtInclude(cur, "/x/b.ts");
-	assert.deepEqual(merged, ["/x/a.ts", "/x/b.ts"]);
-	assert.equal(mergeExtInclude(merged, "/x/b.ts"), merged); });
 
 test("diagnoseProviderMissing: silent fallback (usedModel has a different provider) → provider-mismatch", () => {
 	const d = diagnoseProviderMissing("synthetic/hf:x:free", { ok: true, output: "...", usedModel: "openai/gpt-4o" });
@@ -93,15 +54,15 @@ test("diagnoseProviderMissing: hard error with usedModel uncaptured → hard-mis
 	assert.equal(diagnoseProviderMissing("sonnet:high", { ok: false, output: "no models found matching x" }), undefined);
 });
 
-test("buildProviderMissingGuidance: with a hit → points at /zense:ext-config:<role> + non-interactive on <path>", () => {
-	const g = buildProviderMissingGuidance("grader", "synthetic", { hit: { path: "/x/pkg/extensions/provider/index.ts", label: "provider/index.ts" } });
-	assert.ok(g.includes("grader"));
-	assert.ok(g.includes("/zense:ext-config:grader"), "must point at the per-role command, not a generic ext-config");
-	assert.ok(g.includes("/zense ext-config-show grader on /x/pkg/extensions/provider/index.ts"));
-	assert.ok(g.includes("pi login synthetic"), "broken despite inclusion = auth");
-	const retried = buildProviderMissingGuidance("grader", "synthetic", { hit: { path: "/x/p/index.ts", label: "p" }, autoRetried: true });
-	assert.ok(retried.includes("auto-include"), "a failed auto-retry must say it tried");
+test("buildProviderMissingGuidance: names the provider, the role, and the two real fixes", () => {
+	const g = buildProviderMissingGuidance("verifier", "synthetic");
+	assert.match(g, /verifier/);
+	assert.match(g, /synthetic/);
+	assert.match(g, /install\/enable the extension/);
+	assert.match(g, /pi login synthetic/);
+	assert.ok(!g.includes("ext-config"), "the ext-config surface is gone, so guidance must not point at it");
 });
+
 
 test("buildProviderMissingGuidance: already included but falling back → points at auth; no hit → points at installing / changing the model", () => {
 	const inc = buildProviderMissingGuidance("reviewer", "synthetic", {
@@ -115,24 +76,4 @@ test("buildProviderMissingGuidance: already included but falling back → points
 	assert.ok(!none.includes("ext-config-show grader on"), "no path = never orders on <path>");
 });
 
-test("persist path: writeSubagentExtIncludes writes the merged include list (local + global seed) and reads back correctly", () => {
-	const dir = mkTmp();
-	const globalDir = mkTmp();
-	try {
-		mkdirSync(join(dir, ".zense"), { recursive: true });
-		const hitPath = "/x/pkg/extensions/provider/index.ts";
-		const cur = subagentExtIncludes("grader", dir, undefined, globalDir);
-		assert.deepEqual(cur, []);
-		const merged = mergeExtInclude(cur, hitPath);
-		writeSubagentExtIncludes(dir, "grader", merged, globalDir);
-		assert.deepEqual(subagentExtIncludes("grader", dir, undefined, globalDir), [hitPath]);
-				assert.deepEqual(subagentExtIncludes("grader", undefined, undefined, globalDir), [hitPath]);
-				writeSubagentExtIncludes(dir, "grader", mergeExtInclude([hitPath], hitPath), globalDir);
-		assert.deepEqual(subagentExtIncludes("grader", dir, undefined, globalDir), [hitPath]);
-				const raw = JSON.parse(readFileSync(join(dir, ".zense", "config.json"), "utf8"));
-		assert.ok(raw.subagentExtInclude.grader.includes(hitPath));
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-		rmSync(globalDir, { recursive: true, force: true });
-	}
-});
+

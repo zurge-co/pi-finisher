@@ -85,17 +85,10 @@ test("the model-facing surface offers steering, so the main agent can act on ano
 	assert.match(toolsSrc, /followUpLive/);
 });
 
-test("no resolved boot for any role can strip extensions — that is what broke provider resolution", async () => {
-	const { subagentStripFlagsAsync } = await import("../extensions/zense-harness/index.ts");
-	const { mkdtempSync } = await import("node:fs");
-	const { tmpdir } = await import("node:os");
-	const dir = mkdtempSync(join(tmpdir(), "zense-boot-"));
-	const other = mkdtempSync(join(tmpdir(), "zense-boot-g-"));
+test("no role's boot flags can strip extensions — that is what broke provider resolution", () => {
 	for (const role of SUBAGENT_ROLES) {
-		const flags = await subagentStripFlagsAsync(role, dir, undefined, dir, other);
-		assert.ok(!flags.includes("--no-extensions"), `${role} must keep extension loading, or its model may be unreachable`);
-		assert.deepEqual(flags, SUBAGENT_STRIP_FLAGS[role], `${role}: with no opt-ins the resolved flags are exactly the base flags`);
-		const argv = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS[role], role, flags);
-		assert.ok(!argv.includes("--no-extensions"), `${role}: the final argv must not strip extensions either`);
+		const argv = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS[role], role);
+		assert.ok(!argv.includes("--no-extensions"), `${role} must keep extension loading, or its model may be unreachable`);
+		assert.ok(!SUBAGENT_STRIP_FLAGS[role].includes("--no-extensions"), `${role}: the base flags never force a bare boot`);
 	}
 });

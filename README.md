@@ -59,11 +59,9 @@ GRAD  ▶ grader              12s  running probes
 | Command | What it does |
 |---|---|
 | `/zense status` | phase, changes this cycle, turns/tokens, flags, escalations |
-| `/zense surface` | what this build exposes: tools, commands, ladder, concurrency, ceiling (none) |
+| `/zense surface` | what this build exposes: tools, commands, ladder, concurrency (the only source of truth for the command list) |
 | `/zense models` | pick the model ladder slots (priority 1–5) |
 | `ctrl+_` / `/zense agents` | live tail of the running sub-agents |
-| `/zense memory` | grouped lesson summary (`json` = raw) |
-| `/zense distill` | compact `memory.jsonl` into one lesson set (aborts without deleting on failure) |
 | `/zense resume` | continue a run found on disk |
 | `/zense fresh-context on/off/status/clear` | the task-boundary context reset and the knowledge stack behind it |
 

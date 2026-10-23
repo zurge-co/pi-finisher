@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { formatHygieneViolations } from "./code-hygiene.ts";
 import { analyzeTestFile, formatTestFindings, isTestFile } from "./test-quality.ts";
 import { costCeilingKeysPresent } from "./goal-run.ts";
-import { type LaunchSubagent, type Learn, type HarnessContext } from "./kit.ts";
+import { type LaunchSubagent, type HarnessContext } from "./kit.ts";
 import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./swarm-code.ts";
 import { buildFanOutPrompt, runSwarm, type FanOutArgs, type SwarmSlot, type SwarmTask } from "./swarm.ts";
 import { type State } from "./types.ts";
@@ -15,7 +15,6 @@ import { mkdirSync } from "node:fs";
 
 export const createCodeSwarm = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const learn = ctx.learn;
 	const pi = ctx.pi;
 	const launchSubagent = ctx.launchSubagent;
 
@@ -102,7 +101,6 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 						}
 					});
 					if (violations.length) {
-						learn(ctx, `swarm code: slice ${plan.id} broke the code rules — handed back to a coder (${violations.length} violation(s))`);
 						return { ok: false, output: `your slice broke the code rules — fix these in your checkout, then report FILES: again\n${formatHygieneViolations(violations)}` };
 					}
 					const weakTests = changed.filter(isTestFile).flatMap((rel) => {
@@ -114,7 +112,6 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 						}
 					});
 					if (weakTests.length) {
-						learn(ctx, `swarm code: slice ${plan.id} wrote ${weakTests.length} filler test(s) — handed back`);
 						return { ok: false, output: `your slice added tests that can never fail — delete them or assert a real law, then report FILES: again\n${formatTestFindings(weakTests)}` };
 					}
 					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
@@ -136,7 +133,6 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 			else failedApplies.push(`${o.id}: ${res.msg}`);
 		}
 		const failed = results.filter((r) => !r.ok);
-		learn(ctx, `swarm code: ${outcomes.length}/${results.length} coder(s) produced work — merge ${applied.length} applied, ${mergePlan.blocked.length} blocked, ${failedApplies.length} apply-failed — ladder ${opts.ladder.join(" > ")} (${opts.source})${opts.notes}`);
 		const lines = [
 			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ code swarm finished with issues" : "✅ code swarm merged"}: ${applied.length}/${results.length} slice(s) applied`,
 			mergeReport(mergePlan, outcomes),

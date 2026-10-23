@@ -73,7 +73,6 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `evidence.ts` | Check probes, repo facts, git change summary, `lintSpecChecks` |
 | `eval-review.ts` | Grader/reviewer contracts (still used by the verify path's prompts) |
 | `spec-draft.ts` | Requirements-output parsing + quality gate (used by the compile path) |
-| `memory.ts` | `memory.jsonl` summary + `/zense distill` |
 | `models.ts` | Per-role model config, picker choices, `panelize` |
 | `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
 | `adr-deny.ts` | ADR `DENY:` parsing (kept; no longer on the write path) |

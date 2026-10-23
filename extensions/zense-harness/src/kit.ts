@@ -2,7 +2,6 @@ import { type OverlayOptions, type SelectItem } from "@earendil-works/pi-tui";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type State } from "./types.ts";
 
-export type Learn = (ctx: ExtensionContext, note: string) => void;
 export type GetState = () => State;
 
 export type Persist = () => void;
@@ -46,7 +45,6 @@ export type ZenseCustom = <T>(
 ) => Promise<T>;
 
 export type ZensePick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint?: string) => Promise<string | null>;
-export type ExtConfigDialog = (ctx: ExtensionContext, role: string, items: { path: string; label: string; checked: boolean }[]) => Promise<string[] | null>;
 export type AskClarify = (ctx: ExtensionContext, q: { question: string; choices?: string[]; freeText?: boolean }) => Promise<string | undefined>;
 export type AcceptPending = (ctx: ExtensionContext, commitIfStaged: boolean, notifyViaBulletin?: boolean) => { ok: boolean; text: string; specVersion?: number };
 export type ScrollAction = { dir: 1 | -1; page: boolean } | "top" | "bottom" | null;
@@ -59,7 +57,6 @@ export interface HarnessContext {
 	persist: Persist;
 	updateWidget: UpdateWidget;
 	rescheduleTicker: RescheduleTicker;
-	learn: Learn;
 	flag: Flag;
 	escalate: Escalate;
 	launchSubagent: LaunchSubagent;
@@ -68,7 +65,6 @@ export interface HarnessContext {
 	askClarifyQuestion: AskClarify;
 	acceptPending: AcceptPending;
 	zensePick: ZensePick;
-	extConfigDialog: ExtConfigDialog;
 	openAgentsViewer: OpenAgentsViewer;
 	zenseCustom: ZenseCustom;
 	OVERLAY_LG: OverlayOptions;

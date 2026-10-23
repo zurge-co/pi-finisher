@@ -41,97 +41,6 @@ export const subagentTimeout = (role: string, cwd?: string, fallbackCwd?: string
 	return SUBAGENT_TIMEOUT_MS[role] ?? SUBAGENT_TIMEOUT_MS.default;
 };
 
-export const zenseGlobalConfigDir = (): string => join(homedir(), ".pi", "agent", "zense");
-
-export interface InstalledExtension {
-	path: string;   	enabled: boolean;
-	source: string; 	scope: string;  }
-
-export const extDisplayLabel = (ext: InstalledExtension): string => {
-	const segs = ext.path.split(/[\\/]/).filter(Boolean);
-	const pkgTail = ext.source.replace(/^npm:/, "").split("/").filter(Boolean).pop() ?? "";
-	const idx = pkgTail ? segs.lastIndexOf(pkgTail) : -1;
-	const rel = idx >= 0 ? segs.slice(idx + 1) : segs.slice(-1);
-	if (rel[0] === "extensions") rel.shift();
-	return rel.join("/");
-};
-
-export const listInstalledExtensions = async (cwd: string, agentDir = getAgentDir()): Promise<InstalledExtension[]> => {
-	try {
-		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: true });
-		const pm = new DefaultPackageManager({ cwd, agentDir, settingsManager });
-		const resolved = await pm.resolve(async () => "skip");
-		return resolved.extensions.map((e) => ({ path: e.path, enabled: e.enabled, source: e.metadata.source, scope: e.metadata.scope }));
-	} catch {
-		return [];
-	}
-};
-
-const readExtIncludesFrom = (cfgPath: string, role: string): string[] | undefined => {
-	try {
-		if (!existsSync(cfgPath)) return undefined;
-		const cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as { subagentExtInclude?: Record<string, unknown> };
-		const sub = cfg.subagentExtInclude;
-		if (!sub || typeof sub !== "object") return undefined;
-		const v = sub[role];
-		if (!Array.isArray(v)) return undefined;
-		return v.filter((p): p is string => typeof p === "string");
-	} catch {
-		return undefined; 	}
-};
-
-export const subagentExtIncludes = (role: string, cwd?: string, fallbackCwd?: string, globalDir = zenseGlobalConfigDir()): string[] => {
-	for (const dir of [cwd, fallbackCwd]) {
-		if (!dir) continue;
-		const v = readExtIncludesFrom(join(zenseDir(dir), "config.json"), role);
-		if (v !== undefined) return v;
-	}
-	return readExtIncludesFrom(join(globalDir, "config.json"), role) ?? [];
-};
-
-export const writeSubagentExtIncludes = (cwd: string, role: string, value: string[] | null, globalDir = zenseGlobalConfigDir()): { globalSeeded: boolean } => {
-	const writeInto = (cfgPath: string, mutate: (sub: Record<string, unknown>) => void): boolean => {
-		try {
-			let raw: Record<string, unknown> = {};
-			if (existsSync(cfgPath)) raw = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>;
-			const sub = { ...((raw.subagentExtInclude as Record<string, unknown> | undefined) ?? {}) };
-			mutate(sub);
-			if (Object.keys(sub).length) raw.subagentExtInclude = sub;
-			else delete raw.subagentExtInclude;
-			mkdirSync(dirname(cfgPath), { recursive: true });
-			writeFileSync(cfgPath, JSON.stringify(raw, null, 2));
-			return true;
-		} catch {
-			return false; 		}
-	};
-	writeInto(join(zenseDir(cwd), "config.json"), (sub) => {
-		if (value === null) delete sub[role];
-		else sub[role] = value;
-	});
-	let globalSeeded = false;
-	if (value !== null && readExtIncludesFrom(join(globalDir, "config.json"), role) === undefined)
-		globalSeeded = writeInto(join(globalDir, "config.json"), (sub) => {
-			sub[role] = value;
-		});
-	return { globalSeeded };
-};
-
-export const subagentStripFlagsAsync = async (
-	role: string,
-	cwd?: string,
-	fallbackCwd?: string,
-	agentDir = getAgentDir(),
-	globalDir = zenseGlobalConfigDir(),
-): Promise<string[]> => {
-	const base = [...(SUBAGENT_STRIP_FLAGS[role] ?? [])];
-	const include = subagentExtIncludes(role, cwd, fallbackCwd, globalDir);
-	if (!include.length) return base;
-	const enumCwd = cwd ?? fallbackCwd;
-	const valid = enumCwd ? new Set((await listInstalledExtensions(enumCwd, agentDir)).filter((e) => e.enabled).map((e) => e.path)) : new Set<string>();
-	for (const p of include) if (valid.has(p)) base.push("-e", p);
-	return base;
-};
-
 export const modelMatchesPattern = (usedModel: string, pattern: string): boolean => {
 	const used = usedModel.trim().toLowerCase();
 	const pat = pattern.trim().toLowerCase();
@@ -157,43 +66,6 @@ export const BUILTIN_PROVIDER_IDS = new Set([
 
 export const PROVIDER_MISSING_RX = /no models found matching|model .{0,60}\bnot available|unknown (model|provider)|no api key found for/i;
 
-export interface ProviderExtHit {
-	path: string;
-	label: string;
-}
-
-const defaultExtSourceReader = (path: string): string | undefined => {
-	try {
-		return readFileSync(path, "utf8").slice(0, 400_000);
-	} catch {
-		return undefined; 	}
-};
-
-export const findProviderExtension = (
-	providerId: string,
-	exts: InstalledExtension[],
-	read: (path: string) => string | undefined = defaultExtSourceReader,
-): ProviderExtHit | undefined => {
-	const pid = providerId.toLowerCase();
-	const scored: { ext: InstalledExtension; score: number }[] = [];
-	for (const ext of exts) {
-		if (!ext.enabled) continue;
-		const content = read(ext.path)?.toLowerCase();
-		if (!content) continue;
-		if (!content.includes("registerprovider") || !content.includes(pid)) continue;
-		let score = 0;
-		if (/\/provider\//.test(ext.path.replace(/\\/g, "/"))) score += 2;
-		if (content.includes(`id: "${pid}"`) || content.includes(`id: '${pid}'`)) score += 1;
-		scored.push({ ext, score });
-	}
-	if (!scored.length) return undefined;
-	const max = Math.max(...scored.map((s) => s.score));
-	const top = scored.filter((s) => s.score === max);
-	if (top.length !== 1) return undefined; 	return { path: top[0].ext.path, label: extDisplayLabel(top[0].ext) };
-};
-
-export const mergeExtInclude = (current: string[], path: string): string[] => (current.includes(path) ? current : [...current, path]);
-
 export const diagnoseProviderMissing = (
 	modelPattern: string | undefined,
 	r: { ok: boolean; output: string; usedModel?: string },
@@ -210,26 +82,12 @@ export const diagnoseProviderMissing = (
 	return undefined;
 };
 
-export const buildProviderMissingGuidance = (
-	role: string,
-	providerId: string,
-	opts: { hit?: ProviderExtHit; alreadyIncluded?: boolean; autoRetried?: boolean } = {},
-): string => {
-	const lines = [
-		`provider "${providerId}" is unavailable in the sub-agent (${role}) — that provider is served by an extension which is not loaded for this role`,
-	];
-	if (opts.autoRetried && opts.hit) lines.push(`auto-included "${opts.hit.label}" but the provider is still unavailable — configure it yourself:`);
-	if (opts.hit && !opts.alreadyIncluded) {
-		lines.push(`fix: /zense:ext-config:${role} and tick "${opts.hit.label}"`);
-		lines.push(`or: /zense ext-config-show ${role} on ${opts.hit.path}`);
-		lines.push(`if it still falls back after inclusion → suspect auth: pi login ${providerId} or set the provider's API-key env var`);
-	} else if (opts.hit && opts.alreadyIncluded) {
-		lines.push(`extension "${opts.hit.label}" is already included for this role but the provider is still unavailable — suspect auth: pi login ${providerId} or set the provider's API-key env var (review the list with /zense ext-config-show ${role})`);
-	} else {
-		lines.push(`no extension providing "${providerId}" found among installed extensions — install that provider extension first, or change this role's model with /zense models`);
-	}
-	return lines.join("\n");
-};
+export const buildProviderMissingGuidance = (role: string, providerId: string): string =>
+	[
+		`provider "${providerId}" is unavailable in the sub-agent (${role}) — that provider is served by an extension that is not installed or not enabled`,
+		`fix: install/enable the extension providing "${providerId}", or change this role's model with /zense models`,
+		`if it is installed and enabled, suspect auth: pi login ${providerId} or set the provider's API-key env var`,
+	].join("\n");
 
 export const ZENSE_TOOL_GLOB = "zense_*";
 

@@ -117,7 +117,7 @@ test("every zense tool and every rpc call is registered through a bound, not a r
 	assert.ok(!/pi\.registerTool\(\{\s*\n\s*name:/.test(tools), "no tool may be registered without a bound");
 
 	const rpc = readFileSync(join(here, "extensions/zense-harness/src/subagent-rpc.ts"), "utf8");
-	for (const call of ["client.start()", "client.getMessages()", "client.getState()", "client.stop()", "r.client.steer(", "r.client.followUp(", "r.client.abort()"]) {
+	for (const call of ["client.start()", "client.getMessages()", "client.getState()", "client.stop()", "r.client.steer(", "r.client.followUp(", "client.abort()"]) {
 		const at = rpc.indexOf(call);
 		assert.ok(at > 0, `${call} must still be used`);
 		const line = rpc.slice(rpc.lastIndexOf("\n", at) + 1, rpc.indexOf("\n", at));
