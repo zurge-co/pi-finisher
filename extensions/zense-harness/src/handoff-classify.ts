@@ -1,4 +1,4 @@
-import { classifyKeep, distillPrompt, handoffQuestion, handoffKeepProbability, isWorthKeeping, type HandoffAnswerLike, type HandoffItem } from "./handoff-stack.ts";
+import { classifyKeep, handoffQuestion, handoffKeepProbability, isWorthKeeping, type HandoffAnswerLike } from "./handoff-stack.ts";
 
 export const CLASSIFIER_PREFERENCE = ["typesafe/jev-latest", "cloudflare-workers-ai/@cf/cloudflare/clef-flash", "cloudflare-workers-ai/@cf/cloudflare/clef", "openai/gpt-6-luna"] as const;
 
@@ -92,25 +92,3 @@ export const classifyGateway = (registry: ClassifierRegistryLike | undefined): C
 		},
 	};
 };
-
-export interface DistillGateway {
-	distill: (prompt: string) => Promise<string | undefined>;
-}
-
-export const distillThenKeep = async (distill: DistillGateway | undefined, decision: KeepDecision, opts: { from: string; text: string; existing: HandoffItem[] }): Promise<string | undefined> => {
-	if (!decision.keep) return undefined;
-	if (!distill) return opts.text;
-	return distill.distill(distillPrompt({ from: opts.from, raw: opts.text }, opts.existing)).catch(() => undefined);
-};
-
-export interface SubagentDistillOpts {
-	runSubagent: (prompt: string) => Promise<{ ok: boolean; output: string }>;
-	parse: (out: string) => string | undefined;
-}
-
-export const subagentDistillGateway = (opts: SubagentDistillOpts): DistillGateway => ({
-	distill: async (prompt) => {
-		const r = await opts.runSubagent(prompt);
-		return r.ok ? opts.parse(r.output) : undefined;
-	},
-});

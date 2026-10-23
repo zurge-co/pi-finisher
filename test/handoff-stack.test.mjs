@@ -10,14 +10,12 @@ import {
 	condenseLine,
 	handoffKeepProbability,
 	isWorthKeeping,
-	parseDistilled,
 	pushHandoff,
 	readHandoff,
 	trimStack,
 	writeHandoff,
 	handoffInjection,
 	stackSummary,
-	distillPrompt,
 } from "../extensions/zense-harness/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-handoff-"));
@@ -84,17 +82,6 @@ test("a corrupt stack file yields an empty stack instead of throwing the run awa
 	assert.deepEqual(readHandoff(cwd), []);
 });
 
-test("the distilled reply is a single line, and a refusal is a refusal", () => {
-	assert.equal(parseDistilled("DROP"), undefined);
-	assert.equal(parseDistilled("```\nDROP\n```"), undefined);
-	assert.equal(parseDistilled(""), undefined);
-	assert.equal(parseDistilled("`short`"), undefined);
-	const kept = parseDistilled("  \n\n keep the failing probe command; it is the only proof of the bound  \n");
-	assert.equal(kept, "keep the failing probe command; it is the only proof of the bound");
-	const prompt = distillPrompt({ from: "swarm", raw: "log line" }, [{ at: 1, from: "swarm", text: "earlier lesson" }]);
-	assert.match(prompt, /DROP/);
-	assert.match(prompt, /earlier lesson/, "the distiller is told what is already on the stack");
-});
 
 test("the injection lists the tail of the stack, capped, so it cannot blow the prompt budget", () => {
 	const items = Array.from({ length: HANDOFF_MAX_ITEMS }, (_, i) => ({ at: i, from: "swarm", text: `lesson ${i} that matters for the next task` }));

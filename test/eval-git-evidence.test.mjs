@@ -12,11 +12,10 @@ import {
 	runCheckProbes,
 } from "../extensions/zense-harness/index.ts";
 
-test("SUBAGENT_STRIP_FLAGS: grader/reviewer fully bare, requirements strips only themes/templates", () => {
-	const FULL = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.grader, FULL);
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.reviewer, FULL);
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.requirements, ["--no-themes", "--no-prompt-templates"]);
+test("SUBAGENT_STRIP_FLAGS: both roles strip only themes/templates", () => {
+	assert.deepEqual(SUBAGENT_STRIP_FLAGS.verifier, ["--no-themes", "--no-prompt-templates"]);
+	assert.deepEqual(SUBAGENT_STRIP_FLAGS.swarm, ["--no-themes", "--no-prompt-templates"]);
+	for (const dead of ["grader", "reviewer", "requirements", "planner", "distiller"]) assert.equal(SUBAGENT_STRIP_FLAGS[dead], undefined, `${dead} must be gone`);
 	assert.equal(SUBAGENT_STRIP_FLAGS["unknown-role"], undefined);
 });
 

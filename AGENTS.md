@@ -85,6 +85,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort |
 | `subagent-log.ts` | Sub-agent log paths + `fmtTok` |
 | `ladder-model.ts` | The `zense/auto` virtual model that routes each request across the priority ladder |
+| `timeout.ts` | The timeout rule: bash deadline injection, `withTimeout`/`settleWithTimeout`, `readToolTimeout` |
 
 ## Commands
 

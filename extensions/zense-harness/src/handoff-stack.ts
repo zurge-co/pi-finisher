@@ -124,14 +124,6 @@ export const handoffInjection = (items: HandoffItem[], limit = 6): string | unde
 	return `[zense handoff] what earlier tasks learned that this one must not rediscover:\n${body}`;
 };
 
-export const distillPrompt = (c: HandoffCandidate, existing: HandoffItem[]): string =>
-	[
-		`Condense ONE piece of knowledge from the "${c.from}" sub-agent into a single line that makes the NEXT task faster or more correct.`,
-		`Rules: one line, no statistics, no file lists, no restating code, no hedging. If it would not change what the next task does, reply exactly: DROP`,
-		existing.length ? `Already on the stack (do not repeat):\n${existing.map((i) => `- ${i.text}`).join("\n")}` : "",
-		`Candidate:\n${condenseLine(c.raw, 4_000)}`,
-	].filter(Boolean).join("\n\n");
-
 export const parseDistilled = (out: string): string | undefined => {
 	const line = condenseLine(out.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("```")) ?? "");
 	if (!line || /^DROP$/i.test(line)) return undefined;

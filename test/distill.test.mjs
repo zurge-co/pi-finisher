@@ -3,6 +3,8 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+
+const here = new URL("..", import.meta.url).pathname;
 import {
 	aggregateMemory,
 	buildDistilledMemory,
@@ -15,6 +17,7 @@ import {
 	parseDistilledLessons,
 	replaceFileAtomic,
 } from "../extensions/zense-harness/index.ts";
+import { SUBAGENT_ROLES } from "../extensions/zense-harness/index.ts";
 
 const makeRepo = () => {
 	const dir = mkdtempSync(join(tmpdir(), "zense-distill-"));
@@ -196,17 +199,11 @@ test("fmtBytes: human-readable units for the confirm dialog", () => {
 	assert.equal(fmtBytes(2 * 1_048_576), "2.0MB");
 });
 
-test("regression: runDistill must resolve strip flags via subagentStripFlagsAsync (not the static map) — otherwise subagentExtInclude.distiller is ignored, the provider extension never loads → model not found", async () => {
-	const { readFileSync: rf } = await import("node:fs");
-	const { fileURLToPath } = await import("node:url");
-	const { dirname } = await import("node:path");
-	const src = rf(join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "zense-harness", "src", "commands.ts"), "utf8");
-	const i = src.indexOf("const runDistill");
-	assert.ok(i >= 0, "runDistill not found");
-	const j = src.indexOf("runRpcSubagent({", i);
-	assert.ok(j > i, "runDistill must call runRpcSubagent");
-	const call = src.slice(j, src.indexOf(";", j));
-	assert.ok(call.includes('await subagentStripFlagsAsync("distiller"'), "call site must use await subagentStripFlagsAsync(\"distiller\", ...) so the config.json include list is re-added as -e flags");
-	assert.ok(!call.includes("SUBAGENT_STRIP_FLAGS.distiller"), "must not pass the static SUBAGENT_STRIP_FLAGS.distiller (bare boot drops every extension)");
-	assert.ok(call.includes("buildRpcSubagentArgs"), "the rpc boot must be built from the resolved flags, not assembled ad hoc");
+test("regression: the distiller role and /zense distill are gone — memory is never rewritten by a sub-agent", () => {
+	const src = readFileSync(join(here, "extensions/zense-harness/src/commands.ts"), "utf8");
+	assert.ok(!src.includes("runDistill"), "/zense distill must not exist any more");
+	assert.ok(!/sub === "distill"/.test(src), "the distill command branch must be gone");
+	const cfgSrc = readFileSync(join(here, "extensions/zense-harness/src/subagent-config.ts"), "utf8");
+	assert.ok(!cfgSrc.includes("distiller"), "the distiller role must not exist any more");
+	assert.deepEqual([...SUBAGENT_ROLES], ["swarm", "verifier"], "only the two workflow roles remain");
 });

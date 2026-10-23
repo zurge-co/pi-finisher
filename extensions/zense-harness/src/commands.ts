@@ -5,7 +5,7 @@ import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-cod
 import { buildDiscardBulletin, resetCycleState } from "./cycle.ts";
 import { subagentLogPath } from "./subagent-log.ts";
 import { runRpcSubagent } from "./subagent-rpc.ts";
-import { SUBAGENT_EXCLUDE_TOOLS, buildRpcSubagentArgs, subagentStripFlagsAsync, subagentTimeout } from "./subagent-config.ts";
+import { SUBAGENT_ROLES, orphanRoleKeys, subagentStripFlagsAsync, subagentTimeout } from "./subagent-config.ts";
 import { resolveModelPattern } from "./models.ts";
 import { discardPendingApply } from "./pending-apply.ts";
 import { subagentExtIncludes, writeSubagentExtIncludes, listInstalledExtensions, zenseGlobalConfigDir, extDisplayLabel } from "./subagent-config.ts";
@@ -15,7 +15,7 @@ import { acceptPendingApply, isGitRepo, uncommittedChanges } from "./pending-app
 import { surfaceLine } from "./goal-run.ts";
 import { freshStatusLine, readFreshContextConfig, writeFreshContextConfig } from "./fresh-context.ts";
 import { readHandoff, writeHandoff } from "./handoff-stack.ts";
-import { memorySummaryLines, aggregateMemory, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./memory.ts";
+import { memorySummaryLines, aggregateMemory } from "./memory.ts";
 import { availableModelChoices, readModelsConfig, writeModelsConfig } from "./models.ts";
 import { type AcceptPending, type Escalate, type ExtConfigDialog, type Flag, type LaunchSubagent, type Learn, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
 import { zenseDir, type State } from "./types.ts";
@@ -86,68 +86,6 @@ export const registerCommands = (ctx: HarnessContext) => {
 		}
 	};
 
-	const runDistill = async (ctx: ExtensionContext): Promise<void> => {
-		const zd = zenseDir(ctx.cwd);
-		const memPath = join(zd, "memory.jsonl");
-		const impact = distillImpact(ctx.cwd);
-		if (!impact.memoryLines)
-			return ctx.ui.notify("📚 memory is empty — nothing to distill (per the rule no lessons = no deletion, specs/subagents stay untouched)", "info");
-		if (impact.memoryBytes > MAX_DISTILL_MEMORY_BYTES)
-			return ctx.ui.notify(`⚠ memory.jsonl is ${fmtBytes(impact.memoryBytes)} — over the ${fmtBytes(MAX_DISTILL_MEMORY_BYTES)} ceiling for embedding whole into a prompt; trim/filter it yourself first, then distill (nothing has been touched)`, "warning");
-		let memoryContent: string;
-		try {
-			memoryContent = readFileSync(memPath, "utf8");
-		} catch (e) {
-			return ctx.ui.notify(`⚠ can't read memory.jsonl: ${String(e).slice(0, 120)} — aborted, nothing touched`, "warning");
-		}
-		const running = state.subagentRuns.filter((r) => r.status === "running").map((r) => r.role);
-		const detail = [
-			`memory.jsonl lessons : ${impact.memoryLines} lines (${fmtBytes(impact.memoryBytes)}) → distilled into one set and rewritten (same format)`,
-			`specs archive        : ${impact.specFiles} file(s) (${fmtBytes(impact.specBytes)}) → deleted entirely`,
-			`subagent logs        : ${impact.logFiles} file(s) (${fmtBytes(impact.logBytes)}) → deleted entirely`,
-			"untouched            : adr/ · config.json · models.json · spec.json · spec.md",
-			"",
-			"⚠ deletion is unrecoverable (no archive) — if the sub-agent fails to distill, it aborts and deletes nothing",
-			...(running.length ? [`⚠ sub-agent(s) still running: ${running.join(", ")} — their logs will be deleted mid-run; better to wait for them`] : []),
-		].join("\n");
-		const ok = await ctx.ui.confirm("🧹 /zense distill — confirm distilling memory + deleting history?", detail);
-		if (!ok) return ctx.ui.notify("distill cancelled — no files changed", "info");
-		ctx.ui.notify(`🧪 distilling ${impact.memoryLines} lessons… (distiller sub-agent, read-only)`, "info");
-		const logPath = subagentLogPath(ctx.cwd, "distiller");
-		const mainModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
-		const r = await runRpcSubagent({
-			role: "distiller",
-			cwd: ctx.cwd,
-			prompt: distillTaskPrompt(memoryContent, impact.memoryLines),
-			logPath,
-			timeoutMs: subagentTimeout("distiller", ctx.cwd),
-			cliArgs: buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.distiller, "distiller", await subagentStripFlagsAsync("distiller", ctx.cwd)),
-			model: resolveModelPattern(ctx.cwd, "distiller", mainModel),
-		});
-		if (!r.ok) {
-			learn(ctx, `distill aborted: distiller sub-agent failed — ${r.output.split("\n")[0].slice(0, 160)}`);
-			ctx.ui.notify(`⚠ distiller failed — aborted; nothing deleted/overwritten (log: ${relative(ctx.cwd, logPath)})`, "warning");
-			return;
-		}
-		const parsed = parseDistilledLessons(r.output);
-		if (!parsed.ok) {
-			learn(ctx, `distill aborted: distiller output invalid (${parsed.error})`);
-			ctx.ui.notify(`⚠ distiller output is invalid: ${parsed.error} — aborted; nothing deleted/overwritten (log: ${relative(ctx.cwd, logPath)})`, "warning");
-			return;
-		}
-		try {
-			replaceFileAtomic(memPath, buildDistilledMemory(parsed.lessons));
-		} catch (e) {
-			learn(ctx, `distill aborted: overwriting memory.jsonl failed (${String(e).slice(0, 120)})`);
-			ctx.ui.notify(`⚠ overwriting memory.jsonl failed (${String(e).slice(0, 120)}) — aborted; specs/logs not deleted, the original file is intact`, "warning");
-			return;
-		}
-		const specsN = clearDirFiles(join(zd, "specs"));
-		const logsN = clearDirFiles(join(zd, "subagents"), new Set([basename(logPath)]));
-		learn(ctx, `distilled memory: ${impact.memoryLines} → ${parsed.lessons.length} lessons; cleared specs ×${specsN}, logs ×${logsN}`);
-		ctx.ui.notify(`✅ distill done — memory ${impact.memoryLines} lines → ${parsed.lessons.length} lessons · deleted ${specsN} spec file(s) · ${logsN} log file(s) (distiller log kept)`, "info");
-	};
-
 	const resumeZense = (ctx: ExtensionContext): void => {
 		if (state.spec)
 			return ctx.ui.notify(
@@ -192,9 +130,9 @@ export const registerCommands = (ctx: HarnessContext) => {
 	};
 
 	pi.registerCommand("zense", {
-		description: "Zense harness (zense = human signature/sign): status | resume | approve | accept | discard | agents | gate on|off | memory | distill | models | ext-config-show",
+		description: "Zense harness (zense = human signature/sign): status | resume | approve | accept | discard | agents | gate on|off | memory | models | ext-config-show",
 		getArgumentCompletions: (prefix) =>
-			["status", "resume", "accept", "discard", "agents", "distill", "memory", "models", "ext-config-show", "surface"]
+			["status", "resume", "accept", "discard", "agents", "memory", "models", "ext-config-show", "fresh-context", "surface"]
 				.filter((s) => s.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
@@ -280,19 +218,19 @@ export const registerCommands = (ctx: HarnessContext) => {
 						"info",
 					);
 				}
-			} else if (sub === "distill") {
-				await runDistill(ctx);
 			} else if (sub === "models") {
 				const cfgPath = join(zenseDir(ctx.cwd), "models.json");
 				const cfg = readModelsConfig(ctx.cwd);
 				const mainModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(no active model)";
-				const roles = ["requirements", "planner", "grader", "reviewer", "distiller"];
+				const roles: readonly string[] = [...SUBAGENT_ROLES];
+				const orphans = orphanRoleKeys(cfg, roles);
 				if (ctx.mode !== "tui") {
 					const lines = [
 						`🧪 sub-agent models — config: ${existsSync(cfgPath) ? relative(ctx.cwd, cfgPath) : "(no .zense/models.json — every role uses the main model)"}`,
 						`main agent: ${mainModel}`,
 						...roles.map((r) => `  ${r}: ${cfg[r] ? cfg[r] + " (from config)" : mainModel + " (fallback)"}`),
-						"edit by creating .zense/models.json, e.g. { \"grader\": \"openai/gpt-4o-mini\" } — or open the TUI and use /zense models for an interactive picker",
+						"edit by creating .zense/models.json, e.g. { \"verifier\": \"openai/gpt-4o-mini\" } — or open the TUI and use /zense models for an interactive picker",
+						...(orphans.length ? [`⚠ keys with no role any more (ignored, delete when you like): ${orphans.join(", ")}`] : []),
 					];
 					ctx.ui.notify(lines.join("\n"), "info");
 					return;
@@ -334,7 +272,7 @@ export const registerCommands = (ctx: HarnessContext) => {
 				writeModelsConfig(ctx.cwd, role, pattern);
 				ctx.ui.notify(`✅ ${role}: ${pattern} — wrote ${relative(ctx.cwd, cfgPath)} (takes effect on the next sub-agent run)`, "info");
 			} else if (sub === "ext-config-show" || sub === "ext-config") {
-				const roles = ["requirements", "planner", "grader", "reviewer", "distiller"];
+				const roles: readonly string[] = [...SUBAGENT_ROLES];
 				const [role, action, ...vals] = rest;
 				if (!role || !roles.includes(role)) {
 					ctx.ui.notify(
@@ -345,7 +283,7 @@ export const registerCommands = (ctx: HarnessContext) => {
 								return `  ${r}: ${inc.length ? `loads ${inc.length}` : "bare boot (no extensions)"}`;
 							}),
 							`persist: local ${join(zenseDir(ctx.cwd), "config.json")} · global ${join(zenseGlobalConfigDir(), "config.json")} (first-time seed + fallback)`,
-							"configure: /zense:ext-config:grader | :requirements | :reviewer (TUI = instant checkboxes) or /zense ext-config-show <role> all|none|on|off <index|path>",
+							"configure: /zense:ext-config:swarm | :verifier (TUI = instant checkboxes) or /zense ext-config-show <role> all|none|on|off <index|path>",
 						].join("\n"),
 						"info",
 					);
@@ -353,12 +291,12 @@ export const registerCommands = (ctx: HarnessContext) => {
 				}
 				await runExtConfig(ctx, role, action, vals);
 			} else {
-				ctx.ui.notify("usage: /zense status|resume|approve|accept [commit]|discard|agents|gate on|off|memory|distill|models|ext-config-show|fresh-context on|off|status|clear", "info");
+				ctx.ui.notify("usage: /zense status|resume|approve|accept [commit]|discard|agents|gate on|off|memory|models|ext-config-show|fresh-context on|off|status|clear", "info");
 			}
 		},
 	});
 
-	for (const role of ["requirements", "planner", "grader", "reviewer", "distiller"] as const)
+	for (const role of SUBAGENT_ROLES)
 		pi.registerCommand(`zense:ext-config:${role}`, {
 			description: `which extensions sub-agent "${role}" loads (default: bare boot — opt in by ticking; saved to local .zense + first-time global seed)`,
 			handler: async (_args, ctx) => runExtConfig(ctx as ExtensionContext, role),

@@ -16,9 +16,11 @@ export const rewritePathForWorktree = (cwd: string, wtRoot: string, path: string
 export const buildWorktreeCommand = (cmd: string, wtRoot: string): string =>
 	`cd ${shellQuote(wtRoot)} && ${cmd}`;
 
+export const GIT_TIMEOUT_MS = 120_000;
+
 export const gitOk = (args: string[], cwd: string): { ok: boolean; out: string; err: string } => {
 	try {
-		const out = execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+		const out = execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: GIT_TIMEOUT_MS, killSignal: "SIGKILL" });
 		return { ok: true, out: out.toString(), err: "" };
 	} catch (e: any) {
 		const err = (e?.stderr?.toString?.() ?? e?.message ?? String(e)).split("\n")[0];

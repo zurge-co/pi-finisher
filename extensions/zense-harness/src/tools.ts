@@ -8,6 +8,10 @@ import { type ArmGoalRound, type AskClarify, type LaunchSubagent, type Learn, ty
 import { effectiveLadder, readSwarmConcurrency, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
 import { MAX_VERIFY_ROUNDS, advanceLoop, buildFixPrompt, buildReport, freshVerifyLoop, judgeCase, nextVerifyRound, renderVerifyReport } from "./verify-loop.ts";
 import { type State } from "./types.ts";
+import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
+import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type TSchema } from "typebox";
+import { liveByRole, steerLive, followUpLive } from "./subagent-rpc.ts";
 
 export const registerTools = (ctx: HarnessContext) => {
 	const learn = ctx.learn;
@@ -20,7 +24,17 @@ export const registerTools = (ctx: HarnessContext) => {
 	const armGoalRound = ctx.armGoalRound;
 	const askClarifyQuestion = ctx.askClarifyQuestion;
 
-	pi.registerTool({
+	const boundedTool = <TParams extends TSchema, TDetails, TState>(def: ToolDefinition<TParams, TDetails, TState>): ToolDefinition<TParams, TDetails, TState> => ({
+		...def,
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
+			const r = await withTimeout(Promise.resolve(def.execute(toolCallId, params, signal, onUpdate, ctx)), readToolTimeout(cwd, def.name), TOOL_TIMEOUT_LABEL(def.name));
+			if (!r.timedOut) return r.value as never;
+			return { content: [{ type: "text", text: timeoutNote(r) }], details: { timedOut: true, tool: def.name }, isError: true } as never;
+		},
+	});
+
+	pi.registerTool(boundedTool({
 		name: "zense_ask",
 		label: "Zense Ask Human",
 		description:
@@ -60,9 +74,9 @@ export const registerTools = (ctx: HarnessContext) => {
 			learn(ctx as ExtensionContext, `zense_ask: ${qs.length} question(s), ${answers.filter((a) => a.answer === undefined).length} skipped`);
 			return { content: [{ type: "text", text: formatAskAnswers(answers) }], details: { answers } };
 		},
-	});
+	}));
 
-	pi.registerTool({
+	pi.registerTool(boundedTool({
 		name: "zense_swarm",
 		label: "Zense Swarm",
 		description:
@@ -116,7 +130,7 @@ export const registerTools = (ctx: HarnessContext) => {
 				return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
 			};
 			if (p.mode === "code") return await runCodeSwarm(ctx, p.subtasks, { slots, concurrency, maxAttempts: p.maxAttempts ?? 2, goal: p.goal, sig, ladder, source, notes });
-			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}) };
+			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s: { id: string; instruction: string }) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}) };
 			const tasks = fan.subtasks.map((s) => ({ id: s.id, payload: s }));
 			const results = await runSwarm(tasks, { slots, concurrency, maxAttempts: p.maxAttempts ?? 2, run: runOne((task, attempt) => buildFanOutPrompt(fan, task.payload!, attempt)) });
 			const failed = results.filter((r) => !r.ok);
@@ -160,9 +174,9 @@ export const registerTools = (ctx: HarnessContext) => {
 				...(failed.length ? { isError: true } : {}),
 			};
 		},
-	});
+	}));
 
-	pi.registerTool({
+	pi.registerTool(boundedTool({
 		name: "zense_goal",
 		label: "Zense Goal",
 		description:
@@ -180,7 +194,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
 			if (!goal) return { content: [{ type: "text", text: "zense_goal: goal is empty — ctx.state the outcome the human wants" }], details: {}, isError: true };
-			const cases = (p.cases ?? []).map((c) => c.trim()).filter(Boolean);
+			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
 			const started = resumeOrStart(state.goalDriver as GoalRunState | undefined, goal);
 			state.goalDriver = started;
 			if (cases.length && !state.spec) {
@@ -200,5 +214,50 @@ prove it with real commands (zense_swarm mode=verify or your own runs); no furth
 				details: { goal, cases: next, round: started.loop.round },
 			};
 		},
-	});
+	}));
+
+	pi.registerTool(boundedTool({
+		name: "zense_steer",
+		label: "Zense Steer",
+		description:
+			"Push a finding into a sub-agent THAT IS STILL RUNNING, so it corrects course without being restarted. Call it with no arguments to list who is working right now. You decide when this matters — the harness never guesses on your behalf. steer lands after the current turn's tool calls, before the next model request; followUp lands after the agent finishes its current work.",
+		promptSnippet: "Send a finding into a running sub-agent (steer or follow-up) instead of restarting it",
+		promptGuidelines: [
+			"Use this when one worker's result changes what another running worker must know — a shared file, a broken assumption, a constraint it cannot see.",
+			"Prefer steer for something it must act on now; use followUp for extra work it should do after finishing.",
+			"Call it with no arguments first if you are unsure who is live.",
+			"Never use it to restart a worker or undo its work — steer only adds information.",
+		],
+		parameters: Type.Object({
+			role: Type.Optional(Type.String({ description: "which live sub-agent to reach: swarm or verifier. Omit to list who is running" })),
+			message: Type.Optional(Type.String({ description: "the finding to inject — self-contained, no references to context the sub-agent cannot see" })),
+			mode: Type.Optional(Type.Union([Type.Literal("steer"), Type.Literal("followUp")] as const)),
+		}),
+		async execute(_id, pp, _s, _o, ctx) {
+			const live = liveByRole();
+			const now = Date.now();
+			if (!pp.role || !pp.message?.trim()) {
+				return {
+					content: [{ type: "text", text: live.length ? `live sub-agents (pass role + message to reach one):\n${live.map((r) => `  ${r.role} — running ${Math.round((now - r.startedAt) / 1000)}s`).join("\n")}` : "no sub-agent is running — there is nothing to steer. Start one with zense_swarm, or do the work yourself." }],
+					details: { live: live.map((r) => ({ role: r.role, aliveMs: now - r.startedAt })) },
+					...(live.length ? { isError: true } : {}),
+				};
+			}
+			const role = pp.role.trim();
+			const message = pp.message.trim();
+			const how = pp.mode ?? "steer";
+			const n = how === "followUp" ? await followUpLive(role, message) : await steerLive(role, message);
+			if (!n)
+				return {
+					content: [{ type: "text", text: `no "${role}" sub-agent is running — nothing was sent. Live right now: ${live.map((r) => r.role).join(", ") || "(none)"}. A steer cannot reach a worker that already finished; its result is in the handoff stack instead.` }],
+					details: { sent: 0, role, mode: how, live: live.map((r) => r.role) },
+					isError: true,
+				};
+			learn(ctx, `steer: ${how} sent to ${n} live ${role} agent(s) — ${message.slice(0, 160)}`);
+			return {
+				content: [{ type: "text", text: `${how === "followUp" ? "follow-up queued for" : "steered"} ${n} live ${role} agent(s):\n${message}\n\n${how === "followUp" ? "it will be handled after the agent finishes its current work" : "it lands after the current turn's tool calls, before the next model request"}` }],
+				details: { sent: n, role, mode: how },
+			};
+		},
+	}));
 };

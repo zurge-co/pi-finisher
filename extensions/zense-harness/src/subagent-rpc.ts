@@ -1,4 +1,13 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { withTimeout, settleWithTimeout, timeoutNote } from "./timeout.ts";
+
+const RPC_CALL_MS = 60_000;
+
+const boundedCall = <T>(run: Promise<T>, label: string, ms: number, onTimeout: () => T): Promise<T> =>
+	settleWithTimeout(run, ms, label, onTimeout);
+
+export const timeoutLabel = (label: string, ms: number): string =>
+	timeoutNote({ timedOut: true, label, ms });
 import { dirname } from "node:path";
 import { RpcClient, type JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
@@ -106,13 +115,14 @@ export const raceTimeout = async <T>(run: Promise<T>, timeoutMs: number, signal?
 	}
 };
 
-export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean; output: string; logPath: string; usedModel?: string }> => {
+export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean; output: string; logPath: string; usedModel?: string; sessionId?: string }> => {
 	writeHeader(opts.logPath, opts.role, opts.prompt);
 	if (opts.signal?.aborted) return { ok: false, output: "cancelled by user (Esc) — the sub-agent never started", logPath: opts.logPath };
 	const wanted = splitModelPattern(opts.model);
 	const client = new RpcClient({
 		cliPath: rpcCliPath(),
 		cwd: opts.cwd,
+		env: { PI_ZENSE_SUBAGENT: "1" },
 		args: opts.cliArgs ?? [],
 		...(wanted.provider ? { provider: wanted.provider } : {}),
 		...(wanted.model ? { model: wanted.model } : {}),
@@ -122,7 +132,8 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 	liveRpcRuns.set(key, { role: opts.role, client, startedAt, onChunk: opts.onChunk });
 	const append = (s: string) => appendFileSync(opts.logPath, s);
 	try {
-		await client.start();
+		const started = await withTimeout(client.start(), opts.timeoutMs, `rpc start (${opts.role})`);
+		if (started.timedOut) return { ok: false, output: `${timeoutLabel("rpc start", opts.timeoutMs)} — the sub-agent never came up`, logPath: opts.logPath };
 		const unsub = client.onEvent((ev) => {
 			const tool = toolLineFromEvent(ev);
 			if (tool) {
@@ -136,28 +147,33 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 				opts.onChunk?.(text);
 			}
 		});
-		const raced = await raceTimeout(client.promptAndWait(opts.prompt, undefined, opts.timeoutMs), opts.timeoutMs, opts.signal);
+		const raced = await raceTimeout(
+			settleWithTimeout(client.promptAndWait(opts.prompt, undefined, opts.timeoutMs), opts.timeoutMs + RPC_CALL_MS, `rpc run (${opts.role})`, () => [] as never),
+			opts.timeoutMs,
+			opts.signal,
+		);
 		unsub();
 		if (raced === TIMED_OUT) {
-			await client.abort().catch(() => undefined);
-			const partial = finalTextFromMessages(await client.getMessages().catch(() => []));
+			await boundedCall(client.abort(), `rpc abort (${opts.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined);
+			const partial = finalTextFromMessages(await boundedCall(client.getMessages(), `rpc getMessages (${opts.role})`, RPC_CALL_MS, () => [] as never).catch(() => []));
 			const why = opts.signal?.aborted ? "cancelled by user (Esc)" : `TIMEOUT ${Math.round(opts.timeoutMs / 1000)}s`;
 			append(`\n--- ${why} ---\n`);
 			return { ok: false, output: `${why}\nlast output:\n${partial.slice(-2_000)} (log: ${opts.logPath})`, logPath: opts.logPath };
 		}
-		const msgs = await client.getMessages();
-		const state = await client.getState().catch(() => undefined);
-		const usedModel = modelLabel((state as { model?: { provider?: string; id?: string } } | undefined)?.model);
+		const msgs = await boundedCall(client.getMessages(), `rpc getMessages (${opts.role})`, RPC_CALL_MS, () => [] as never);
+		const state = (await boundedCall(client.getState(), `rpc getState (${opts.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined)) as { model?: { provider?: string; id?: string }; sessionId?: string } | undefined;
+		const usedModel = modelLabel(state?.model);
+		const sessionId = typeof state?.sessionId === "string" ? state.sessionId : undefined;
 		const output = finalTextFromMessages(msgs);
-		append(`\n--- exited ok ---\n--- used model: ${usedModel ?? "(unknown)"} ---\n`);
-		return { ok: true, output: output.slice(-16_000), logPath: opts.logPath, ...(usedModel ? { usedModel } : {}) };
+		append(`\n--- exited ok ---\n--- used model: ${usedModel ?? "(unknown)"} ---\n--- session: ${sessionId ?? "(none)"} ---\n`);
+		return { ok: true, output: output.slice(-16_000), logPath: opts.logPath, ...(usedModel ? { usedModel } : {}), ...(sessionId ? { sessionId } : {}) };
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		append(`\n--- rpc error: ${msg} ---\n`);
 		return { ok: false, output: `sub-agent rpc error: ${msg} (log: ${opts.logPath})`, logPath: opts.logPath };
 	} finally {
 		liveRpcRuns.delete(key);
-		await client.stop().catch(() => undefined);
+		await boundedCall(client.stop(), `rpc stop (${opts.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined);
 	}
 };
 
@@ -165,13 +181,13 @@ export const liveByRole = (role?: string): RpcRunHandle[] => [...liveRpcRuns.val
 
 export const steerLive = async (role: string, message: string): Promise<number> => {
 	const live = liveByRole(role);
-	for (const r of live) await r.client.steer(message).catch(() => undefined);
+	for (const r of live) await boundedCall(r.client.steer(message), `rpc steer (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
 	return live.length;
 };
 
 export const followUpLive = async (role: string, message: string): Promise<number> => {
 	const live = liveByRole(role);
-	for (const r of live) await r.client.followUp(message).catch(() => undefined);
+	for (const r of live) await boundedCall(r.client.followUp(message), `rpc followUp (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
 	return live.length;
 };
 
@@ -179,6 +195,6 @@ export const liveRunSummary = (): { role: string; aliveMs: number }[] => liveByR
 
 export const abortAllLive = async (): Promise<number> => {
 	const all = liveByRole();
-	for (const r of all) await r.client.abort().catch(() => undefined);
+	for (const r of all) await boundedCall(r.client.abort(), `rpc abort (${r.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined);
 	return all.length;
 };

@@ -152,7 +152,8 @@ test("buildReviewModalText: nothing staged → the accept hotkey is withheld, no
 
 test("the eval/review graders staying on disk are still wired as read-only judging roles", async () => {
 	const { SUBAGENT_EXCLUDE_TOOLS, buildGraderPrompt, parseGraderOutput } = await import("../extensions/zense-harness/index.ts");
-	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.grader, ["write", "edit"], "the grader role may judge but never fix");
+	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.verifier, ["write", "edit"], "the verifier role may judge but never fix");
+	assert.equal(SUBAGENT_EXCLUDE_TOOLS.grader, undefined, "the grader role was merged into verifier");
 	const prompt = buildGraderPrompt({ intent: "x", scope: [], criteria: [{ id: "c1", text: "holds", check: "npm test" }], specDebt: [] }, [], [], "");
 	assert.match(prompt, /c1/);
 	const parsed = parseGraderOutput("c1: PASS: npm test exited 0\nOVERALL: PASS", [{ id: "c1", text: "holds", check: "npm test" }]);

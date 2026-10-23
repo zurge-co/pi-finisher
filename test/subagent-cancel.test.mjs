@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { raceTimeout, buildRpcSubagentArgs, withZenseToolGlob } from "../extensions/zense-harness/index.ts";
+import { raceTimeout, buildRpcSubagentArgs, withZenseToolGlob, SUBAGENT_EXCLUDE_TOOLS } from "../extensions/zense-harness/index.ts";
 
 const dir = () => mkdtempSync(join(tmpdir(), "zense-cancel-"));
 
@@ -23,12 +23,12 @@ test("a pre-aborted signal is already done — the caller gates on signal.aborte
 });
 
 test("cancelling one role never touches another role's boot arguments", () => {
-	const swarm = buildRpcSubagentArgs(["write"], "swarm");
-	const grader = buildRpcSubagentArgs(["write"], "grader");
-	assert.deepEqual(swarm.slice(0, 1), ["--no-session"]);
-	assert.deepEqual(grader.slice(0, 1), ["--no-session"]);
+	const swarm = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
+	const verifier = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.verifier, "verifier");
+	assert.ok(!swarm.includes("--no-session") && !verifier.includes("--no-session"), "both roles keep their own session");
 	const list = (args) => args[args.indexOf("--exclude-tools") + 1];
-	assert.deepEqual(list(swarm), list(grader), "the harness glob is identical for every role");
-	assert.ok(list(swarm).split(",").includes("write"), "each role keeps its own read-only set");
+	assert.equal(list(swarm).split(",")[0], list(verifier).split(",")[0], "the harness glob leads for every role");
+	assert.ok(!list(swarm).split(",").includes("write"), "the coder may write");
+	assert.ok(list(verifier).split(",").includes("write"), "the verifier may not");
 	assert.ok(dir().length > 0);
 });

@@ -114,6 +114,25 @@ it never falls back to "keep everything". Log in one of:
 
 Turn the reset off with `/zense fresh-context off`; inspect the stack with `/zense fresh-context status`.
 
+## Every tool call is bounded
+
+A `bash` call that carries no `timeout` runs **forever** in pi — the tool simply waits. The harness
+closes that hole for the main agent *and* for every sub-agent: a `tool_call` hook injects a deadline
+whenever one is missing or invalid.
+
+| call | bound |
+|---|---|
+| `bash` | injected if absent (default 900 s, override with `toolTimeoutMs` in `.zense/config.json`) |
+| `zense_goal` / `zense_swarm` / `zense_steer` / `zense_ask` | wrapped, reports `⏱ … exceeded its Ns limit` instead of hanging |
+| every RPC call to a sub-agent (`start`, `promptAndWait`, `steer`, `getMessages`, …) | its own deadline |
+| every `git` subprocess | 120 s, `SIGKILL` on expiry |
+
+```json
+{ "toolTimeoutMs": { "bash": 900000, "zense_swarm": 1800000 } }
+```
+
+A broken config falls back to the default rather than failing a tool call.
+
 ## Rules the harness enforces on the result
 
 - **No comments in code** (line or block); a load-bearing reason must carry

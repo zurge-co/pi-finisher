@@ -24,8 +24,8 @@ const repo = (models, config) => {
 	return dir;
 };
 
-test("the agent-facing surface is exactly the three goal tools, and the retired ones are gone", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["zense_goal", "zense_swarm", "zense_ask"]);
+test("the agent-facing surface is exactly the four goal tools, and the retired ones are gone", () => {
+	assert.deepEqual([...SURFACE_TOOLS], ["zense_goal", "zense_swarm", "zense_steer", "zense_ask"]);
 	for (const t of RETIRED_TOOLS) {
 		assert.equal(isRetiredTool(t), true, `${t} must be retired`);
 		assert.equal(isLiveTool(t), false, `${t} must not be callable`);
@@ -97,4 +97,16 @@ test("no code path can stop a run for cost: the only bounds are evidence and rou
 	});
 	assert.deepEqual(actions.slice(0, -1).every((a) => a === "fix"), true, "every failing-but-new round is allowed to continue regardless of cost");
 	assert.equal(actions[actions.length - 1], "stop", "the stop is the round bound, not a budget");
+});
+
+test("every command the surface advertises has a real handler — no ghost commands after a subsystem is removed", async () => {
+	const { readFileSync } = await import("node:fs");
+	const here = new URL("..", import.meta.url).pathname;
+	const src = readFileSync(join(here, "extensions/zense-harness/src/commands.ts"), "utf8");
+	for (const cmd of SURFACE_COMMANDS) {
+		assert.ok(src.includes(`sub === "${cmd}"`), `SURFACE_COMMANDS advertises "${cmd}" but commands.ts has no branch for it`);
+	}
+	assert.ok(!SURFACE_COMMANDS.includes("distill"), "the distiller role is gone, so /zense distill must not be advertised");
+	assert.ok(!/sub === "distill"/.test(src), "and no orphan branch may linger");
+	assert.ok(!src.includes("runDistill"));
 });

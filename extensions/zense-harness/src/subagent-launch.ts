@@ -3,8 +3,7 @@ import { SUBAGENT_EXCLUDE_TOOLS, subagentStripFlagsAsync, subagentTimeout, build
 import { runRpcSubagent } from "./subagent-rpc.ts";
 import { subagentLogPath } from "./subagent-log.ts";
 import { appendHandoff, handoffInjection, readHandoff } from "./handoff-stack.ts";
-import { decideKeep, describeDecision, classifyGateway, distillThenKeep, subagentDistillGateway, needsClassifierSetup, classifierGuidance } from "./handoff-classify.ts";
-import { parseDistilled } from "./handoff-stack.ts";
+import { decideKeep, describeDecision, classifyGateway, needsClassifierSetup, classifierGuidance } from "./handoff-classify.ts";
 import { streamTail } from "./agent-panel.ts";
 import { resolveModelPattern } from "./models.ts";
 import { type Learn, type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
@@ -52,23 +51,6 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		learn(ctx, `provider missing: ${role} needs "${patternProvider}" but can't heal — ${hit ? (alreadyIncluded ? "extension already included, still falling back (suspect auth)" : "extension ambiguous/unusable") : "no provider extension found"}`);
 		return { ...r0, ok: false, output: `${buildProviderMissingGuidance(role, patternProvider, { hit, alreadyIncluded })}\n---\n${r0.output}` };
 	};
-
-	const distiller = (ctx: ExtensionContext, role: string) =>
-		subagentDistillGateway({
-			runSubagent: async (prompt) => {
-				const res = await runRpcSubagent({
-					role: "distiller",
-					cwd: state.worktree?.root ?? ctx.cwd,
-					prompt,
-					logPath: subagentLogPath(ctx.cwd, "distiller"),
-					timeoutMs: subagentTimeout("distiller", ctx.cwd),
-					cliArgs: buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.distiller, "distiller"),
-					model: resolveModelPattern(ctx.cwd, "distiller", ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined),
-				});
-				return { ok: res.ok, output: res.output };
-			},
-			parse: parseDistilled,
-		});
 
 	const launchSubagent = async (
 		ctx: ExtensionContext,
@@ -123,7 +105,6 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 			}
 			if (!r.ok) learn(ctx, `sub-agent failed: ${role} — ${r.output.split("\n")[0].slice(0, 160)}`);
 			if (r.ok && r.output.trim()) {
-				const existing = readHandoff(ctx.cwd);
 				const decision = await decideKeep(classifyGateway(ctx.modelRegistry), { from: role, text: r.output.slice(-4_000) });
 				learn(ctx, describeDecision(decision, role));
 				if (needsClassifierSetup(decision)) {
@@ -134,9 +115,8 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 						if (ctx.hasUI) ctx.ui.notify(`⚠ zense handoff: ${classifierGuidance()}`, "warning");
 					}
 				}
-				const distilled = await distillThenKeep(distiller(ctx, role), decision, { from: role, text: r.output.slice(-4_000), existing });
-				if (distilled) {
-					const next = appendHandoff(ctx.cwd, { at: Date.now(), from: role, text: distilled });
+				if (decision.keep) {
+					const next = appendHandoff(ctx.cwd, { at: Date.now(), from: role, text: r.output.slice(-4_000) });
 					run.handoffItems = next.length;
 				}
 			}

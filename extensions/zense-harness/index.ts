@@ -24,6 +24,7 @@ import { createSpecFlow } from "./src/spec-flow.ts";
 import { buildFreshSummary, readFreshContextConfig, shouldReset, freshCompactionEntry } from "./src/fresh-context.ts";
 import { readHandoff } from "./src/handoff-stack.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
+import { applyBashTimeout, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
 import { registerTools } from "./src/tools.ts";
 import { registerCommands } from "./src/commands.ts";
 
@@ -59,9 +60,21 @@ export * from "./src/handoff-classify.ts";
 export * from "./src/fresh-context.ts";
 export * from "./src/subagent-rpc.ts";
 export * from "./src/ladder-model.ts";
+export * from "./src/timeout.ts";
+
+const registerToolTimeoutHook = (pi: ExtensionAPI): void => {
+	pi.on("tool_call", async (ev, ctx) => {
+		applyBashTimeout(ev.toolName, ev.input, ctx.cwd);
+	});
+};
 
 export default function (pi: ExtensionAPI) {
-	if (process.env.PI_ZENSE_SUBAGENT === "1") return;
+	if (process.env.PI_ZENSE_SUBAGENT === "1") {
+		registerToolTimeoutHook(pi);
+		return;
+	}
+
+	registerToolTimeoutHook(pi);
 
 	const box = createStateBox(freshState());
 

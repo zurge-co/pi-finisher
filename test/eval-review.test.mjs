@@ -152,9 +152,17 @@ test("CHECK_FORMAT_CONTRACT + requirements prompt: contract markers (sh -c / pat
 		assert.ok(p.includes(CHECK_FORMAT_CONTRACT.slice(0, 120)), "prompt must embed CHECK_FORMAT_CONTRACT");
 });
 
-test("SUBAGENT_EXCLUDE_TOOLS: grader and reviewer are read-only like requirements", () => {
-	for (const role of ["requirements", "grader", "reviewer"]) assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS[role], ["write", "edit"]);
+test("SUBAGENT_EXCLUDE_TOOLS: the verifier is read-only, the coder is not", () => {
+	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.verifier, ["write", "edit"]);
+	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.swarm, [], "a coder must be able to write in its own worktree");
+	for (const dead of ["requirements", "grader", "reviewer", "distiller", "planner"]) assert.equal(SUBAGENT_EXCLUDE_TOOLS[dead], undefined, `${dead} must be gone`);
 	assert.equal(SUBAGENT_EXCLUDE_TOOLS["unknown-role"], undefined);
+});
+
+test("SUBAGENT_STRIP_FLAGS: neither role strips extensions, so both can reach their model", () => {
+	assert.ok(!SUBAGENT_STRIP_FLAGS.verifier.includes("--no-extensions"));
+	assert.ok(!SUBAGENT_STRIP_FLAGS.swarm.includes("--no-extensions"));
+	for (const dead of ["requirements", "grader", "reviewer", "distiller", "planner"]) assert.equal(SUBAGENT_STRIP_FLAGS[dead], undefined);
 });
 
 test("gatherRepoFacts: reads package scripts + README head + layout, tolerates bare dirs", () => {

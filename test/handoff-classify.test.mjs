@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLASSIFIER_PREFERENCE, classifyGateway, decideKeep, describeDecision, distillThenKeep, needsClassifierSetup, parsePreference, preferenceRefs, subagentDistillGateway } from "../extensions/zense-harness/index.ts";
+import { CLASSIFIER_PREFERENCE, classifyGateway, decideKeep, describeDecision, needsClassifierSetup, parsePreference, preferenceRefs } from "../extensions/zense-harness/index.ts";
 
 const gateway = (prob, opts = {}) => ({
 	available: async () => opts.model ?? { provider: "typesafe", id: "jev-latest" },
@@ -68,35 +68,6 @@ test("a registry that throws on availability keeps nothing, and the task itself 
 	assert.equal(d.why, "no-classifier");
 });
 
-test("distillation runs only for a note the classifier kept — a dropped note is never sent to a model", async () => {
-	let calls = 0;
-	const gw = { distill: async () => ((calls += 1), "one distilled line that matters") };
-	assert.equal(await distillThenKeep(gw, { keep: false, why: "classifier", probability: 0.1 }, { from: "swarm", text: "raw", existing: [] }), undefined);
-	assert.equal(calls, 0, "a dropped note must not spend a model call");
-	assert.equal(await distillThenKeep(gw, { keep: true, why: "classifier", probability: 0.9 }, { from: "swarm", text: "raw", existing: [] }), "one distilled line that matters");
-});
 
-test("a note with no classifier verdict is dropped before distillation, so no distiller call is spent", async () => {
-	let calls = 0;
-	const gw = { distill: async () => ((calls += 1), "line") };
-	assert.equal(await distillThenKeep(gw, { keep: false, why: "no-classifier" }, { from: "swarm", text: "raw lesson", existing: [] }), undefined);
-	assert.equal(calls, 0);
-	assert.equal(await distillThenKeep(undefined, { keep: true, why: "classifier", probability: 0.9 }, { from: "swarm", text: "raw lesson", existing: [] }), "raw lesson", "with no distiller an approved note is kept as-is");
-	const failing = { distill: async () => Promise.reject(new Error("model down")) };
-	assert.equal(await distillThenKeep(failing, { keep: true, why: "classifier", probability: 0.9 }, { from: "swarm", text: "raw lesson", existing: [] }), undefined);
-});
 
-test("the distiller sees what is already on the stack, so it cannot re-add a duplicate", async () => {
-	let seen = "";
-	const gw = { distill: async (p) => ((seen = p), "new line") };
-	await distillThenKeep(gw, { keep: true, why: "classifier", probability: 0.9 }, { from: "swarm", text: "fresh candidate", existing: [{ at: 1, from: "swarm", text: "already learned this" }] });
-	assert.match(seen, /already learned this/);
-	assert.match(seen, /fresh candidate/);
-});
 
-test("a sub-agent distiller gateway reports failure as no line, so the caller can decide", async () => {
-	const gw = subagentDistillGateway({ runSubagent: async () => ({ ok: true, output: "DROP" }), parse: (o) => (o === "DROP" ? undefined : o) });
-	assert.equal(await gw.distill("p"), undefined);
-	const good = subagentDistillGateway({ runSubagent: async () => ({ ok: false, output: "failed" }), parse: (o) => o });
-	assert.equal(await good.distill("p"), undefined);
-});

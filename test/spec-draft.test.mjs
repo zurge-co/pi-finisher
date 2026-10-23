@@ -184,7 +184,7 @@ test("findSimilarSpec: archived spec with overlapping title+intent is flagged (J
 	}
 });
 
-test("buildSubagentArgv: requirements role is read-only (--exclude-tools write,edit), others untouched", () => {
+test("buildSubagentArgv: a read-only role keeps its exclusions and the harness glob leads them", () => {
 	const ro = buildSubagentArgv("draft a spec", "anthropic/claude-sonnet", ["write", "edit"]);
 	assert.deepEqual(ro.slice(0, 4), ["PI_ZENSE_SUBAGENT=1", "pi", "--mode", "json"]);
 	const xt = ro.indexOf("--exclude-tools");
@@ -198,21 +198,16 @@ test("buildSubagentArgv: requirements role is read-only (--exclude-tools write,e
 	assert.equal(plain.at(-1), "grade it");
 });
 
-test("buildSubagentArgv: per-role strip flags — grader/reviewer boot fully bare, requirements keep skills/extensions", () => {
-	const FULL = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
-	for (const role of ["grader", "reviewer"]) {
-		const a = buildSubagentArgv(`task-${role}`, undefined, undefined, role);
-		for (const f of FULL) assert.ok(a.includes(f), `${role} must have ${f}`);
-		assert.equal(a.at(-1), `task-${role}`, "the task must always be argv's last element");
-				assert.ok(a.indexOf("--no-themes") > a.indexOf("--no-session"), `${role}: strip flags must come after --no-session`);
-	}
-		const g = buildSubagentArgv("grade", "sonnet", ["write", "edit"], "grader");
-	assert.ok(g.indexOf("--no-skills") < g.indexOf("--exclude-tools"), "strip flags must come before --exclude-tools");
-	assert.ok(g.indexOf("--exclude-tools") < g.indexOf("--model"), "--exclude-tools must come before --model (standing contract)");
-		const req = buildSubagentArgv("draft", undefined, undefined, "requirements");
-	assert.ok(req.includes("--no-themes") && req.includes("--no-prompt-templates"));
-	assert.ok(!req.includes("--no-skills") && !req.includes("--no-extensions"), "requirements must not strip skills/extensions");
-		const STRIP_ONLY = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
+test("buildSubagentArgv: both roles keep skills/extensions so they can reach a model", () => {
+	const v = buildSubagentArgv("verify it", undefined, undefined, "verifier");
+	for (const f of ["--no-themes", "--no-prompt-templates"]) assert.ok(v.includes(f), `verifier must have ${f}`);
+	assert.ok(!v.includes("--no-extensions"), "a bare verifier cannot resolve an extension-provided provider");
+	assert.equal(v.at(-1), "verify it", "the task must always be argv's last element");
+	assert.ok(!v.includes("--no-session"), "a sub-agent keeps its session");
+	const c = buildSubagentArgv("code it", undefined, undefined, "swarm");
+	assert.ok(c.includes("--no-themes") && c.includes("--no-prompt-templates"));
+	assert.ok(!c.includes("--no-skills") && !c.includes("--no-extensions"), "a coder must not strip skills/extensions");
+	const STRIP_ONLY = ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"];
 	assert.ok(!STRIP_ONLY.some((f) => buildSubagentArgv("x").includes(f)));
 	assert.ok(!STRIP_ONLY.some((f) => buildSubagentArgv("x", undefined, undefined, "mystery").includes(f)));
 });

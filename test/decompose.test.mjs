@@ -154,8 +154,9 @@ test("compileDecomposed: a subtask violating the question policy → invalid dra
 	await assert.rejects(compileDecomposed("X", runTask, (st) => st.id), /draft invalid[\s\S]*question policy violation/);
 });
 
-test("planner role: present in SUBAGENT_EXCLUDE_TOOLS (read-only), STRIP_FLAGS and TIMEOUT_MS", () => {
-	assert.deepEqual(SUBAGENT_EXCLUDE_TOOLS.planner, ["write", "edit"]);
-	assert.ok(Array.isArray(SUBAGENT_STRIP_FLAGS.planner) && SUBAGENT_STRIP_FLAGS.planner.length > 0);
-	assert.ok(SUBAGENT_TIMEOUT_MS.planner > 0);
+test("the planner role is gone: the two-role set no longer carries it", () => {
+	assert.equal(SUBAGENT_EXCLUDE_TOOLS.planner, undefined);
+	assert.equal(SUBAGENT_STRIP_FLAGS.planner, undefined);
+	assert.equal(SUBAGENT_TIMEOUT_MS.planner, undefined);
+	assert.deepEqual(Object.keys(SUBAGENT_EXCLUDE_TOOLS).sort(), ["swarm", "verifier"]);
 });

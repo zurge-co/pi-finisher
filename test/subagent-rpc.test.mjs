@@ -18,7 +18,7 @@ import {
 const here = new URL("..", import.meta.url).pathname;
 
 test("every role boots with the zense tools excluded, so a sub-agent can never spawn the harness", () => {
-	for (const [role, tools] of Object.entries({ swarm: ["write", "edit"], grader: ["write", "edit"], distiller: ["write", "edit", "bash"], planner: [] })) {
+	for (const [role, tools] of Object.entries({ swarm: [], verifier: ["write", "edit"] })) {
 		const args = buildRpcSubagentArgs(tools, role);
 		const at = args.indexOf("--exclude-tools");
 		assert.ok(at >= 0, `${role} must exclude tools`);
@@ -36,9 +36,9 @@ test("adding the glob is idempotent and never drops a role's own exclusions", ()
 	assert.deepEqual(withZenseToolGlob(["write", ZENSE_TOOL_GLOB, "edit"]), [ZENSE_TOOL_GLOB, "write", "edit"]);
 });
 
-test("the rpc boot always asks for a session-less, bare run", () => {
+test("the rpc boot keeps a session so the run can be revisited, and never a hand-rolled spawn", () => {
 	const args = buildRpcSubagentArgs(["write"], "swarm");
-	assert.ok(args.includes("--no-session"), "an rpc run must not persist a session unless asked");
+	assert.ok(!args.includes("--no-session"), "a sub-agent keeps its own session, so it can be resumed later");
 	const src = readFileSync(join(here, "extensions/zense-harness/src/subagent-rpc.ts"), "utf8");
 	assert.match(src, /RpcClient/, "the runner must go through RpcClient, not a hand-rolled spawn");
 	assert.ok(!/spawn\(/.test(src), "no hand-rolled process spawn is left in the rpc runner");

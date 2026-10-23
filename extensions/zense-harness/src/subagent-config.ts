@@ -6,31 +6,24 @@ import { DefaultPackageManager, SettingsManager, getAgentDir } from "@earendil-w
 import { zenseDir } from "./types.ts";
 import { CHECK_FORMAT_CONTRACT } from "./evidence.ts";
 
+export const SUBAGENT_ROLES = ["swarm", "verifier"] as const;
+export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
+
+export const isSubagentRole = (role: string): role is SubagentRole => (SUBAGENT_ROLES as readonly string[]).includes(role);
+
 export const SUBAGENT_EXCLUDE_TOOLS: Record<string, string[]> = {
-	requirements: ["write", "edit"],
-	planner: ["write", "edit"],
-	grader: ["write", "edit"],
-	reviewer: ["write", "edit"],
-	distiller: ["write", "edit", "bash"],
-	swarm: ["write", "edit"],
+	swarm: [],
+	verifier: ["write", "edit"],
 };
 
 export const SUBAGENT_STRIP_FLAGS: Record<string, string[]> = {
-	requirements: ["--no-themes", "--no-prompt-templates"],
-	planner: ["--no-themes", "--no-prompt-templates"],
 	swarm: ["--no-themes", "--no-prompt-templates"],
-	grader: ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"],
-	reviewer: ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"],
-	distiller: ["--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions"],
+	verifier: ["--no-themes", "--no-prompt-templates"],
 };
 
 export const SUBAGENT_TIMEOUT_MS: Record<string, number> = {
-	requirements: 600_000,
-	planner: 300_000,
 	swarm: 600_000,
-	grader: 600_000,
-	reviewer: 480_000,
-	distiller: 300_000,
+	verifier: 600_000,
 	default: 300_000,
 };
 export const subagentTimeout = (role: string, cwd?: string, fallbackCwd?: string): number => {
@@ -130,14 +123,13 @@ export const subagentStripFlagsAsync = async (
 	agentDir = getAgentDir(),
 	globalDir = zenseGlobalConfigDir(),
 ): Promise<string[]> => {
-	const base = SUBAGENT_STRIP_FLAGS[role] ?? [];
+	const base = [...(SUBAGENT_STRIP_FLAGS[role] ?? [])];
 	const include = subagentExtIncludes(role, cwd, fallbackCwd, globalDir);
-	if (!include.length && base.includes("--no-extensions")) return base; 	const enumCwd = cwd ?? fallbackCwd;
-	const valid = include.length && enumCwd ? new Set((await listInstalledExtensions(enumCwd, agentDir)).filter((e) => e.enabled).map((e) => e.path)) : new Set<string>();
-	const flags = base.filter((f) => f !== "--no-extensions");
-	flags.push("--no-extensions");
-	for (const p of include) if (valid.has(p)) flags.push("-e", p);
-	return flags;
+	if (!include.length) return base;
+	const enumCwd = cwd ?? fallbackCwd;
+	const valid = enumCwd ? new Set((await listInstalledExtensions(enumCwd, agentDir)).filter((e) => e.enabled).map((e) => e.path)) : new Set<string>();
+	for (const p of include) if (valid.has(p)) base.push("-e", p);
+	return base;
 };
 
 export const modelMatchesPattern = (usedModel: string, pattern: string): boolean => {
@@ -224,7 +216,7 @@ export const buildProviderMissingGuidance = (
 	opts: { hit?: ProviderExtHit; alreadyIncluded?: boolean; autoRetried?: boolean } = {},
 ): string => {
 	const lines = [
-		`provider "${providerId}" is unavailable in the sub-agent (${role}) — sub-agents boot with --no-extensions, so the extension providing the main session's provider is never loaded`,
+		`provider "${providerId}" is unavailable in the sub-agent (${role}) — that provider is served by an extension which is not loaded for this role`,
 	];
 	if (opts.autoRetried && opts.hit) lines.push(`auto-included "${opts.hit.label}" but the provider is still unavailable — configure it yourself:`);
 	if (opts.hit && !opts.alreadyIncluded) {
@@ -248,7 +240,7 @@ export const withZenseToolGlob = (excludeTools?: string[]): string[] => {
 
 export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {
 	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : undefined);
-	const argv = ["PI_ZENSE_SUBAGENT=1", "pi", "--mode", "json", "--no-session"];
+	const argv = ["PI_ZENSE_SUBAGENT=1", "pi", "--mode", "json"];
 	if (flags?.length) argv.push(...flags);
 	if (excludeTools?.length) argv.push("--exclude-tools", withZenseToolGlob(excludeTools).join(","));
 	if (modelPattern) argv.push("--model", modelPattern);
@@ -258,7 +250,7 @@ export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTo
 
 export const buildRpcSubagentArgs = (excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {
 	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : []);
-	return ["--no-session", ...flags, "--exclude-tools", withZenseToolGlob(excludeTools).join(",")];
+	return [...flags, "--exclude-tools", withZenseToolGlob(excludeTools).join(",")];
 };
 
 export const buildRequirementsPrompt = (intent: string, lessons: string[], facts?: string[], exemplar?: string | null, timeoutMs = 300_000): string =>
@@ -292,3 +284,16 @@ Rules:
 		? `\n\nPast lessons from this project's memory (reflect relevant ones in scope/constraints/criteria when they apply):\n${lessons.join("\n")}`
 		: "") +
 	`\n\nRequest: ${intent}`;
+
+export const LADDER_KEY_RX = /^priority([1-5]?|)$/;
+
+export const isLadderKey = (key: string): boolean => LADDER_KEY_RX.test(key) || key === "priority";
+
+export const orphanRoleKeys = (cfg: Record<string, unknown>, roles: readonly string[]): string[] =>
+	Object.keys(cfg).filter((k) => !roles.includes(k) && !isLadderKey(k));
+
+export const modelForRole = (cfg: Record<string, unknown>, role: string): string | undefined => {
+	if (!isSubagentRole(role)) return undefined;
+	const v = cfg[role];
+	return typeof v === "string" && v.trim() ? v.trim() : undefined;
+};
