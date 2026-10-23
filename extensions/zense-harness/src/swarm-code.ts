@@ -19,6 +19,7 @@ export interface SliceOutcome {
 	paths: string[];
 	diff?: string;
 	output?: string;
+	tests?: "PASS" | "FAIL" | "SKIP";
 }
 
 export interface OverlapPair {
@@ -126,14 +127,46 @@ export const planMerge = (outcomes: SliceOutcome[], opts: { allowOverlap?: boole
 
 export const mergeSignature = (plan: MergePlan): string => plan.steps.map((s) => `${s.id}:${s.apply ? "apply" : "block"}`).join("|");
 
-export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[] }): string =>
+export const TEST_MARKER = "TESTS:";
+
+export const detectTestCommand = (readFile: (p: string) => string | undefined): string | undefined => {
+	try {
+		const raw = readFile("package.json");
+		if (!raw) return undefined;
+		const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
+		const test = parsed.scripts?.test;
+		return typeof test === "string" && test.trim() ? "npm test" : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+export const parseWorkerTests = (out: string): { verdict: "PASS" | "FAIL" | "SKIP"; detail: string } | undefined => {
+	for (const line of out.split("\n")) {
+		const t = line.trim();
+		const i = t.indexOf(TEST_MARKER);
+		if (i < 0) continue;
+		const rest = t.slice(i + TEST_MARKER.length).trim();
+		const verdict = rest.toUpperCase().startsWith("PASS") ? "PASS" : rest.toUpperCase().startsWith("FAIL") ? "FAIL" : rest.toUpperCase().startsWith("SKIP") ? "SKIP" : undefined;
+		if (verdict) return { verdict, detail: rest.slice(verdict.length).replace(/^[\s—:-]+/, "").trim() };
+	}
+	return undefined;
+};
+
+export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string }): string =>
 	[
 		`You are swarm coder ${slice.id}. GOAL: ${opts.goal ?? "(goal supplied by the main agent)"}`,
 		`You work ALONE in your own checkout: ${opts.worktreeDir}. Other coders are editing other checkouts of the same repo at the same time.`,
 		opts.scopes.length ? `Stay inside your slice's paths: ${opts.scopes.join(", ")}. Touching a file outside them is a conflict with another coder.` : "No explicit paths were given: keep the change as narrow as the instruction.",
 		"Write the code for YOUR slice only, then stop. Do not try to merge, commit, rebase or touch another slice's files.",
 		"Code rules: no comments in code (line or block). Names and structure carry the intent. A file you create must stay at or under 500 lines.",
-		"End with exactly one line: FILES: <comma-separated repo-relative paths you changed>",
+		"Dependencies are already available in your checkout (shared from the main repo) — never run an install, and never write inside node_modules.",
+		opts.testCommand
+			? `Before you finish, run \`${opts.testCommand}\` in your checkout and read the result.`
+			: "Before you finish, run whatever build/test command this project uses and read the result.",
+		"End with exactly two lines:",
+		`${TEST_MARKER} PASS|FAIL|SKIP <one short reason — FAIL must name the first failing test>`,
+		"FILES: <comma-separated repo-relative paths you changed>",
 		"",
 		`Your slice (${slice.id}): ${slice.instruction}`,
 	].join("\n");

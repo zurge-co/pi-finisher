@@ -48,8 +48,6 @@ export const decideKeep = async (gateway: ClassifierGateway | undefined, opts: {
 	return { keep: classifyKeep(answer, opts.threshold), why: "classifier", probability };
 };
 
-export const needsClassifierSetup = (d: KeepDecision): boolean => d.why === "no-classifier" || d.why === "classifier-error";
-
 export const describeDecision = (d: KeepDecision, from: string): string => {
 	if (d.why === "too-thin") return `handoff: dropped a ${from} note (too thin to carry)`;
 	if (d.why === "no-classifier") return `handoff: dropped a ${from} note (no classifier with credentials — nothing is kept without a verdict)`;
@@ -58,12 +56,6 @@ export const describeDecision = (d: KeepDecision, from: string): string => {
 	const verdict = d.keep ? "kept" : "dropped";
 	return `handoff: ${verdict} a ${from} note (classifier p=${d.probability?.toFixed(2) ?? "?"})`;
 };
-
-export const classifierGuidance = (): string =>
-	[
-		"nothing is carried across tasks because no handoff classifier has credentials.",
-		"log in one of: typesafe (TYPESAFE_API_KEY), cloudflare-workers-ai (CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID), or openai (OPENAI_API_KEY for gpt-6-luna).",
-	].join(" ");
 
 export interface ClassifierRegistryLike {
 	getAvailableOfType: (...args: never[]) => Promise<readonly unknown[]>;

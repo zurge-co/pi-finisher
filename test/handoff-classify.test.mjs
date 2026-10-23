@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLASSIFIER_PREFERENCE, classifyGateway, decideKeep, describeDecision, needsClassifierSetup, parsePreference, preferenceRefs } from "../extensions/zense-harness/index.ts";
+import { CLASSIFIER_PREFERENCE, classifyGateway, decideKeep, describeDecision, parsePreference, preferenceRefs } from "../extensions/zense-harness/index.ts";
 
 const gateway = (prob, opts = {}) => ({
 	available: async () => opts.model ?? { provider: "typesafe", id: "jev-latest" },
@@ -21,7 +21,6 @@ test("without a classifier NOTHING is carried — an unvetted note is dropped, n
 	const noModel = await decideKeep({ available: async () => undefined, classify: async () => undefined }, { from: "grader", text: "npm test is the only proof the bound holds" });
 	assert.deepEqual(noModel, { keep: false, why: "no-classifier" });
 	assert.match(describeDecision(noModel, "grader"), /no classifier with credentials/);
-	assert.equal(needsClassifierSetup(noModel), true, "the human must be told to set one up");
 });
 
 test("a classifier that errors or times out drops the note too — it stays unvetted, and it says so", async () => {
@@ -30,7 +29,6 @@ test("a classifier that errors or times out drops the note too — it stays unve
 	const thrown = await decideKeep(gateway(0, { throws: true }), { from: "swarm", text: "a real lesson that matters for the next task" });
 	assert.deepEqual(thrown, { keep: false, why: "classifier-error" });
 	assert.match(describeDecision(thrown, "swarm"), /stays unvetted/);
-	assert.equal(needsClassifierSetup(thrown), true);
 });
 
 test("a note too thin to matter is dropped before any model is called", async () => {

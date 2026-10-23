@@ -113,6 +113,19 @@ it never falls back to "keep everything". Log in one of:
 
 Turn the reset off with `/zense fresh-context off`; inspect the stack with `/zense fresh-context status`.
 
+## Coders prove their own slice
+
+Each `zense_swarm mode=code` slice gets its own git worktree **with your dependencies linked in**
+(`node_modules` is symlinked from the repo and excluded from the slice's diff), so a coder runs your
+test command immediately instead of installing anything. A coder must end with two lines:
+
+```
+TESTS: PASS|FAIL|SKIP <reason>
+FILES: <paths it changed>
+```
+
+A `FAIL` comes straight back to that coder to fix before its slice is accepted.
+
 ## No one asks you mid-run
 
 There is no picker and no question tool: a worker that hits a fork declares it in one line instead.
@@ -133,9 +146,9 @@ The handoff gate needs a model; you pick it in the same ladder file as a slot of
 { "priority1": "anthropic/claude-sonnet", "handoff": "openai/gpt-5-mini" }
 ```
 
+- **unset (default)** → the harness detects whichever classifier your providers expose and uses it; if you have none, handoff simply stays off — nothing to configure, no nagging
 - a **classifier** model (`typesafe/jev-latest`, `cf/clef`, `openai/gpt-6-luna`) → uses `classify()`
 - any **chat** model → asked `KEEP`/`DROP` with one short call
-- unset → falls back to any classifier pi can reach, and drops the note if there is none
 
 The `handoff` slot is never counted as a fan-out rung.
 

@@ -87,3 +87,30 @@ export const handoffRouteNote = (r: HandoffRoute): string => {
 	if (r.kind === "chat") return `handoff: using chat model ${r.provider}/${r.id} from the ladder (asked KEEP/DROP)`;
 	return r.why === "unset" ? "handoff: no model configured in the ladder — falling back to any available pi classifier" : "handoff: the configured model does not resolve";
 };
+
+export type HandoffPlan =
+	| { kind: "off"; why: "no-classifier" | "no-slot-and-no-classifier" }
+	| { kind: "classifier"; provider: string; id: string; source: "slot" | "auto" }
+	| { kind: "chat"; provider: string; id: string; source: "slot" };
+
+export const resolveHandoffPlan = async (opts: {
+	slot: HandoffModel | undefined;
+	isClassifier: (provider: string, id: string) => boolean;
+	availableClassifiers: () => Promise<readonly { provider: string; id: string }[]>;
+}): Promise<HandoffPlan> => {
+	if (opts.slot) {
+		return opts.isClassifier(opts.slot.provider, opts.slot.id)
+			? { kind: "classifier", provider: opts.slot.provider, id: opts.slot.id, source: "slot" }
+			: { kind: "chat", provider: opts.slot.provider, id: opts.slot.id, source: "slot" };
+	}
+	const found = await opts.availableClassifiers().catch(() => []);
+	const first = found[0];
+	if (!first) return { kind: "off", why: "no-slot-and-no-classifier" };
+	return { kind: "classifier", provider: first.provider, id: first.id, source: "auto" };
+};
+
+export const handoffPlanNote = (p: HandoffPlan): string => {
+	if (p.kind === "off") return "handoff: off (no classifier available — nothing is carried across tasks)";
+	if (p.kind === "chat") return `handoff: using chat model ${p.provider}/${p.id} from the ladder (asked KEEP/DROP)`;
+	return `handoff: using classifier ${p.provider}/${p.id}${p.source === "auto" ? " (detected)" : " from the ladder"}`;
+};

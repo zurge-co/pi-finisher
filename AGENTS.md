@@ -66,7 +66,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `commands.ts` | `/zense …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
 | `spec-flow.ts` | `commitSpec`, `approveCurrentSpec`, pending-apply accept |
 | `spec-changes.ts` | Spec diff → change summary, spec markdown, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
-| `worktree.ts` | Bounded `gitOk` + `excludeFromGitStatus` (worktree creation lives only in code-swarm) |
+| `worktree.ts` | Bounded `gitOk`, `excludeFromGitStatus`, `linkDeps` (slice deps), `excludeInWorktree` |
 | `pending-apply.ts` | Cycle bookkeeping: `changePathsSince`, `discardSinceBaseline`, `commitWorkingTree` |
 | `resume.ts` | `/zense resume` disk discovery |
 | `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |

@@ -6,10 +6,10 @@ import { formatHygieneViolations } from "./code-hygiene.ts";
 import { analyzeTestFile, formatTestFindings, isTestFile } from "./test-quality.ts";
 import { costCeilingKeysPresent } from "./goal-run.ts";
 import { type LaunchSubagent, type HarnessContext } from "./kit.ts";
-import { buildCodeWorkerPrompt, mergeReport, parseWorkerFiles, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./swarm-code.ts";
+import { buildCodeWorkerPrompt, detectTestCommand, mergeReport, parseWorkerFiles, parseWorkerTests, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./swarm-code.ts";
 import { buildFanOutPrompt, runSwarm, type FanOutArgs, type SwarmSlot, type SwarmTask } from "./swarm.ts";
 import { type State } from "./types.ts";
-import { excludeFromGitStatus, gitOk } from "./worktree.ts";
+import { excludeFromGitStatus, gitOk, linkDeps } from "./worktree.ts";
 import { zenseDir } from "./types.ts";
 import { mkdirSync } from "node:fs";
 
@@ -28,6 +28,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		const have = gitIn(repo, ["rev-parse", "--verify", "-q", branch]).ok;
 		const add = have ? gitIn(repo, ["worktree", "add", dir, branch]) : gitIn(repo, ["worktree", "add", dir, "-b", branch]);
 		if (add.ok) excludeFromGitStatus(repo, join(zenseDir(repo), "worktree"));
+		if (add.ok) linkDeps(repo, dir);
 		return add.ok;
 	};
 
@@ -38,7 +39,8 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 
 	const sliceDiff = (repo: string, dir: string, paths: string[]): string => {
 		const files = paths.length ? paths : ["."];
-		const tracked = gitIn(dir, ["diff", "HEAD", "--", ...files]);
+		gitIn(dir, ["add", "-A", "--", ...files]);
+		const tracked = gitIn(dir, ["diff", "--cached", "HEAD", "--", ...files]);
 		return tracked.ok ? tracked.out : "";
 	};
 
@@ -82,7 +84,14 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 				const plan = byPlan.get(task.id)!;
 				if (opts.sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
 				if (!workerWorktree(ctx.cwd, plan.worktreeDir, plan.branch)) return { ok: false, output: `could not create the worker worktree ${plan.worktreeDir} (branch ${plan.branch})` };
-				const prompt = buildCodeWorkerPrompt(task.payload!, { worktreeDir: plan.worktreeDir, scopes: plan.scopes, ...(opts.goal ? { goal: opts.goal } : {}) });
+				const testCommand = detectTestCommand((p) => {
+					try {
+						return existsSync(join(ctx.cwd, p)) ? readFileSync(join(ctx.cwd, p), "utf8") : undefined;
+					} catch {
+						return undefined;
+					}
+				});
+				const prompt = buildCodeWorkerPrompt(task.payload!, { worktreeDir: plan.worktreeDir, scopes: plan.scopes, ...(opts.goal ? { goal: opts.goal } : {}), ...(testCommand ? { testCommand } : {}) });
 				const before = state.subagentRuns.length;
 				const pending = launchSubagent(ctx, "swarm", prompt, undefined, opts.sig, slot.model);
 				const started = state.subagentRuns[before];
@@ -114,8 +123,11 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 					if (weakTests.length) {
 						return { ok: false, output: `your slice added tests that can never fail — delete them or assert a real law, then report FILES: again\n${formatTestFindings(weakTests)}` };
 					}
+					const tests = parseWorkerTests(r.output);
+					if (tests?.verdict === "FAIL")
+						return { ok: false, output: `your slice reports ${tests.verdict}: ${tests.detail || "(no reason given)"} — fix the failure in your checkout, re-run the tests, then report TESTS: and FILES: again` };
 					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
-					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output });
+					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output, ...(tests ? { tests: tests.verdict } : {}) });
 					return { ok: true, output: r.output };
 				} finally {
 					dropWorkerWorktree(ctx.cwd, plan.worktreeDir, plan.branch);

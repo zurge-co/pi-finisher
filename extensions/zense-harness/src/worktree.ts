@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 export const GIT_TIMEOUT_MS = 120_000;
 
@@ -29,5 +29,34 @@ export const excludeFromGitStatus = (cwd: string, absPath: string): void => {
 		if (cur.split("\n").some((l) => l.trim() === line)) return;
 		appendFileSync(excludeFile, `${cur && !cur.endsWith("\n") ? "\n" : ""}${line}\n`);
 	} catch {
+	}
+};
+
+export const excludeInWorktree = (dir: string, pattern: string): boolean => {
+	const rel = gitOk(["rev-parse", "--git-path", "info/exclude"], dir);
+	if (!rel.ok) return false;
+	const raw = rel.out.trim();
+	const file = raw.startsWith("/") ? raw : join(dir, raw);
+	try {
+		const cur = existsSync(file) ? readFileSync(file, "utf8") : "";
+		if (cur.split("\n").some((l) => l.trim() === pattern)) return true;
+		mkdirSync(dirname(file), { recursive: true });
+		appendFileSync(file, `${cur && !cur.endsWith("\n") ? "\n" : ""}${pattern}\n`);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+export const linkDeps = (repo: string, dir: string): boolean => {
+	const src = join(repo, "node_modules");
+	const dst = join(dir, "node_modules");
+	if (!existsSync(src) || existsSync(dst)) return false;
+	try {
+		symlinkSync(src, dst, "dir");
+		excludeInWorktree(dir, "node_modules");
+		return true;
+	} catch {
+		return false;
 	}
 };
