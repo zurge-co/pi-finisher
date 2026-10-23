@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { zenseDir } from "./types.ts";
+import { goalKey } from "./goal-driver.ts";
 
 export const HANDOFF_FILE = "handoff.jsonl";
 export const HANDOFF_MAX_ITEMS = 12;
@@ -11,6 +12,7 @@ export interface HandoffItem {
 	at: number;
 	from: string;
 	text: string;
+	goal?: string;
 }
 
 export interface HandoffCandidate {
@@ -79,6 +81,9 @@ export const pushHandoff = (items: HandoffItem[], item: HandoffItem, cap = HANDO
 	return trimStack([...items, { ...item, text: condenseLine(item.text) }], cap);
 };
 
+export const forGoal = (items: HandoffItem[], goal: string | undefined): HandoffItem[] =>
+	goal === undefined ? items : items.filter((i) => i.goal === undefined || i.goal === goalKey(goal));
+
 export const readHandoff = (cwd: string): HandoffItem[] => {
 	const f = handoffPath(cwd);
 	if (!existsSync(f)) return [];
@@ -89,7 +94,12 @@ export const readHandoff = (cwd: string): HandoffItem[] => {
 		try {
 			const raw = JSON.parse(t) as Partial<HandoffItem>;
 			if (typeof raw.text !== "string" || !raw.text.trim()) continue;
-			out.push({ at: typeof raw.at === "number" ? raw.at : 0, from: typeof raw.from === "string" ? raw.from : "unknown", text: raw.text });
+			out.push({
+				at: typeof raw.at === "number" ? raw.at : 0,
+				from: typeof raw.from === "string" ? raw.from : "unknown",
+				text: raw.text,
+				...(typeof raw.goal === "string" ? { goal: raw.goal } : {}),
+			});
 		} catch {
 		}
 	}
@@ -105,6 +115,14 @@ export const appendHandoff = (cwd: string, item: HandoffItem): HandoffItem[] => 
 	const next = pushHandoff(readHandoff(cwd), item);
 	writeHandoff(cwd, next);
 	return next;
+};
+
+export const handoffForGoal = (cwd: string, goal: string | undefined): HandoffItem[] => forGoal(readHandoff(cwd), goal);
+
+export const clearOtherGoals = (cwd: string, goal: string): HandoffItem[] => {
+	const kept = handoffForGoal(cwd, goal);
+	writeHandoff(cwd, kept);
+	return kept;
 };
 
 export const stackHead = (items: HandoffItem[]): string | undefined => {

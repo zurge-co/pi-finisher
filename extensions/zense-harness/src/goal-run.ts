@@ -4,9 +4,9 @@ import { zenseDir } from "./types.ts";
 
 export const SURFACE_TOOLS = ["zense_goal", "zense_swarm", "zense_steer"] as const;
 export const RETIRED_TOOLS = ["zense_spec", "zense_adr", "zense_eval", "zense_review", "zense_accept", "zense_discard", "zense_longrun", "zense_ask"] as const;
-export const SURFACE_COMMANDS = ["status", "accept", "discard", "agents", "models", "fresh-context", "surface"] as const;
-export const RETIRED_COMMANDS = ["approve", "gate", "longrun", "memory", "ext-config-show", "distill", "resume"] as const;
-export const APPLY_BACK_COMMANDS = ["accept", "discard"] as const;
+export const SURFACE_COMMANDS = ["models"] as const;
+export const RETIRED_COMMANDS = ["approve", "gate", "longrun", "memory", "ext-config-show", "distill", "resume", "status", "accept", "discard", "agents", "fresh-context", "surface"] as const;
+export const APPLY_BACK_COMMANDS: readonly string[] = [];
 
 export interface ConfigSurface {
 	priority: string[];

@@ -2,29 +2,19 @@ import { Key } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildDiscardBulletin, resetCycleState } from "./cycle.ts";
 import { subagentLogPath } from "./subagent-log.ts";
 import { runRpcSubagent } from "./subagent-rpc.ts";
 import { SUBAGENT_ROLES, orphanRoleKeys, subagentTimeout } from "./subagent-config.ts";
 import { resolveModelPattern } from "./models.ts";
-import { changePathsSince, discardSinceBaseline } from "./pending-apply.ts";
-import { gitOk } from "./worktree.ts";
-import { isGitRepo, uncommittedChanges } from "./pending-apply.ts";
-import { SURFACE_COMMANDS, surfaceLine } from "./goal-run.ts";
-import { freshStatusLine, readFreshContextConfig, writeFreshContextConfig } from "./fresh-context.ts";
-import { readHandoff, writeHandoff } from "./handoff-stack.ts";
+import { SURFACE_COMMANDS } from "./goal-run.ts";
 import { availableModelChoices, readModelsConfig, writeModelsConfig } from "./models.ts";
 import { type AcceptPending, type Escalate, type Flag, type LaunchSubagent, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
 import { zenseDir, type State } from "./types.ts";
 
 export const registerCommands = (ctx: HarnessContext) => {
 	const state = ctx.state;
-	const persist = ctx.persist;
 	const pi = ctx.pi;
-	const updateWidget = ctx.updateWidget;
 	const launchSubagent = ctx.launchSubagent;
-	const acceptPending = ctx.acceptPending;
-	const escalate = ctx.escalate;
 	const flag = ctx.flag;
 	const zensePick = ctx.zensePick;
 	const openAgentsViewer = ctx.openAgentsViewer;
@@ -35,57 +25,15 @@ export const registerCommands = (ctx: HarnessContext) => {
 	});
 
 	pi.registerCommand("zense", {
-		description: "Zense harness (zense = human signature/sign): status | accept | discard | agents | models | fresh-context | surface",
+		description: `Zense: ${SURFACE_COMMANDS.map((c) => `/zense ${c}`).join(" | ")} — choose which model each sub-agent role runs on`,
 		getArgumentCompletions: (prefix) =>
 			[...SURFACE_COMMANDS]
 				.filter((s) => s.startsWith(prefix))
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
-			const [sub, ...rest] = args.trim().split(/\s+/);
-			if (sub === "surface") {
-				ctx.ui.notify(surfaceLine(ctx.cwd), "info");
-				return;
-			} else if (sub === "status") {
-				ctx.ui.notify(
-					`phase=${state.phase} spec=${state.spec ? `v${state.spec.version} approved=${state.spec.approved}` : "—"}\n` +
-						`turns=${state.turnsUsed} tokens=${state.tokensUsed}\n` +
-						`changes this cycle: ${changePathsSince(ctx.cwd, state.baselineHead).length} path(s) since ${state.baselineHead?.slice(0, 12) ?? "(no baseline)"}\n` +
-						`trajectory flags:\n${state.trajectoryFlags.join("\n") || "(none)"}\nescalations:\n${state.escalations.map((e) => `${e.kind}: ${e.detail}`).join("\n") || "(none)"}`,
-					"info",
-				);
-			} else if (sub === "discard") {
-				const baseline = state.baselineHead;
-				const dr = discardSinceBaseline(ctx.cwd, baseline);
-				if (!dr.ok) {
-					escalate("need-decision", `discard: ${dr.msg}`, ctx);
-					return ctx.ui.notify(`⚠ discard: ${dr.msg}`, "warning");
-				}
-				const v = state.spec?.version ?? 1;
-				state.contextBulletin = buildDiscardBulletin(v);
-				resetCycleState(state);
-				persist();
-				updateWidget(ctx);
-				ctx.ui.notify(`✅ ${dr.msg}`, "info");
-			} else if (sub === "accept") {
-				const r = acceptPending(ctx, rest[0] === "commit", true);
-				ctx.ui.notify(r.text, r.ok ? "info" : "warning");
-			} else if (sub === "fresh-context") {
-				const action = (rest[0] ?? "status").trim().toLowerCase();
-				if (action === "on" || action === "off") {
-					const enabled = action === "on";
-					const ok = writeFreshContextConfig(ctx.cwd, enabled);
-					if (!ok) return ctx.ui.notify("could not write .zense/config.json", "warning");
-					return ctx.ui.notify(`🧠 fresh context ${enabled ? "ON — each finished task resets the context, keeping only the handoff stack" : "OFF — context keeps accumulating across tasks"}`, "info");
-				}
-				if (action === "clear") {
-					writeHandoff(ctx.cwd, []);
-					return ctx.ui.notify("🧹 handoff stack cleared — the next fresh context carries nothing", "info");
-				}
-				if (action === "status") return ctx.ui.notify(freshStatusLine(readFreshContextConfig(ctx.cwd), readHandoff(ctx.cwd)), "info");
-				return ctx.ui.notify("usage: /zense fresh-context [on|off|status|clear]", "info");
-		} else if (sub === "agents") {
-				await openAgentsViewer(ctx);
-			} else if (sub === "models") {
+			const [sub] = args.trim().split(/\s+/);
+			if (sub !== "models") return ctx.ui.notify("usage: /zense models", "info");
+			if (sub === "models") {
 				const cfgPath = join(zenseDir(ctx.cwd), "models.json");
 				const cfg = readModelsConfig(ctx.cwd);
 				const mainModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(no active model)";
@@ -138,8 +86,6 @@ export const registerCommands = (ctx: HarnessContext) => {
 				}
 				writeModelsConfig(ctx.cwd, role, pattern);
 				ctx.ui.notify(`✅ ${role}: ${pattern} — wrote ${relative(ctx.cwd, cfgPath)} (takes effect on the next sub-agent run)`, "info");
-			} else {
-				ctx.ui.notify(`usage: /zense ${SURFACE_COMMANDS.join("|")} · accept [commit] · fresh-context on|off|status|clear`, "info");
 			}
 		},
 	});

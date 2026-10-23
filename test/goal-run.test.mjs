@@ -72,31 +72,31 @@ test("the single end report names every case with the evidence that decided it",
 	let state = freshGoalRun("ship it");
 	let step = nextGoalDriverStep(state, buildReport(cases));
 	const seen = [step];
-	for (let i = 0; i < 5 && step.action === "fix"; i++) {
+	for (let i = 0; i < 5 && step.action === "replan"; i++) {
 		const evidence = cases.map((c) => (c.caseId === "c2" ? judgeCase("c2", "$ npx tsc --noEmit\nexit code 1\nVERDICT: FAIL") : c));
 		step = nextGoalDriverStep(step.state, buildReport(evidence.map((c, n) => (c.verdict === "UNVERIFIED" ? judgeCase(c.caseId, `$ npm test -- --round${i}${n}\nexit code 0\nVERDICT: PASS`) : c))));
 		seen.push(step);
 	}
 	const last = seen[seen.length - 1];
-	assert.ok(last.action === "stop" || last.action === "finish", `the run must end, got ${last.action}`);
+	assert.ok(["finish", "human", "halt"].includes(last.action), `the run must end, got ${last.action}`);
 	for (const id of ["c1", "c2", "c3"]) assert.ok(last.text.includes(id), `the final report must mention ${id}`);
 	assert.match(last.text, /exit 1/, "the failing case keeps its exit status in the report");
 });
 
 test("no code path can stop a run for cost: the only bounds are evidence and rounds", async () => {
-	const { MAX_VERIFY_ROUNDS, freshGoalRun, judgeCase, buildReport, nextGoalDriverStep } = await import("../extensions/zense-harness/index.ts");
+	const { MAX_LOOP_BATCHES, freshGoalRun, judgeCase, buildReport, nextGoalDriverStep } = await import("../extensions/zense-harness/index.ts");
 	const driverSrc = await import("node:fs").then((fs) => fs.readFileSync(new URL("../extensions/zense-harness/src/goal-driver.ts", import.meta.url), "utf8"));
 	assert.doesNotMatch(driverSrc, /maxTokens|costLimit|budget|tokenCeiling|maxCost/i, "the driver must not read a cost budget");
 	assert.doesNotMatch(driverSrc, /tokensUsed|tokensUsed\s*[<>]/, "the driver must not gate on tokens used");
-	const healthy = Array.from({ length: MAX_VERIFY_ROUNDS + 1 }, (_, i) => judgeCase("c1", `$ npm test -- --r${i}\nexit code 1\nVERDICT: FAIL`));
+	const healthy = Array.from({ length: MAX_LOOP_BATCHES + 1 }, (_, i) => judgeCase("c1", `$ npm test -- --r${i}\nexit code 1\nVERDICT: FAIL`));
 	let state = freshGoalRun("expensive goal");
 	const actions = healthy.map((c) => {
 		const step = nextGoalDriverStep(state, buildReport([c]));
 		state = step.state;
 		return step.action;
 	});
-	assert.deepEqual(actions.slice(0, -1).every((a) => a === "fix"), true, "every failing-but-new round is allowed to continue regardless of cost");
-	assert.equal(actions[actions.length - 1], "stop", "the stop is the round bound, not a budget");
+	assert.deepEqual(actions.slice(0, -1).every((a) => a === "replan"), true, "failing attempts ask the main agent to plan another loop, regardless of cost");
+	assert.equal(actions[actions.length - 1], "halt", "the halt is the attempt bound, not a budget");
 });
 
 test("every command the surface advertises has a real handler — no ghost commands after a subsystem is removed", async () => {

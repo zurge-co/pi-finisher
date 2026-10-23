@@ -59,12 +59,9 @@ GRAD  ▶ grader              12s  running probes
 
 | Command | What it does |
 |---|---|
-| `/zense status` | phase, changes this cycle, turns/tokens, flags, escalations |
-| `/zense surface` | what this build exposes: tools, commands, ladder, concurrency (the only source of truth for the command list) |
-| `/zense models` | pick the model ladder slots (priority 1–5) |
-| `ctrl+_` / `/zense agents` | live tail of the running sub-agents |
-| `/zense resume` | continue a run found on disk |
-| `/zense fresh-context on/off/status/clear` | the task-boundary context reset and the knowledge stack behind it |
+| `/zense models` | choose which model each sub-agent role (`swarm`, `verifier`) runs on |
+
+There is nothing else to switch: fresh context, handoff and verification are automatic.
 
 ## Configuration
 
@@ -83,11 +80,26 @@ GRAD  ▶ grader              12s  running probes
 Unset slots are simply not used; there is no ceiling key anywhere — if one is present it is
 reported as ignored, never obeyed.
 
+## Verification runs once, at the end
+
+`zense_swarm mode=verify` is not a loop. After the implementation loops are done, it runs **once**:
+the verifier reads the change and exercises the changed code directly — it is explicitly told **not**
+to run the test suite as proof. Three outcomes:
+
+| outcome | what happens |
+|---|---|
+| every case exercised and holds | one report, done |
+| a case failed | the main agent is told to plan the next loop itself, then verify once at the end again (bounded, then it halts) |
+| nothing could be exercised directly | the verifier runs nothing else and tells you to test by hand |
+
 ## Fresh context and the handoff stack
 
 Every finished task resets the main session's context on purpose (`agent_before_settle` → a
-retain-none compaction entry). What survives is **not** a transcript or a statistic — it is the
-handoff stack in `.zense/handoff.jsonl`:
+retain-none compaction entry). There is no switch: it always happens.
+
+What survives is **not** a transcript or a statistic — it is the handoff stack in
+`.zense/handoff.jsonl`, and it is scoped to **one goal**: notes carry the goal they were learned
+in, so loops inside a goal share knowledge while a new goal starts from an empty stack.
 
 ```
 sub-agent finishes
@@ -159,10 +171,8 @@ what `git status` shows, so a review always looks at the same tree the agent wor
 worktrees left are the per-slice ones that `zense_swarm mode=code` gives each parallel coder, so
 two coders can never overwrite each other; they are merged back deterministically by slice id.
 
-Rollback is per cycle: `/zense discard` returns every path the cycle touched to the commit the goal
-was confirmed on (files created during the cycle are removed). `/zense accept commit` commits the
-cycle with a prepared message; plain `/zense accept` closes the cycle and leaves your working tree
-alone.
+Undo: There is no accept/discard command: when you want a change undone, ask the agent to undo it (or use
+`git`). Nothing in the harness records a rollback point for you.
 
 ## Every tool call is bounded
 

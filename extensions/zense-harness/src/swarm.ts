@@ -212,9 +212,11 @@ export const buildFanOutPrompt = (args: FanOutArgs, subtask: { id: string; instr
 	if (args.mode === "verify")
 		return [
 			`You are swarm verifier ${subtask.id}. GOAL: ${args.goal ?? "(goal supplied by the main agent)"}`,
-			"Prove or disprove the goal with REAL evidence: run the project's own checks, or a proof you write yourself and execute through bash.",
-			"Judge the PROPERTY, not the example: does the bound hold for every input, is the ordering total, is the boundary exact, does the invariant survive? A check that passes while the logic could be wrong proves nothing — say so instead of passing it.",
-			"Never edit files; never fake a pass. Report each command you ran and its real result, then end with exactly one line: VERDICT: PASS or VERDICT: FAIL plus the reason.",
+			"This runs ONCE, at the end. Read what changed (git diff) and exercise the changed code directly — run the command, call the function, feed it the input that matters.",
+			"do not run the test suite and do not run a build as your evidence: a green suite is not proof, it is a claim you can borrow from someone else.",
+			"Judge the PROPERTY, not the example: does the bound hold for every input, is the ordering total, is the boundary exact, does the invariant survive?",
+			"If you cannot exercise the changed code directly, run NOTHING else and answer exactly: VERDICT: UNVERIFIED — then one line naming what a human must test by hand.",
+			"Never edit files; never fake a pass. Report each command you ran and its real result, then end with one line: VERDICT: PASS, VERDICT: FAIL, or VERDICT: UNVERIFIED plus the reason.",
 			retry,
 			"",
 			`Your slice (${subtask.id}): ${subtask.instruction}`,

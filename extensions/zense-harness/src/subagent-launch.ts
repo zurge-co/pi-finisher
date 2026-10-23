@@ -2,10 +2,11 @@ import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_EXCLUDE_TOOLS, SUBAGENT_STRIP_FLAGS, subagentTimeout, buildRpcSubagentArgs, diagnoseProviderMissing, buildProviderMissingGuidance, modelMatchesPattern } from "./subagent-config.ts";
 import { runRpcSubagent } from "./subagent-rpc.ts";
 import { subagentLogPath } from "./subagent-log.ts";
-import { appendHandoff, handoffInjection, readHandoff } from "./handoff-stack.ts";
+import { appendHandoff, handoffInjection, handoffForGoal } from "./handoff-stack.ts";
 import { decideKeep, describeDecision, classifyGateway, type ChatAsk } from "./handoff-classify.ts";
 import { readHandoffModel, resolveHandoffPlan, handoffPlanNote, HANDOFF_ASK_PROMPT, parseHandoffVerdict } from "./handoff-model.ts";
 import { addDecisions, parseDecisions, withDecisionRule } from "./decisions.ts";
+import { goalKey } from "./goal-driver.ts";
 import { streamTail } from "./agent-panel.ts";
 import { resolveModelPattern } from "./models.ts";
 import { type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
@@ -42,7 +43,8 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		try {
 			const subCwd = ctx.cwd;
 			const stripFlags = SUBAGENT_STRIP_FLAGS[role] ?? [];
-			const handoff = handoffInjection(readHandoff(ctx.cwd));
+			const goal = (state.goalDriver as { goal?: string } | undefined)?.goal;
+			const handoff = handoffInjection(handoffForGoal(ctx.cwd, goal));
 			const prompt = withDecisionRule(handoff ? `${task}\n\n${handoff}` : task);
 			const r0 = await runRpcSubagent({
 				role,
@@ -104,7 +106,7 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 				}
 				const decision = await decideKeep(chatAsk ? undefined : classifyGateway(ctx.modelRegistry), { from: role, text: r.output.slice(-4_000), ...(chatAsk ? { chatAsk } : {}) });
 				if (decision.keep) {
-					const next = appendHandoff(ctx.cwd, { at: Date.now(), from: role, text: r.output.slice(-4_000) });
+					const next = appendHandoff(ctx.cwd, { at: Date.now(), from: role, text: r.output.slice(-4_000), ...(goal ? { goal: goalKey(goal) } : {}) });
 					run.handoffItems = next.length;
 				}
 			}

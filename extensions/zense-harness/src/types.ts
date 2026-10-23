@@ -21,8 +21,8 @@ export interface State {
 	escalations: { kind: string; detail: string; at: number }[];
 	trajectoryFlags: string[];
 	subagentRuns: SubagentRun[];
-	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	baselineHead?: string;      	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
-	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; loop: { round: number; fingerprints: string[]; caseRounds: Record<string, number> }; doneAt?: number; outcome?: "verified" | "stopped" | "exhausted" }; 	hygieneViolations?: HygieneViolationRef[]; }
+	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
+	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted" }; hygieneViolations?: HygieneViolationRef[]; }
 
 export interface HygieneViolationRef {
 	path: string;

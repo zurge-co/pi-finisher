@@ -1,14 +1,15 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildGoalToolText, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
+import { buildGoalToolText, goalKey, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
 import { goalCases } from "./goal-confirm.ts";
 import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, readSwarmConcurrency, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
-import { MAX_VERIFY_ROUNDS, advanceLoop, buildFixPrompt, buildReport, freshVerifyLoop, judgeCase, nextVerifyRound, renderVerifyReport } from "./verify-loop.ts";
+import { buildReport, decideOnce, freshAttempts, judgeCase, renderVerifyReport } from "./verify-loop.ts";
 import { type State } from "./types.ts";
 import { headOf } from "./pending-apply.ts";
 import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
+import { clearOtherGoals } from "./handoff-stack.ts";
 import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
@@ -98,30 +99,17 @@ export const registerTools = (ctx: HarnessContext) => {
 			if (p.mode === "verify") {
 				const report = buildReport(results.map((r) => judgeCase(r.id, r.output, r.ok ? {} : { exitCode: 1 })));
 				const active = state.goalDriver as GoalRunState | undefined;
-				const driver = active && !active.doneAt ? active : undefined;
-				const loop = driver ? driver.loop : state.verifyLoop ?? freshVerifyLoop();
-				const decision = nextVerifyRound(loop, report);
-				if (driver) {
-					const step = nextGoalDriverStep({ ...driver, loop }, report);
-					const finalText = reportWithDecisions(step.text, state.decisions ?? []);
-					if (step.action !== "fix") writeDecisionsFile(ctx.cwd, driver.goal, state.decisions ?? []);
-					state.goalDriver = step.state;
-					state.verifyLoop = step.state.loop;
-					persist();
-					updateWidget(ctx);
-					if (step.action === "fix") armGoalRound(step.text);
-					return {
-						content: [{ type: "text", text: [buildGoalToolText({ ...driver, loop }, step, finalText), "", body].join("\n") }],
-						details: { mode: p.mode, report, decision, step: step.action, outcome: step.state.outcome, results },
-						...(report.allPass ? {} : { isError: true }),
-					};
-				}
-				state.verifyLoop = advanceLoop(loop, report);
+				const driver = active && !active.doneAt ? active : { ...resumeOrStart(undefined, p.goal?.trim() || "goal"), attempts: freshAttempts() };
+				const step = nextGoalDriverStep(driver, report);
+				const finalText = reportWithDecisions(step.text, state.decisions ?? []);
+				if (step.action === "finish" || step.action === "human" || step.action === "halt") writeDecisionsFile(ctx.cwd, driver.goal, state.decisions ?? []);
+				state.goalDriver = step.state;
 				persist();
-				const fix = decision.kind === "retry" ? buildFixPrompt(report, decision.round, MAX_VERIFY_ROUNDS) : decision.kind === "stop" ? `⛔ verify stopped (${decision.halt ? "bound" : "no new evidence"}): ${decision.reason}` : "";
+				updateWidget(ctx);
+				if (step.action === "replan") armGoalRound(step.text);
 				return {
-					content: [{ type: "text", text: [renderVerifyReport(report, state.verifyLoop), fix, "", body].filter(Boolean).join("\n") }],
-					details: { mode: p.mode, report, decision, results },
+					content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), "", body].join("\n") }],
+					details: { mode: p.mode, report, decision: decideOnce(report, driver.attempts), step: step.action, outcome: step.state.outcome, results },
 					...(report.allPass ? {} : { isError: true }),
 				};
 			}
@@ -152,8 +140,13 @@ export const registerTools = (ctx: HarnessContext) => {
 			const goal = p.goal.trim();
 			if (!goal) return { content: [{ type: "text", text: "zense_goal: goal is empty — ctx.state the outcome the human wants" }], details: {}, isError: true };
 			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
-			if (!state.baselineHead) state.baselineHead = headOf(ctx.cwd);
-			const started = resumeOrStart(state.goalDriver as GoalRunState | undefined, goal);
+			const previous = state.goalDriver as GoalRunState | undefined;
+			const isNewGoal = !previous || goalKey(previous.goal) !== goalKey(goal);
+			const started = resumeOrStart(previous, goal);
+			if (isNewGoal) {
+				clearOtherGoals(ctx.cwd, goal);
+				state.decisions = [];
+			}
 			state.goalDriver = started;
 			if (cases.length && !state.spec) {
 				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
@@ -164,11 +157,11 @@ export const registerTools = (ctx: HarnessContext) => {
 			updateWidget(ctx);
 			const next = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 			return {
-				content: [{ type: "text", text: buildGoalToolText(started, { action: "fix", round: started.loop.round, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then prove it:
+				content: [{ type: "text", text: buildGoalToolText(started, { action: "finish", round: 0, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then call zense_swarm mode=verify ONCE at the end:
 ${next.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}
 
-prove it with real commands (zense_swarm mode=verify or your own runs); no further approval will be asked.` }) }],
-				details: { goal, cases: next, round: started.loop.round },
+verification runs once, reading the change and exercising the changed code directly (never the test suite as proof). If a case cannot be exercised, it comes back as UNVERIFIED for a human to test.` }) }],
+				details: { goal, cases: next, round: 0 },
 			};
 		},
 	}));

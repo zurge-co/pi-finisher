@@ -4,7 +4,6 @@ import { type State } from "./types.ts";
 export const resetCycleState = (s: State): void => {
 	s.spec = undefined;
 	s.phase = "requirements";
-	s.baselineHead = undefined;
 	s.evalOverrideFails = undefined;
 	s.specSource = undefined;
 	s.specMdPath = undefined;

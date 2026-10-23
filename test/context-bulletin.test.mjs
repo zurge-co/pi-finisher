@@ -41,7 +41,6 @@ test("resetCycleState: clears all cycle fields (spec/phase/eval/head/override/so
 	const s = {
 		spec: { version: 2, title: "old", approved: true },
 		phase: "maintenance",
-		baselineHead: "abc",
 		evalOverrideFails: { specVersion: 2, ids: ["C1"], count: 1 },
 		specSource: "set",
 		specMdPath: "/x/spec.md",
@@ -56,7 +55,7 @@ test("resetCycleState: clears all cycle fields (spec/phase/eval/head/override/so
 	resetCycleState(s);
 	assert.equal(s.spec, undefined);
 	assert.equal(s.phase, "requirements");
-	for (const k of ["baselineHead", "evalOverrideFails", "specSource", "specMdPath", "specJsonPath", "lastCompileLessons"])
+	for (const k of ["evalOverrideFails", "specSource", "specMdPath", "specJsonPath", "lastCompileLessons"])
 		assert.equal(s[k], undefined, `${k} must be cleared (cycle scope)`);
 	assert.equal(s.turnsUsed, 9);
 	assert.equal(s.tokensUsed, 12345);

@@ -21,9 +21,11 @@ test("every command in the surface has a branch, and every branch is in the surf
 test("the description and completions are generated from the same list, so they cannot drift", () => {
 	const src = commandsSrc();
 	assert.ok(src.includes("[...SURFACE_COMMANDS]"), "completions must come from SURFACE_COMMANDS");
-	const desc = src.slice(src.indexOf('description: "Zense harness'), src.indexOf('getArgumentCompletions'));
-	for (const cmd of SURFACE_COMMANDS) assert.ok(desc.includes(cmd), `the description must list "${cmd}"`);
-	for (const dead of ["approve", "gate", "memory", "ext-config"]) assert.ok(!desc.includes(dead), `the description still advertises the removed "${dead}"`);
+	const at = src.indexOf("description:");
+	const desc = src.slice(at, src.indexOf("getArgumentCompletions"));
+	assert.match(desc, /SURFACE_COMMANDS/, "the description is rendered from the one list, so a name cannot be advertised without a branch");
+	for (const dead of ["approve", "gate", "memory", "ext-config", "discard", "surface"]) assert.ok(!desc.includes(dead), `the description still advertises the removed "${dead}"`);
+	assert.deepEqual([...SURFACE_COMMANDS], ["models"], "only one command is left");
 });
 
 test("the removed surfaces cannot come back: no memory, no gate, no ext-config machinery", () => {

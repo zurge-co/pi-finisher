@@ -13,7 +13,6 @@ import {
 	reportWithDecisions,
 	withDecisionRule,
 	writeDecisionsFile,
-	headOf,
 	buildGoalToolText,
 } from "../extensions/zense-harness/index.ts";
 
@@ -54,7 +53,7 @@ test("the goal report carries the decisions — that is the only place a human l
 });
 
 test("the goal tool text keeps its header and swaps in the decision-bearing body", () => {
-	const started = { loop: { round: 1 } };
+	const started = { attempts: { rounds: 1 } };
 	const step = { text: "raw" };
 	const text = buildGoalToolText(started, step, "FINAL");
 	assert.match(text, /goal still running/);
@@ -85,21 +84,10 @@ test("the decisions file is written once per goal and is readable afterwards", (
 	}
 });
 
-test("the goal confirmation is what sets the rollback point, so /zense discard can work", () => {
-	const base = mkdtempSync(join(tmpdir(), "zense-goal-base-"));
-	const cwd = join(base, "repo");
-	mkdirSync(cwd, { recursive: true });
-	execFileSync("git", ["init", "-q"], { cwd });
-	const git = (args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-	git(["config", "user.email", "t@t"]);
-	git(["config", "user.name", "t"]);
-	writeFileSync(join(cwd, "README.md"), "# init\n");
-	git(["add", "-A"]);
-	git(["commit", "-q", "-m", "init"]);
-	try {
-		const baseline = headOf(cwd);
-		assert.match(baseline ?? "", /^[0-9a-f]{40}$/, "a goal run has a real commit to roll back to");
-	} finally {
-		rmSync(base, { recursive: true, force: true });
-	}
+test("there is no rollback baseline any more — undo is something the human asks the agent for", async () => {
+	const { readFileSync } = await import("node:fs");
+	const indexSrc = readFileSync(new URL("../extensions/zense-harness/index.ts", import.meta.url), "utf8");
+	assert.ok(!indexSrc.includes("baselineHead ="), "goal confirmation no longer records a commit to roll back to");
+	const types = readFileSync(new URL("../extensions/zense-harness/src/types.ts", import.meta.url), "utf8");
+	assert.equal(/\tbaselineHead\?:/.test(types), false, "and the state no longer carries it");
 });
