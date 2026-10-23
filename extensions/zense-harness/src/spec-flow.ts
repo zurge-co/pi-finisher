@@ -2,11 +2,11 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from "node:path";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { freshState, resetCycleState } from "./cycle.ts";
-import { acceptPendingApply, PENDING_MSG, PENDING_PATCH, composeCommitMessage, isGitRepo, uncommittedChanges } from "./pending-apply.ts";
+import { commitWorkingTree, composeCommitMessage, headOf } from "./pending-apply.ts";
 import { buildAcceptBulletin } from "./cycle.ts";
 import { type AcceptPending, type AskRejectReason, type Learn, type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { lintSpecChecks } from "./evidence.ts";
-import { canReuseWorktree, createWorktree, gitOk } from "./worktree.ts";
+import { gitOk } from "./worktree.ts";
 import { buildSpecChanges, decideSpecApproval, renderSpecMd, sameGoalLines, syncApprovedSpecFiles } from "./spec-changes.ts";
 import { goalCases } from "./goal-confirm.ts";
 import { zenseDir, type Criterion, type Spec, type State } from "./types.ts";
@@ -26,25 +26,9 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 		state.spec.approved = true;
 		state.spec.approvedAt = Date.now();
 		state.phase = "implementation";
-		{
-			const baseRef = gitOk(["rev-parse", "HEAD"], ctx.cwd);
-			state.baselineHead = baseRef.ok ? baseRef.out.trim() : undefined;
-		}
-		if (canReuseWorktree(state.worktree)) {
-			learn(ctx, `worktree reused: ${state.worktree!.branch} for spec v${state.spec.version}`);
-		} else {
-			const wt = createWorktree(ctx.cwd, state.spec);
-			if (wt) {
-				state.worktree = wt;
-				state.worktreeLeaveNotified = false;
-				learn(ctx, `worktree created: ${wt.branch} @ ${wt.root}`);
-			} else {
-				ctx.ui.notify(`🌳 couldn't create a worktree — working in main as normal (no per-session isolation)`, "warning");
-			}
-		}
+		state.baselineHead = headOf(ctx.cwd);
+		learn(ctx, `cycle baseline ${state.baselineHead?.slice(0, 12) ?? "(no git)"} — the agent works directly in the repo`);
 		syncApprovedSpecFiles(ctx.cwd, state.spec, { json: state.specJsonPath, md: state.specMdPath });
-		if (state.pendingApply)
-			ctx.ui.notify(`⚠ spec v${state.pendingApply.specVersion} still has staged changes awaiting a commit in main — commit or discard them before starting new work (otherwise spec v${state.spec.version}'s apply will be refused by the guard)`, "warning");
 		learn(ctx, `signed spec v${state.spec.version}`);
 		persist();
 		updateWidget(ctx);
@@ -165,36 +149,19 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 			: "";
 
 	const acceptPending = (ctx: ExtensionContext, commitIfStaged: boolean, notifyViaBulletin = false): { ok: boolean; text: string; specVersion?: number } => {
-		if (!state.pendingApply)
-			return { ok: false, text: "no pending apply to accept (already accepted/committed, or never applied)" };
-		const v = state.pendingApply.specVersion;
+		const v = state.spec?.version ?? 1;
 		const specTitle = state.spec?.title ?? "";
-		const r = acceptPendingApply(ctx.cwd, { evalTree: state.lastEval?.head, preApplyHead: state.pendingApply.preApplyHead, commitIfStaged });
-		if (!r.ok) return { ok: false, text: `⚠️ accept failed: ${r.msg}` };
-		state.pendingApply = undefined;
-		state.escalations.push({ kind: "accepted", detail: `spec v${v} accepted by human${r.amendedFiles.length ? ` — amended: ${r.amendedFiles.join(", ")}` : ""}`, at: Date.now() });
-		const headNow = gitOk(["rev-parse", "HEAD"], ctx.cwd).out.trim().slice(0, 12);
-		const amendLine = r.amendedFiles.length
-			? `\n✏️ the human amended ${r.amendedFiles.length} file(s) after the grader passed: ${r.amendedFiles.join(", ")} — if unintended, inspect with git show HEAD`
-			: "";
-		learn(
-			ctx,
-			r.amendedFiles.length
-				? `spec v${v} accepted @${headNow} with human amendments: ${r.amendedFiles.join(", ")}`
-				: `spec v${v} accepted @${headNow} cleanly (no human amendments)`,
-		);
-		if (r.committedOnBehalf) learn(ctx, `spec v${v} accepted: harness committed staged change on human request`);
-		for (const w of r.warnings) learn(ctx, `accept warning spec v${v}: ${w}`);
-		if (notifyViaBulletin) state.contextBulletin = buildAcceptBulletin(v, specTitle, r.amendedFiles.length);
+		const commit = commitIfStaged && state.spec ? commitWorkingTree(ctx.cwd, composeCommitMessage(state.spec)) : undefined;
+		if (commit && !commit.ok) return { ok: false, text: `⚠️ commit failed: ${commit.msg}` };
+		const headNow = (commit?.sha ?? headOf(ctx.cwd) ?? "").slice(0, 12);
+		state.escalations.push({ kind: "accepted", detail: `cycle v${v} accepted at ${headNow}`, at: Date.now() });
+		learn(ctx, `cycle v${v} accepted @${headNow}${commit?.sha ? " (committed on human request)" : " (left uncommitted in the repo)"}`);
+		if (notifyViaBulletin) state.contextBulletin = buildAcceptBulletin(v, specTitle, 0);
 		resetCycleState(state);
 		persist();
 		updateWidget(ctx);
-		const warnText = r.warnings.length ? `\n⚠️ ${r.warnings.join("\n⚠️ ")}` : "";
-		return {
-			ok: true,
-			specVersion: v,
-			text: `✅ spec v${v} accepted — ${r.msg}${r.committedOnBehalf ? " (harness committed with the prepared message)" : ""}${amendLine}${warnText}\ncycle closed: the next piece of work starts with a new zense_spec (v1)`,
-		};
+		const done = commit?.sha ? `committed ${commit.sha}` : commit?.msg === "nothing to commit" ? "nothing to commit" : "left uncommitted — commit when you are happy";
+		return { ok: true, specVersion: v, text: `✅ cycle v${v} accepted — ${done}\ncycle closed: the next piece of work starts with a new zense_spec (v1)` };
 	};
 
 	return { approveCurrentSpec, commitSpec, changesText, acceptPending };

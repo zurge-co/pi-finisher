@@ -72,7 +72,7 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 			onChunk?.(chunk);
 		};
 		try {
-			const subCwd = state.worktree?.root ?? ctx.cwd;
+			const subCwd = ctx.cwd;
 			const stripFlags = await subagentStripFlagsAsync(role, subCwd, ctx.cwd);
 			const handoff = handoffInjection(readHandoff(ctx.cwd));
 			const prompt = handoff ? `${task}\n\n${handoff}` : task;

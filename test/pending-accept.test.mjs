@@ -1,13 +1,22 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acceptPendingApply } from "../extensions/zense-harness/index.ts";
+import {
+	changePathsSince,
+	commitWorkingTree,
+	composeCommitMessage,
+	discardSinceBaseline,
+	headOf,
+	isGitRepo,
+	sanitizeSubject,
+	uncommittedChanges,
+} from "../extensions/zense-harness/index.ts";
 
 const makeRepo = () => {
-	const base = mkdtempSync(join(tmpdir(), "zense-wt-"));
+	const base = mkdtempSync(join(tmpdir(), "zense-cycle-"));
 	const cwd = join(base, "repo");
 	mkdirSync(cwd, { recursive: true });
 	const git = (args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -16,112 +25,118 @@ const makeRepo = () => {
 	git(["config", "user.name", "t"]);
 	writeFileSync(join(cwd, "README.md"), "# init\n");
 	mkdirSync(join(cwd, ".zense"), { recursive: true });
-	writeFileSync(join(cwd, ".zense", "x"), "x");
+	writeFileSync(join(cwd, ".zense", "state"), "harness\n");
 	git(["add", "-A"]);
 	git(["commit", "-q", "-m", "init"]);
-	return { cwd, base, git };
+	return { base, cwd, git };
 };
 
-const seedPending = ({ cwd, git }) => {
-	writeFileSync(join(cwd, ".zense", "pending-apply.patch"), "dummy reverse patch\n");
-	writeFileSync(join(cwd, ".zense", "pending-apply.msg"), "Add src module\n\nbody from composeCommitMessage\n");
-	writeFileSync(join(cwd, "src.txt"), "from worktree\n");
-	git(["add", "src.txt"]);
-};
-
-const pendingFiles = (cwd) => ({
-	patch: existsSync(join(cwd, ".zense", "pending-apply.patch")),
-	msg: existsSync(join(cwd, ".zense", "pending-apply.msg")),
+test("the cycle baseline is a commit sha, and no worktree is created to hold the work", () => {
+	const { base, cwd, git } = makeRepo();
+	try {
+		assert.equal(isGitRepo(cwd), true);
+		const baseline = headOf(cwd);
+		assert.match(baseline ?? "", /^[0-9a-f]{40}$/);
+		assert.deepEqual(changePathsSince(cwd, baseline), [], "a fresh cycle starts with no changes");
+		writeFileSync(join(cwd, "new.txt"), "x\n");
+		writeFileSync(join(cwd, "README.md"), "# changed\n");
+		assert.deepEqual(changePathsSince(cwd, baseline).sort(), ["README.md", "new.txt"], "tracked edits and new files both count");
+		assert.equal(git(["worktree", "list"], cwd) && true, true);
+		assert.equal(readFileSync(join(cwd, "new.txt"), "utf8"), "x\n", "the agent's file is in the real repo, not a hidden checkout");
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
-test("acceptPendingApply: no pending patch → clear ok=false, repo untouched", () => {
-	const { cwd, base, git } = makeRepo();
-	const headBefore = git(["rev-parse", "HEAD"]).trim();
-	const r = acceptPendingApply(cwd);
-	assert.equal(r.ok, false);
-	assert.match(r.msg, /no pending apply/);
-	assert.equal(git(["rev-parse", "HEAD"]).trim(), headBefore);
-	rmSync(base, { recursive: true, force: true });
+test("discard rolls the cycle back to its baseline and removes files the cycle created", () => {
+	const { base, cwd, git } = makeRepo();
+	try {
+		const baseline = headOf(cwd);
+		writeFileSync(join(cwd, "README.md"), "# agent edit\n");
+		writeFileSync(join(cwd, "added.txt"), "new\n");
+		git(["add", "added.txt"]);
+		const r = discardSinceBaseline(cwd, baseline);
+		assert.equal(r.ok, true, r.msg);
+		assert.equal(readFileSync(join(cwd, "README.md"), "utf8"), "# init\n", "the edited file is back to baseline");
+		assert.equal(changePathsSince(cwd, baseline).length, 0, "nothing is left changed");
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
-test("acceptPendingApply: the human committed themselves (empty index, HEAD moved) → ok, patch+msg removed, no warnings", () => {
-	const { cwd, base, git } = makeRepo();
-	const preApplyHead = git(["rev-parse", "HEAD"]).trim();
-	seedPending({ cwd, git });
-	git(["commit", "-q", "-F", join(cwd, ".zense", "pending-apply.msg")]); 	const r = acceptPendingApply(cwd, { preApplyHead });
-	assert.equal(r.ok, true, r.msg);
-	assert.equal(r.committedOnBehalf, false);
-	assert.deepEqual(r.warnings, []);
-	assert.deepEqual(pendingFiles(cwd), { patch: false, msg: false });
-	rmSync(base, { recursive: true, force: true });
+test("discard refuses without a baseline instead of guessing what to delete", () => {
+	const { base, cwd } = makeRepo();
+	try {
+		const r = discardSinceBaseline(cwd, undefined);
+		assert.equal(r.ok, false);
+		assert.match(r.msg, /no baseline/);
+		assert.deepEqual(r.paths, []);
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
-test("acceptPendingApply: soft mode — empty index but HEAD unmoved (change vanished?) → still ok, warning attached, never refuses", () => {
-	const { cwd, base, git } = makeRepo();
-	const preApplyHead = git(["rev-parse", "HEAD"]).trim();
-	seedPending({ cwd, git });
-	git(["reset", "-q", "--hard", "HEAD"]); 	const r = acceptPendingApply(cwd, { preApplyHead });
-	assert.equal(r.ok, true, "soft mode accepts even when suspect");
-	assert.equal(r.warnings.length, 1);
-	assert.match(r.warnings[0], /HEAD/);
-	assert.deepEqual(pendingFiles(cwd), { patch: false, msg: false });
-	rmSync(base, { recursive: true, force: true });
+test("discard on a clean cycle is a no-op rather than a destructive reset", () => {
+	const { base, cwd } = makeRepo();
+	try {
+		const r = discardSinceBaseline(cwd, headOf(cwd));
+		assert.equal(r.ok, true);
+		assert.match(r.msg, /nothing changed/);
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
-test("acceptPendingApply: still staged + no commit-on-behalf requested → ok=false explaining both ways out", () => {
-	const { cwd, base, git } = makeRepo();
-	seedPending({ cwd, git });
-	const headBefore = git(["rev-parse", "HEAD"]).trim();
-	const r = acceptPendingApply(cwd);
-	assert.equal(r.ok, false);
-	assert.match(r.msg, /commitIfStaged=true \/ \/zense accept commit/);
-	assert.equal(git(["rev-parse", "HEAD"]).trim(), headBefore, "must never commit unprompted");
-	assert.deepEqual(pendingFiles(cwd), { patch: true, msg: true }, "not yet accepted → patch+msg must remain");
-	rmSync(base, { recursive: true, force: true });
+test("the harness state directory is never part of what a cycle sees or reverts", () => {
+	const { base, cwd } = makeRepo();
+	try {
+		const baseline = headOf(cwd);
+		writeFileSync(join(cwd, ".zense", "spec.json"), "{}");
+		assert.deepEqual(changePathsSince(cwd, baseline), [], ".zense is excluded by construction");
+		assert.equal(discardSinceBaseline(cwd, baseline).ok, true);
+		assert.ok(readFileSync(join(cwd, ".zense", "spec.json"), "utf8").length > 0, "discard must not eat harness state");
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
-test("acceptPendingApply: commitIfStaged=true ('commit it for me') → commits with the prepared message, then clears patch+msg", () => {
-	const { cwd, base, git } = makeRepo();
-	seedPending({ cwd, git });
-	const r = acceptPendingApply(cwd, { commitIfStaged: true });
-	assert.equal(r.ok, true, r.msg);
-	assert.equal(r.committedOnBehalf, true);
-	assert.equal(git(["log", "-1", "--format=%s"]).trim(), "Add src module", "subject comes from pending-apply.msg");
-		assert.deepEqual(git(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]).split("\n").filter(Boolean), ["src.txt"]);
-	assert.deepEqual(pendingFiles(cwd), { patch: false, msg: false });
-	rmSync(base, { recursive: true, force: true });
+test("accept can commit the cycle's work, and says so honestly when there is nothing to commit", () => {
+	const { base, cwd } = makeRepo();
+	try {
+		const spec = { version: 2, title: "do the thing", intent: "why it matters", scope: [], criteria: [], specDebt: [], approved: true };
+		writeFileSync(join(cwd, "work.txt"), "done\n");
+		const r = commitWorkingTree(cwd, composeCommitMessage(spec));
+		assert.equal(r.ok, true, r.msg);
+		assert.match(r.sha ?? "", /^[0-9a-f]+$/);
+		assert.equal(headOf(cwd), execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim());
+		const again = commitWorkingTree(cwd, composeCommitMessage(spec));
+		assert.equal(again.ok, true);
+		assert.equal(again.msg, "nothing to commit", "a second accept must not invent a commit");
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
-test("acceptPendingApply: human amendments — evalTree differs from HEAD^{tree} → returns only the human-edited files", () => {
-	const { cwd, base, git } = makeRepo();
-	seedPending({ cwd, git });
-	git(["commit", "-q", "-F", join(cwd, ".zense", "pending-apply.msg")]);
-	const evalTree = git(["rev-parse", "HEAD^{tree}"]).trim(); 	writeFileSync(join(cwd, "src.txt"), "human tweak\n"); 	writeFileSync(join(cwd, "extra.md"), "human notes\n");
-	git(["add", "src.txt", "extra.md"]);
-	git(["commit", "-q", "-m", "human adjustments after review"]);
-	const r = acceptPendingApply(cwd, { evalTree });
-	assert.equal(r.ok, true, r.msg);
-	assert.deepEqual(r.amendedFiles.sort(), ["extra.md", "src.txt"]);
-	rmSync(base, { recursive: true, force: true });
+test("the commit message is one bounded subject line and carries the spec's reason", () => {
+	const long = "a very long title ".repeat(10);
+	assert.ok(sanitizeSubject(long).length <= 72);
+	assert.equal(sanitizeSubject("   "), "zense impl");
+	const msg = composeCommitMessage({ version: 3, title: "t", intent: "because reasons", scope: [], criteria: [], specDebt: [], approved: true });
+	assert.match(msg, /^t\n/);
+	assert.match(msg, /because reasons/);
+	assert.match(msg, /zense spec v3/);
 });
 
-test("acceptPendingApply: evalTree equals HEAD^{tree} (no human edits) → amendedFiles empty", () => {
-	const { cwd, base, git } = makeRepo();
-	seedPending({ cwd, git });
-	git(["commit", "-q", "-F", join(cwd, ".zense", "pending-apply.msg")]);
-	const evalTree = git(["rev-parse", "HEAD^{tree}"]).trim();
-	const r = acceptPendingApply(cwd, { evalTree });
-	assert.equal(r.ok, true, r.msg);
-	assert.deepEqual(r.amendedFiles, []);
-	rmSync(base, { recursive: true, force: true });
-});
-
-test("acceptPendingApply: no evalTree → the delta is skipped quietly (amendedFiles empty)", () => {
-	const { cwd, base, git } = makeRepo();
-	seedPending({ cwd, git });
-	git(["commit", "-q", "-F", join(cwd, ".zense", "pending-apply.msg")]);
-	const r = acceptPendingApply(cwd, {});
-	assert.equal(r.ok, true, r.msg);
-	assert.deepEqual(r.amendedFiles, []);
-	rmSync(base, { recursive: true, force: true });
+test("uncommittedChanges reports the repo but never the harness state", () => {
+	const { base, cwd } = makeRepo();
+	try {
+		assert.deepEqual(uncommittedChanges(cwd), []);
+		writeFileSync(join(cwd, "x.txt"), "x\n");
+		writeFileSync(join(cwd, ".zense", "noise"), "n\n");
+		const lines = uncommittedChanges(cwd);
+		assert.equal(lines.length, 1, `expected only the repo file, got ${lines.join(" | ")}`);
+		assert.match(lines[0], /x\.txt/);
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });

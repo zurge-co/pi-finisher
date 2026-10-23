@@ -7,11 +7,11 @@ import { subagentLogPath } from "./subagent-log.ts";
 import { runRpcSubagent } from "./subagent-rpc.ts";
 import { SUBAGENT_ROLES, orphanRoleKeys, subagentStripFlagsAsync, subagentTimeout } from "./subagent-config.ts";
 import { resolveModelPattern } from "./models.ts";
-import { discardPendingApply } from "./pending-apply.ts";
+import { changePathsSince, discardSinceBaseline } from "./pending-apply.ts";
 import { subagentExtIncludes, writeSubagentExtIncludes, listInstalledExtensions, zenseGlobalConfigDir, extDisplayLabel } from "./subagent-config.ts";
 import { discoverResumeState, loadSpecFromDisk } from "./resume.ts";
 import { gitOk } from "./worktree.ts";
-import { acceptPendingApply, isGitRepo, uncommittedChanges } from "./pending-apply.ts";
+import { isGitRepo, uncommittedChanges } from "./pending-apply.ts";
 import { surfaceLine } from "./goal-run.ts";
 import { freshStatusLine, readFreshContextConfig, writeFreshContextConfig } from "./fresh-context.ts";
 import { readHandoff, writeHandoff } from "./handoff-stack.ts";
@@ -103,28 +103,11 @@ export const registerCommands = (ctx: HarnessContext) => {
 		state.phase = disk.approved ? "implementation" : "requirements";
 		state.specJsonPath = disc.specJsonPath;
 		state.specMdPath = disc.specMdPath;
-		let wtLine: string;
-		if (disc.worktree) {
-			state.worktree = disc.worktree;
-			state.worktreeLeaveNotified = true;
-			wtLine =
-				`🌳 worktree rewired: ${disc.worktree.root}\n  branch ${disc.worktree.branch} — tool calls are redirected here; applied as staged changes on eval PASS` +
-				(disc.worktreeExactVersion === false ? `\n  ⚠ branch predates spec v${disk.version} (reused worktree across a version bump) — verify it holds the right in-progress work` : "");
-			learn(ctx, `resume: worktree rewired ${disc.worktree.branch} @ ${disc.worktree.root}`);
-		} else {
-			wtLine = "no matching worktree found — working directly in main";
-		}
-		let paLine = "";
-		if (disc.pendingApply) {
-			state.pendingApply = disc.pendingApply;
-			learn(ctx, `resume: pendingApply restored (${disc.pendingApply.paths.length} staged path(s))`);
-			paLine = `\n⏳ pending apply restored: ${disc.pendingApply.paths.length} file(s) staged awaiting a commit — git commit -F .zense/pending-apply.msg · /zense accept · or /zense discard`;
-		}
-		learn(ctx, `resumed spec v${disk.version} from disk (approved=${disk.approved})`);
+		learn(ctx, `resumed spec v${disk.version} from disk (approved=${disk.approved}) — working directly in the repo`);
 		persist();
 		updateWidget(ctx);
 		ctx.ui.notify(
-			`🔁 resumed spec v${disk.version}${disk.approved ? " (signed — implementation gate open)" : " (unsigned — gate closed; sign via /zense approve)"}: ${disk.title}\n${wtLine}${paLine}`,
+			`🔁 resumed spec v${disk.version}${disk.approved ? " (signed — implementation gate open)" : " (unsigned — gate closed; sign via /zense approve)"}: ${disk.title}\nworking directly in the repo (no worktree)`,
 			"info",
 		);
 	};
@@ -145,49 +128,29 @@ export const registerCommands = (ctx: HarnessContext) => {
 				ctx.ui.notify(
 					`phase=${state.phase} spec=${state.spec ? `v${state.spec.version} approved=${state.spec.approved}` : "—"}\n` +
 						(disk ? `📄 on-disk spec found: v${disk.version} ${disk.approved ? "(signed)" : "(unsigned)"} — /zense resume to continue it, or ignore to abandon\n` : "") +
-						(state.worktree ? `worktree: ${state.worktree.dir}\n  branch ${state.worktree.branch} (active — applied as staged changes on eval PASS, never auto-committed)\n` : `worktree: (none — working in main)\n`) +
 						`turns=${state.turnsUsed} tokens=${state.tokensUsed}\n` +
-						(state.pendingApply
-							? `⏳ pending apply: spec v${state.pendingApply.specVersion} — ${state.pendingApply.paths.length} file(s) staged awaiting a commit (from ${state.pendingApply.branch})\n  commit: git commit -F .zense/pending-apply.msg · accept after committing: /zense accept · roll back: /zense discard (reverse patch)\n`
-							: "") +
+						`changes this cycle: ${changePathsSince(ctx.cwd, state.baselineHead).length} path(s) since ${state.baselineHead?.slice(0, 12) ?? "(no baseline)"}\n` +
 						`trajectory flags:\n${state.trajectoryFlags.join("\n") || "(none)"}\nescalations:\n${state.escalations.map((e) => `${e.kind}: ${e.detail}`).join("\n") || "(none)"}`,
 					"info",
 				);
 			} else if (sub === "resume") {
 				resumeZense(ctx);
 			} else if (sub === "discard") {
-				if (!state.pendingApply) return ctx.ui.notify("no pending apply to discard (the change was already committed, or never applied)", "info");
-				const dr = discardPendingApply(ctx.cwd);
+				const baseline = state.baselineHead;
+				const dr = discardSinceBaseline(ctx.cwd, baseline);
 				if (!dr.ok) {
 					escalate("need-decision", `discard: ${dr.msg}`, ctx);
-					return ctx.ui.notify(`⚠ discard failed: ${dr.msg}`, "warning");
+					return ctx.ui.notify(`⚠ discard: ${dr.msg}`, "warning");
 				}
-				const v = state.pendingApply.specVersion;
-				state.pendingApply = undefined;
-				learn(ctx, `spec v${v} discarded after review (reverse-applied)`);
+				const v = state.spec?.version ?? 1;
+				learn(ctx, `cycle v${v} discarded — ${dr.msg}`);
 				state.contextBulletin = buildDiscardBulletin(v);
 				resetCycleState(state);
 				persist();
 				updateWidget(ctx);
-				ctx.ui.notify(`✅ ${dr.msg} — spec v${v} has been rolled back out of main`, "info");
+				ctx.ui.notify(`✅ ${dr.msg}`, "info");
 			} else if (sub === "accept") {
-				if (!state.pendingApply) return ctx.ui.notify("no pending apply to accept (already committed/accepted, or never applied)", "info");
-				let commitIfStaged = rest[0] === "commit";
-				if (!commitIfStaged && !gitOk(["diff", "--cached", "--quiet"], ctx.cwd).ok) {
-					const ok =
-						ctx.mode === "tui" &&
-						(await ctx.ui.confirm(
-							`✅ accepting spec v${state.pendingApply.specVersion} — but staged changes are still pending (not yet committed)`,
-							"have the harness commit them with .zense/pending-apply.msg, then accept? (hooks run normally)\nchoosing No cancels: commit yourself, then /zense accept again",
-						));
-					if (!ok)
-						return ctx.ui.notify(
-							"not committed yet — commit yourself with `git commit -F .zense/pending-apply.msg`, then /zense accept; or let the harness do it: /zense accept commit",
-							"info",
-						);
-					commitIfStaged = true;
-				}
-				const r = acceptPending(ctx, commitIfStaged, true);
+				const r = acceptPending(ctx, rest[0] === "commit", true);
 				ctx.ui.notify(r.text, r.ok ? "info" : "warning");
 			} else if (sub === "fresh-context") {
 				const action = (rest[0] ?? "status").trim().toLowerCase();

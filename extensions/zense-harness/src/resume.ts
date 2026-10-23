@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { zenseDir, type Spec, type Worktree, type PendingApply } from "./types.ts";
 import { gitOk } from "./worktree.ts";
-import { PENDING_PATCH, NOT_ZENSE } from "./pending-apply.ts";
+import { NOT_ZENSE } from "./pending-apply.ts";
 
 export const loadSpecFromDisk = (cwd: string): Spec | null => {
 	try {
@@ -48,52 +48,10 @@ export const findSpecArchivePaths = (cwd: string, version: number): { json?: str
 	}
 };
 
-export const findSessionWorktree = (cwd: string, specVersion: number): { wt: Worktree; exactVersion: boolean } | null => {
-	try {
-		const parent = join(zenseDir(cwd), "worktree");
-		if (!existsSync(parent)) return null;
-		const candidates: { wt: Worktree; exactVersion: boolean }[] = [];
-		for (const entry of readdirSync(parent)) {
-			const dir = join(parent, entry);
-			try {
-				if (!statSync(dir).isDirectory()) continue;
-			} catch {
-				continue;
-			}
-			if (!gitOk(["rev-parse", "--is-inside-work-tree"], dir).ok) continue; 			const br = gitOk(["rev-parse", "--abbrev-ref", "HEAD"], dir);
-			if (!br.ok || !br.out.trim().startsWith("zense/impl/")) continue;
-			const branch = br.out.trim();
-			candidates.push({ wt: { root: dir, branch, dir }, exactVersion: branch.startsWith(`zense/impl/v${specVersion}-`) });
-		}
-		const exact = candidates.find((c) => c.exactVersion);
-		if (exact) return exact;
-		return candidates.length === 1 ? candidates[0] : null; 	} catch {
-		return null;
-	}
-};
-
-export const restorePendingApply = (cwd: string, specVersion: number): PendingApply | null => {
-	try {
-		const patchPath = join(zenseDir(cwd), PENDING_PATCH);
-		if (!existsSync(patchPath)) return null;
-		if (gitOk(["diff", "--cached", "--quiet"], cwd).ok) return null; 		const names = gitOk(["diff", "--cached", "--name-only", "--", ".", NOT_ZENSE], cwd);
-		return {
-			specVersion,
-			branch: "(resumed)",
-			paths: names.ok ? names.out.trim().split("\n").filter(Boolean) : [],
-			appliedAt: statSync(patchPath).mtimeMs,
-		};
-	} catch {
-		return null;
-	}
-};
-
 export interface ResumeDiscovery {
 	spec: Spec;
 	specJsonPath?: string;
 	specMdPath?: string;
-	worktree?: Worktree;
-	worktreeExactVersion?: boolean; 	pendingApply?: PendingApply;
 }
 
 export const discoverResumeState = (cwd: string): ResumeDiscovery | null => {
@@ -105,14 +63,5 @@ export const discoverResumeState = (cwd: string): ResumeDiscovery | null => {
 		...(arch.json ? { specJsonPath: arch.json } : {}),
 		...(arch.md ? { specMdPath: arch.md } : {}),
 	};
-	const found = findSessionWorktree(cwd, spec.version);
-	if (found) {
-		out.worktree = found.wt;
-		out.worktreeExactVersion = found.exactVersion;
-	}
-	if (spec.approved) {
-		const pa = restorePendingApply(cwd, spec.version);
-		if (pa) out.pendingApply = pa;
-	}
 	return out;
 };

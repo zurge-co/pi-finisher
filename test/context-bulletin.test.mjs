@@ -48,18 +48,16 @@ test("resetCycleState: clears all cycle fields (spec/phase/eval/head/override/so
 		specMdPath: "/x/spec.md",
 		specJsonPath: "/x/spec.json",
 		lastCompileLessons: 3,
-		worktreeLeaveNotified: true,
 				turnsUsed: 9,
 		tokensUsed: 12345,
 		subagentRuns: [{ role: "grader", ok: true, summary: "", at: 1 }],
 		trajectoryFlags: ["f"],
 		escalations: [{ kind: "accepted", detail: "d", at: 1 }],
-		pendingApply: undefined,
 	};
 	resetCycleState(s);
 	assert.equal(s.spec, undefined);
 	assert.equal(s.phase, "requirements");
-	for (const k of ["lastEval", "baselineHead", "evalOverrideFails", "specSource", "specMdPath", "specJsonPath", "lastCompileLessons", "worktreeLeaveNotified"])
+	for (const k of ["lastEval", "baselineHead", "evalOverrideFails", "specSource", "specMdPath", "specJsonPath", "lastCompileLessons"])
 		assert.equal(s[k], undefined, `${k} must be cleared (cycle scope)`);
 	assert.equal(s.turnsUsed, 9);
 	assert.equal(s.tokensUsed, 12345);

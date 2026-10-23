@@ -1,10 +1,7 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync } from "node:fs";
 import { fmtTok } from "./subagent-log.ts";
-import { basename } from "node:path";
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./agent-panel.ts";
-import { buildWorktreeCommand, rewritePathForWorktree } from "./worktree.ts";
-import { type ApplyRedirect, type Learn, type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { type Learn, type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { type State, type SubagentRun } from "./types.ts";
 
 export const createPanelWidget = (ctx: HarnessContext) => {
@@ -28,8 +25,6 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 			`ZENSE ▸ ${state.phase.toUpperCase()} · spec: ${s ? (s.approved ? "✅v" + s.version : "⏳unapproved") : "—"}` +
 			` · turns ${state.turnsUsed} · tok ${fmtTok(state.tokensUsed)}` +
 			(live.length > 1 ? ` · 🧪 ${live.length - 1} agents live` : "") +
-			(state.worktree ? ` · 🌳 ${basename(state.worktree.root)}` : "") +
-			(state.pendingApply ? ` · ⏳staged v${state.pendingApply.specVersion}` : "") +
 			(state.trajectoryFlags.length ? ` · ⚠ ${state.trajectoryFlags.length} traj-flags` : "") +
 			(state.hygieneViolations?.length ? ` · 🧹 ${state.hygieneViolations.length} code-rule` : "") +
 			(state.escalations.length ? ` · 🚨 ${state.escalations.length}` : "");
@@ -56,23 +51,5 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		}, want);
 	};
 
-	const applyRedirect = (ev: any, ctx: ExtensionContext) => {
-		let wt = state.worktree;
-		if (wt && !existsSync(wt.root)) {
-			learn(ctx, "worktree self-heal: " + wt.root + " is gone (applied out-of-band?) — clearing the stale pointer");
-			state.worktree = null;
-			persist(); updateWidget(ctx);
-			wt = null;
-		}
-		if (!wt) return;
-		if (ev.toolName === "write" || ev.toolName === "edit" || ev.toolName === "read") {
-			const p = (ev.input as { path?: string })?.path;
-			if (typeof p === "string") ev.input.path = rewritePathForWorktree(ctx.cwd, wt.root, p);
-		} else if (ev.toolName === "bash") {
-			const c = (ev.input as { command?: string })?.command;
-			if (typeof c === "string") ev.input.command = buildWorktreeCommand(c, wt.root);
-		}
-	};
-
-	return { activeRun, updateWidget, rescheduleTicker, applyRedirect };
+	return { activeRun, updateWidget, rescheduleTicker };
 };

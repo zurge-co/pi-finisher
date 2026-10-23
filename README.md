@@ -58,7 +58,7 @@ GRAD  ▶ grader              12s  running probes
 
 | Command | What it does |
 |---|---|
-| `/zense status` | phase, worktree, turns/tokens, flags, escalations |
+| `/zense status` | phase, changes this cycle, turns/tokens, flags, escalations |
 | `/zense surface` | what this build exposes: tools, commands, ladder, concurrency, ceiling (none) |
 | `/zense models` | pick the model ladder slots (priority 1–5) |
 | `ctrl+_` / `/zense agents` | live tail of the running sub-agents |
@@ -113,6 +113,18 @@ it never falls back to "keep everything". Log in one of:
 | `openai/gpt-6-luna` | `OPENAI_API_KEY` |
 
 Turn the reset off with `/zense fresh-context off`; inspect the stack with `/zense fresh-context status`.
+
+## Where the work happens
+
+The agent writes **in your repo**. There is no shadow checkout to get lost in: what `zense` edits is
+what `git status` shows, so a review always looks at the same tree the agent worked in. The only
+worktrees left are the per-slice ones that `zense_swarm mode=code` gives each parallel coder, so
+two coders can never overwrite each other; they are merged back deterministically by slice id.
+
+Rollback is per cycle: `/zense discard` returns every path the cycle touched to the commit the goal
+was confirmed on (files created during the cycle are removed). `/zense accept commit` commits the
+cycle with a prepared message; plain `/zense accept` closes the cycle and leaves your working tree
+alone.
 
 ## Every tool call is bounded
 

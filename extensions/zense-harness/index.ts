@@ -5,7 +5,6 @@ import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-cod
 import { COMMENT_DISCIPLINE_GUIDELINE } from "./src/eval-review.ts";
 import { CODE_HYGIENE_GUIDELINE } from "./src/code-hygiene.ts";
 import { SWARM_ROUTING_GUIDELINE } from "./src/swarm.ts";
-import { PENDING_MSG, PENDING_PATCH } from "./src/pending-apply.ts";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
 import { applyFullscreenDefault } from "./src/spec-changes.ts";
 import { gitOk } from "./src/worktree.ts";
@@ -178,24 +177,6 @@ export default function (pi: ExtensionAPI) {
 					"info",
 				);
 		}
-		const pa0 = box.get().pendingApply;
-		if (pa0) {
-			const pa = pa0;
-			if (gitOk(["diff", "--cached", "--quiet"], ctx.cwd).ok) {
-				learn(ctx, `pendingApply reconcile: spec v${pa.specVersion} — index is empty (committed/discarded outside the flow)`);
-				box.get().pendingApply = undefined;
-				rmSync(join(zenseDir(ctx.cwd), PENDING_PATCH), { force: true });
-				rmSync(join(zenseDir(ctx.cwd), PENDING_MSG), { force: true });
-				box.get().contextBulletin = buildReconcileBulletin(pa.specVersion);
-				resetCycleState(box.get());
-				persist();
-			} else {
-				ctx.ui.notify(
-					`⏳ zense: changes from spec v${pa.specVersion} (${pa.paths.length} file(s)) are staged in main awaiting a commit — review, then git commit -F .zense/pending-apply.msg · after committing → /zense accept · unhappy → /zense discard (reverse patch)`,
-					"warning",
-				);
-			}
-		}
 		kit.updateWidget(ctx);
 	});
 
@@ -209,7 +190,6 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`⚠ trajectory: ${rel} outside spec.scope`, "warning");
 			}
 		}
-		kit.applyRedirect(ev, ctx);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -261,12 +241,6 @@ export default function (pi: ExtensionAPI) {
 		if (calls.length >= 5 && failed / calls.length > 0.5)
 			flag(`retry storm: ${failed}/${calls.length} tool calls failed`, ctx);
 
-		const wt0 = box.get().worktree;
-		if (wt0 && !box.get().worktreeLeaveNotified) {
-			box.get().worktreeLeaveNotified = true;
-			ctx.ui.notify(`🌳 worktree left unmerged (not yet applied to main): ${wt0.dir}\nbranch ${wt0.branch} — will be applied as staged changes (no commit) automatically when eval passes`, "info");
-			persist();
-		}
 		persist();
 	});
 }

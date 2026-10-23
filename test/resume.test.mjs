@@ -7,10 +7,7 @@ import { join } from "node:path";
 import {
 	loadSpecFromDisk,
 	findSpecArchivePaths,
-	findSessionWorktree,
-	restorePendingApply,
 	discoverResumeState,
-	createWorktree,
 } from "../extensions/zense-harness/index.ts";
 
 const SPEC = (version) => ({
@@ -113,50 +110,8 @@ test("findSpecArchivePaths: picks the newest archive pair of the requested versi
 	}
 });
 
-test("findSessionWorktree: no worktree dir / stray non-git dir → null", () => {
-	const { cwd, base } = makeRepo();
-	try {
-		assert.equal(findSessionWorktree(cwd, 1), null);
-		mkdirSync(join(cwd, ".zense", "worktree", "stray"), { recursive: true });
-		assert.equal(findSessionWorktree(cwd, 1), null);
-	} finally {
-		rmSync(base, { recursive: true, force: true });
-	}
-});
 
-test("findSessionWorktree: real zense worktree found; exact version match preferred", () => {
-	const { cwd, base } = makeRepo();
-	try {
-		mkdirSync(join(cwd, ".zense"), { recursive: true });
-		const wt = createWorktree(cwd, SPEC(4));
-		assert.ok(wt, "worktree created");
-		const found = findSessionWorktree(cwd, 4);
-		assert.ok(found, "worktree rediscovered");
-		assert.equal(found.wt.root, wt.root);
-		assert.equal(found.wt.branch, wt.branch);
-		assert.equal(found.exactVersion, true);
-						const inexact = findSessionWorktree(cwd, 5);
-		assert.ok(inexact, "single leftover adopted despite version mismatch");
-		assert.equal(inexact.exactVersion, false);
-	} finally {
-		rmSync(base, { recursive: true, force: true });
-	}
-});
 
-test("findSessionWorktree: multiple candidates with no exact version match → null (never guess)", () => {
-	const { cwd, base } = makeRepo();
-	try {
-		mkdirSync(join(cwd, ".zense"), { recursive: true });
-		assert.ok(createWorktree(cwd, SPEC(1)));
-						Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1100);
-		assert.ok(createWorktree(cwd, SPEC(2)));
-		assert.equal(findSessionWorktree(cwd, 7), null);
-		const exact = findSessionWorktree(cwd, 2);
-		assert.ok(exact && exact.exactVersion, "exact match wins among several");
-	} finally {
-		rmSync(base, { recursive: true, force: true });
-	}
-});
 
 test("discoverResumeState: no spec on disk → null", () => {
 	const { cwd, base } = makeRepo();
@@ -190,57 +145,21 @@ test("discoverResumeState: spec only (no worktree/apply) → spec + archive path
 	}
 });
 
-test("discoverResumeState: signed spec + worktree + staged apply → everything wired at once", () => {
-	const { cwd, base, git } = makeRepo();
-	try {
-		mkdirSync(join(cwd, ".zense"), { recursive: true });
-		writeFileSync(
-			join(cwd, ".zense", "spec.json"),
-			JSON.stringify({ version: 5, title: "t", intent: "i", scope: [], criteria: [], approved: true }),
-		);
-		const wt = createWorktree(cwd, SPEC(5));
-		assert.ok(wt, "worktree created");
-				writeFileSync(join(cwd, ".zense", "pending-apply.patch"), "fake patch");
-		writeFileSync(join(cwd, "applied.txt"), "x\n");
-		git(["add", "applied.txt"]);
-		const d = discoverResumeState(cwd);
-		assert.ok(d, "discovery returned");
-		assert.equal(d.worktree?.root, wt.root);
-		assert.equal(d.worktreeExactVersion, true);
-		assert.deepEqual(d.pendingApply?.paths, ["applied.txt"]);
-		assert.equal(d.pendingApply?.specVersion, 5);
-				writeFileSync(
-			join(cwd, ".zense", "spec.json"),
-			JSON.stringify({ version: 5, title: "t", intent: "i", scope: [], criteria: [], approved: false }),
-		);
-		assert.equal(discoverResumeState(cwd)?.pendingApply, undefined);
-	} finally {
-		rmSync(base, { recursive: true, force: true });
-	}
-});
 
-test("restorePendingApply: no patch file → null; patch + empty index → null", () => {
+
+
+
+test("discoverResumeState: a signed spec on disk is enough — no worktree or patch state is tracked any more", () => {
 	const { cwd, base } = makeRepo();
 	try {
-		assert.equal(restorePendingApply(cwd, 1), null);
 		mkdirSync(join(cwd, ".zense"), { recursive: true });
-		writeFileSync(join(cwd, ".zense", "pending-apply.patch"), "fake patch");
-		assert.equal(restorePendingApply(cwd, 1), null); 	} finally {
-		rmSync(base, { recursive: true, force: true });
-	}
-});
-
-test("restorePendingApply: patch + staged change → restored, .zense paths excluded", () => {
-	const { cwd, base, git } = makeRepo();
-	try {
-		mkdirSync(join(cwd, ".zense"), { recursive: true });
-		writeFileSync(join(cwd, ".zense", "pending-apply.patch"), "fake patch");
-		writeFileSync(join(cwd, "new-file.txt"), "hello\n");
-		git(["add", "new-file.txt", ".zense/pending-apply.patch"]);
-		const pa = restorePendingApply(cwd, 2);
-		assert.ok(pa, "pending apply restored");
-		assert.equal(pa.specVersion, 2);
-		assert.deepEqual(pa.paths, ["new-file.txt"]);
+		writeFileSync(join(cwd, ".zense", "spec.json"), JSON.stringify({ version: 5, title: "t", intent: "i", scope: [], criteria: [], approved: true }));
+		const d = discoverResumeState(cwd);
+		assert.ok(d, "the spec is discovered straight from disk");
+		assert.equal(d.spec.version, 5);
+		assert.equal(d.spec.approved, true);
+		assert.equal("worktree" in d, false, "resume must not resurrect a worktree pointer");
+		assert.equal("pendingApply" in d, false, "nor a staged-apply record");
 	} finally {
 		rmSync(base, { recursive: true, force: true });
 	}

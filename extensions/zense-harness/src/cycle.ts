@@ -11,7 +11,6 @@ export const resetCycleState = (s: State): void => {
 	s.specMdPath = undefined;
 	s.specJsonPath = undefined;
 	s.lastCompileLessons = undefined;
-	s.worktreeLeaveNotified = undefined;
 	s.goalDriver = undefined;
 	s.verifyLoop = undefined;
 };

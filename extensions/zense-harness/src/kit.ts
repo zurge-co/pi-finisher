@@ -8,7 +8,6 @@ export type GetState = () => State;
 export type Persist = () => void;
 export type UpdateWidget = (ctx: ExtensionContext) => void;
 export type RescheduleTicker = (ctx: ExtensionContext) => void;
-export type ApplyRedirect = (ev: any, ctx: ExtensionContext) => void;
 export type Escalate = (kind: string, detail: string, ctx: ExtensionContext) => void;
 export type Flag = (msg: string, ctx: ExtensionContext) => void;
 export type ArmGoalRound = (text: string) => void;
@@ -63,7 +62,6 @@ export interface HarnessContext {
 	learn: Learn;
 	flag: Flag;
 	escalate: Escalate;
-	applyRedirect: ApplyRedirect;
 	launchSubagent: LaunchSubagent;
 	runCodeSwarm: RunCodeSwarm;
 	armGoalRound: ArmGoalRound;

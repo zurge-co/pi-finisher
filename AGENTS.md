@@ -33,7 +33,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 
 | Path | Contents |
 | --- | --- |
-| `extensions/zense-harness/index.ts` | Entry point: the `HarnessContext` wiring, session hooks, worktree redirect, hygiene `tool_result` check |
+| `extensions/zense-harness/index.ts` | Entry point: the `HarnessContext` wiring, session hooks, the tool-timeout `tool_call` hook, hygiene `tool_result` check |
 | `extensions/zense-harness/src/` | All helpers — one concern per file (map below) |
 | `test/*.test.mjs` | `node:test` suites; named imports from the entry point; a few read module source for regression guards |
 | `themes/` | Zense dark theme |
@@ -46,7 +46,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`, `Tracker`) + `zenseDir` |
 | `kit.ts` | `HarnessContext` — the shared plumbing type every kit receives |
 | `state-box.ts` | Mutable state holder (`createStateBox`) so kits see one live `State` |
-| `panel-widget.ts` | The live widget: `updateWidget` (status line + one row per running agent), `rescheduleTicker`, `applyRedirect` into the session worktree |
+| `panel-widget.ts` | The live widget: `updateWidget` (status line + one row per running agent), `rescheduleTicker` |
 | `agent-panel.ts` | Pure panel rendering: `panelRows`/`panelLines`/`panelTickMs`, `clip`, `elapsedLabel`, `streamTail` |
 | `subagent-launch.ts` | `launchSubagent`: one RPC sub-agent per role (timeout, cancel, live tail, model override) + handoff capture + provider-missing auto-heal |
 | `subagent-runner.ts` | `runSubagent`: spawn `pi --mode json`, stream/kill/timeout, JSONL log under `.zense/subagents/` (+ `fmtTok`) |
@@ -66,8 +66,8 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `commands.ts` | `/zense …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
 | `spec-flow.ts` | `commitSpec`, `approveCurrentSpec`, pending-apply accept |
 | `spec-changes.ts` | Spec diff → change summary, spec markdown, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
-| `worktree.ts` | Git worktree isolation: path/command rewrite, `gitOk`, create/reuse, git exclude |
-| `pending-apply.ts` | Apply-back: commit/snapshot messages, `applyWorktreeBack`, `discardPendingApply`, `acceptPendingApply` |
+| `worktree.ts` | Bounded `gitOk` + `excludeFromGitStatus` (worktree creation lives only in code-swarm) |
+| `pending-apply.ts` | Cycle bookkeeping: `changePathsSince`, `discardSinceBaseline`, `commitWorkingTree` |
 | `resume.ts` | `/zense resume` disk discovery |
 | `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |
 | `evidence.ts` | Check probes, repo facts, git change summary, `lintSpecChecks` |
