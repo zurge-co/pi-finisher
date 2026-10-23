@@ -3,7 +3,6 @@ import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-
 import { createEscGuard } from "./esc-guard.ts";
 import { panelize } from "./models.ts";
 import { type AskClarify, type AskRejectReason, type ScrollKeyAction, type ZenseCustom, type ZensePick, type HarnessContext } from "./kit.ts";
-import { type ClarifyQuestion } from "./spec-draft.ts";
 
 export const createGui = (ctx: HarnessContext) => {
 	const pi = ctx.pi;
@@ -118,17 +117,5 @@ export const createGui = (ctx: HarnessContext) => {
 		}, () => filter === "");
 	};
 
-	const askClarifyQuestion = async (ctx: ExtensionContext, q: ClarifyQuestion): Promise<string | undefined> => {
-		if (!q.choices.length) return ctx.ui.input(`❓ requirements asks: ${q.question}`, "(a short answer is fine — Esc/empty = skip)");
-		const FREE_TEXT = "__clarify_free_text__";
-		const picked = await zensePick(ctx, `❓ requirements asks: ${q.question}`, [
-			...q.choices.map((c) => ({ value: c, label: c })),
-			{ value: FREE_TEXT, label: "Other (type your own)", description: "pick this, then type your answer" },
-		]);
-		if (picked === null) return undefined;
-		if (picked === FREE_TEXT) return ctx.ui.input(`❓ requirements asks: ${q.question}`, "(type your answer — Esc/empty = skip)");
-		return picked;
-	};
-
-	return { escGuard, escGuardUnsubscribe, zenseCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, zensePick, askClarifyQuestion };
+	return { escGuard, escGuardUnsubscribe, zenseCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, zensePick };
 };

@@ -75,11 +75,13 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `spec-draft.ts` | Requirements-output parsing + quality gate (used by the compile path) |
 | `models.ts` | Per-role model config, picker choices, `panelize` |
 | `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
-| `adr-deny.ts` | ADR `DENY:` parsing (kept; no longer on the write path) |
 | `decompose.ts` | Planner subtasks / draft merge (kept for the compile path) |
 | `ask.ts` | `zense_ask` policy scanning + answer formatting |
 | `handoff-stack.ts` | The cross-task knowledge stack: what survives a context reset (dedupe, cap, one-line condensation) |
-| `handoff-classify.ts` | `classify()` keep/drop verdict + LLM condensation for the items it keeps |
+| `handoff-classify.ts` | The keep/drop verdict (classifier or chat ask) |
+| `handoff-model.ts` | The `handoff` ladder slot: read it, route it to classify() or an ask |
+| `decisions.ts` | `DECISION NEEDED` capture + the report at goal done |
+| `fullscreen.ts` | `tuiMode` default helper (was inside the deleted spec-changes) |
 | `fresh-context.ts` | The task-boundary reset: config switch, retain-none summary, status line |
 | `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort |
 | `subagent-log.ts` | Sub-agent log paths + `fmtTok` |

@@ -2,24 +2,21 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { COMMENT_DISCIPLINE_GUIDELINE } from "./src/eval-review.ts";
 import { CODE_HYGIENE_GUIDELINE } from "./src/code-hygiene.ts";
 import { SWARM_ROUTING_GUIDELINE } from "./src/swarm.ts";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
-import { applyFullscreenDefault } from "./src/spec-changes.ts";
 import { gitOk } from "./src/worktree.ts";
-import { loadSpecFromDisk } from "./src/resume.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
 import { createStateBox } from "./src/state-box.ts";
 import { zenseDir, type State } from "./src/types.ts";
 import { type HarnessContext } from "./src/kit.ts";
 import { createGui } from "./src/gui.ts";
 import { createPanelWidget } from "./src/panel-widget.ts";
+import { applyFullscreenDefault } from "./src/fullscreen.ts";
 import { createViewers } from "./src/viewers.ts";
 import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
-import { createSpecFlow } from "./src/spec-flow.ts";
 import { buildFreshSummary, readFreshContextConfig, shouldReset, freshCompactionEntry } from "./src/fresh-context.ts";
 import { readHandoff } from "./src/handoff-stack.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
@@ -28,18 +25,11 @@ import { registerTools } from "./src/tools.ts";
 import { registerCommands } from "./src/commands.ts";
 
 export * from "./src/types.ts";
-export * from "./src/spec-changes.ts";
 export * from "./src/worktree.ts";
-export * from "./src/resume.ts";
 export * from "./src/pending-apply.ts";
 export * from "./src/cycle.ts";
-export * from "./src/spec-draft.ts";
 export * from "./src/subagent-config.ts";
-export * from "./src/decompose.ts";
 export * from "./src/esc-guard.ts";
-export * from "./src/evidence.ts";
-export * from "./src/eval-review.ts";
-export * from "./src/adr-deny.ts";
 export * from "./src/subagent-log.ts";
 export * from "./src/models.ts";
 export * from "./src/swarm.ts";
@@ -52,10 +42,12 @@ export * from "./src/swarm-code.ts";
 export * from "./src/verify-loop.ts";
 export * from "./src/goal-driver.ts";
 export * from "./src/goal-run.ts";
-export * from "./src/ask.ts";
 export * from "./src/handoff-stack.ts";
 export * from "./src/handoff-classify.ts";
 export * from "./src/fresh-context.ts";
+export * from "./src/fullscreen.ts";
+export * from "./src/handoff-model.ts";
+export * from "./src/decisions.ts";
 export * from "./src/subagent-rpc.ts";
 export * from "./src/ladder-model.ts";
 export * from "./src/timeout.ts";
@@ -113,18 +105,10 @@ export default function (pi: ExtensionAPI) {
 	Object.assign(kit, subagents);
 	const swarm = createCodeSwarm(kit);
 	Object.assign(kit, swarm);
-	const specFlow = createSpecFlow(kit);
-	Object.assign(kit, specFlow);
 
 	createHygieneHook(kit);
 	registerTools(kit);
 	registerCommands(kit);
-
-	const readdirAdrs = (cwd: string): string[] => {
-		const dir = join(zenseDir(cwd), "adr");
-		if (!existsSync(dir)) return [];
-		return readdirSync(dir).filter((f) => f.endsWith(".md"));
-	};
 
 	const ensureFullscreenDefault = (ctx: ExtensionContext): void => {
 		if (ctx.mode !== "tui") return;
@@ -157,14 +141,6 @@ export default function (pi: ExtensionAPI) {
 		for (const e of ctx.sessionManager.getEntries())
 			if (e.type === "custom" && e.customType === "zense-state")
 				box.set({ ...freshState(), ...(e.data as State) });
-		if (!box.get().spec && ctx.hasUI) {
-			const disk = loadSpecFromDisk(ctx.cwd);
-			if (disk)
-				ctx.ui.notify(
-					`📄 found spec v${disk.version}${disk.approved ? " (signed)" : ""} on disk: ${disk.title} — run /zense resume to continue it, or ignore to abandon`,
-					"info",
-				);
-		}
 		kit.updateWidget(ctx);
 	});
 
@@ -182,7 +158,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		let sp = event.systemPrompt;
-		if (box.get().phase === "implementation") sp += "\n\n" + COMMENT_DISCIPLINE_GUIDELINE;
 		sp += "\n\n" + CODE_HYGIENE_GUIDELINE + "\n\n" + SWARM_ROUTING_GUIDELINE;
 		const bulletin = takeContextBulletin(box.get());
 		if (bulletin) {

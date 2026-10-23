@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GIT_TIMEOUT_MS, gitOk, excludeFromGitStatus, planSlices } from "../extensions/zense-harness/index.ts";
@@ -69,14 +69,14 @@ test("excludeFromGitStatus keeps a generated directory out of the repo's status"
 	}
 });
 
-test("the spec flow no longer creates a worktree: the agent's files are the repo's files", () => {
+test("no module creates a worktree for the main agent — only the coder slices do", () => {
 	const here = new URL("..", import.meta.url).pathname;
-	const flow = readFileSync(join(here, "extensions/zense-harness/src/spec-flow.ts"), "utf8");
-	assert.ok(!flow.includes("createWorktree"), "spec flow must not isolate the main agent any more");
-	assert.ok(!flow.includes("state.worktree"), "and must not track a worktree pointer");
-	const widget = readFileSync(join(here, "extensions/zense-harness/src/panel-widget.ts"), "utf8");
-	assert.ok(!widget.includes("applyRedirect"), "no path rewriting: what the agent writes is where it writes");
-	assert.ok(!widget.includes("rewritePathForWorktree"));
+	const files = readdirSync(join(here, "extensions/zense-harness/src"));
+	assert.ok(!files.includes("spec-flow.ts"), "the spec flow is gone");
+	const code = readFileSync(join(here, "extensions/zense-harness/src/code-swarm.ts"), "utf8");
+	assert.match(code, /workerWorktree/);
+	const index = readFileSync(join(here, "extensions/zense-harness/index.ts"), "utf8");
+	assert.ok(!index.includes("applyRedirect"), "no path rewriting anywhere");
 });
 
 test("slice isolation for parallel coders survives: each slice still gets its own checkout", () => {

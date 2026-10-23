@@ -1,13 +1,14 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { askPolicyError, askQuestionScan, formatAskAnswers, ASK_NO_UI_TEXT, type AskAnswer } from "./ask.ts";
 import { buildGoalToolText, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
 import { goalCases } from "./goal-confirm.ts";
-import { type ArmGoalRound, type AskClarify, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, readSwarmConcurrency, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
 import { MAX_VERIFY_ROUNDS, advanceLoop, buildFixPrompt, buildReport, freshVerifyLoop, judgeCase, nextVerifyRound, renderVerifyReport } from "./verify-loop.ts";
 import { type State } from "./types.ts";
+import { headOf } from "./pending-apply.ts";
+import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
 import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
@@ -32,42 +33,6 @@ export const registerTools = (ctx: HarnessContext) => {
 			return { content: [{ type: "text", text: timeoutNote(r) }], details: { timedOut: true, tool: def.name }, isError: true } as never;
 		},
 	});
-
-	pi.registerTool(boundedTool({
-		name: "zense_ask",
-		label: "Zense Ask Human",
-		description:
-			"Ask the human GOAL-ONLY questions through the harness multiple-choice picker (search-filtered TUI with an 'Other (type your own)' free-text option). Callable in ANY phase — prefer this over dumping a '1. a 2. b 3. c' numbered list as chat text. Ask ONLY about the product/UI outcome the human wants (what the result should be or do), each question carrying 2–6 pickable choices. NEVER ask internal technical/detail questions — library choice, module split, file layout, naming, test approach, data shape, refactor structure, error-handling style — or ask the human to pick an implementation strategy: decide those yourself from the repo/context, proceed, and record the decision as an explicit assumption plus a specDebt entry the human reviews at signing. Choices may be omitted only for a genuine product/UI question with no guessable options, and then the question MUST set freeText:true. In non-UI (RPC/print) sessions it returns guidance to ask in plain text instead — it never hangs.",
-		promptSnippet: "Ask the human a product/UI-goal question with a multiple-choice picker (choices required; never ask what you should decide yourself)",
-		promptGuidelines: [
-			"Ask ONLY product/UI-outcome questions — what the human wants the result to be or do. If a wrong guess would be cheap, do not ask at all: decide, proceed, and note the assumption.",
-			"Never ask the human an internal technical/detail decision: library, module split, file layout, naming, test approach, data shape, refactor structure, error handling, or any implementation strategy — decide those from the repo/context yourself and record an explicit assumption plus a specDebt entry instead.",
-			"Attach 2–6 plausible choices to EVERY question; the human can also pick 'Other (type your own)' to answer freely. Esc = that question is skipped (reported as such — never infer an answer from a skip).",
-			"Choices may be omitted only for a genuine product/UI-outcome question that has no guessable options, and that question must set freeText:true (the harness rejects a choice-less question otherwise).",
-			"Keep it to the few decision-critical questions (max 5 per call); this is an interactive check-in, not batch form-filling.",
-		],
-		parameters: Type.Object({
-			questions: Type.Array(
-				Type.Object({
-					question: Type.String(),
-					choices: Type.Optional(Type.Array(Type.String(), { description: "pickable options (2–6). Required for every question except a product/UI-outcome question that genuinely has no guessable options — that one sets freeText:true instead" })),
-					freeText: Type.Optional(Type.Boolean({ description: "true ONLY for a product/UI-outcome question with no guessable options (the picker then renders a plain input). A question with neither choices nor freeText is rejected" })),
-				}),
-				{ description: "questions asked in order, each with its own picker (max 5)" },
-			),
-		}),
-		async execute(_id, p, _s, _o, ctx) {
-			const { questions: qsAll, violations } = askQuestionScan(p.questions);
-			if (violations.length) return { content: [{ type: "text", text: askPolicyError(violations) }], details: { violations }, isError: true };
-			if (!qsAll.length) return { content: [{ type: "text", text: "zense_ask: no usable question — pass at least one non-empty question text" }], details: {}, isError: true };
-			const qs = qsAll;
-			if (!ctx.hasUI) return { content: [{ type: "text", text: ASK_NO_UI_TEXT }], details: { noUi: true } };
-			const answers: AskAnswer[] = [];
-			for (const q of qs)
-				answers.push({ question: q.question, answer: await askClarifyQuestion(ctx as ExtensionContext, q) });
-			return { content: [{ type: "text", text: formatAskAnswers(answers) }], details: { answers } };
-		},
-	}));
 
 	pi.registerTool(boundedTool({
 		name: "zense_swarm",
@@ -138,13 +103,15 @@ export const registerTools = (ctx: HarnessContext) => {
 				const decision = nextVerifyRound(loop, report);
 				if (driver) {
 					const step = nextGoalDriverStep({ ...driver, loop }, report);
+					const finalText = reportWithDecisions(step.text, state.decisions ?? []);
+					if (step.action !== "fix") writeDecisionsFile(ctx.cwd, driver.goal, state.decisions ?? []);
 					state.goalDriver = step.state;
 					state.verifyLoop = step.state.loop;
 					persist();
 					updateWidget(ctx);
 					if (step.action === "fix") armGoalRound(step.text);
 					return {
-						content: [{ type: "text", text: [buildGoalToolText({ ...driver, loop }, step), "", body].join("\n") }],
+						content: [{ type: "text", text: [buildGoalToolText({ ...driver, loop }, step, finalText), "", body].join("\n") }],
 						details: { mode: p.mode, report, decision, step: step.action, outcome: step.state.outcome, results },
 						...(report.allPass ? {} : { isError: true }),
 					};
@@ -185,6 +152,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const goal = p.goal.trim();
 			if (!goal) return { content: [{ type: "text", text: "zense_goal: goal is empty — ctx.state the outcome the human wants" }], details: {}, isError: true };
 			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
+			if (!state.baselineHead) state.baselineHead = headOf(ctx.cwd);
 			const started = resumeOrStart(state.goalDriver as GoalRunState | undefined, goal);
 			state.goalDriver = started;
 			if (cases.length && !state.spec) {

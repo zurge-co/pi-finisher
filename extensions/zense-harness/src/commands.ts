@@ -8,7 +8,6 @@ import { runRpcSubagent } from "./subagent-rpc.ts";
 import { SUBAGENT_ROLES, orphanRoleKeys, subagentTimeout } from "./subagent-config.ts";
 import { resolveModelPattern } from "./models.ts";
 import { changePathsSince, discardSinceBaseline } from "./pending-apply.ts";
-import { discoverResumeState, loadSpecFromDisk } from "./resume.ts";
 import { gitOk } from "./worktree.ts";
 import { isGitRepo, uncommittedChanges } from "./pending-apply.ts";
 import { SURFACE_COMMANDS, surfaceLine } from "./goal-run.ts";
@@ -35,33 +34,8 @@ export const registerCommands = (ctx: HarnessContext) => {
 		handler: (ctx) => openAgentsViewer(ctx),
 	});
 
-	const resumeZense = (ctx: ExtensionContext): void => {
-		if (state.spec)
-			return ctx.ui.notify(
-				`nothing to resume — this session already owns spec v${state.spec.version} (${state.spec.approved ? "signed" : "unsigned"})`,
-				"warning",
-			);
-		const disc = discoverResumeState(ctx.cwd);
-		if (!disc)
-			return ctx.ui.notify(
-				"nothing to resume — no valid .zense/spec.json on disk (no spec was ever committed here, or the file is corrupt)",
-				"info",
-			);
-		const disk = disc.spec;
-		state.spec = disk;
-		state.phase = disk.approved ? "implementation" : "requirements";
-		state.specJsonPath = disc.specJsonPath;
-		state.specMdPath = disc.specMdPath;
-		persist();
-		updateWidget(ctx);
-		ctx.ui.notify(
-			`🔁 resumed spec v${disk.version}${disk.approved ? " (signed — implementation open)" : " (unsigned — sign it with zense_spec)"}: ${disk.title}\nworking directly in the repo (no worktree)`,
-			"info",
-		);
-	};
-
 	pi.registerCommand("zense", {
-		description: "Zense harness (zense = human signature/sign): status | resume | accept | discard | agents | models | fresh-context | surface",
+		description: "Zense harness (zense = human signature/sign): status | accept | discard | agents | models | fresh-context | surface",
 		getArgumentCompletions: (prefix) =>
 			[...SURFACE_COMMANDS]
 				.filter((s) => s.startsWith(prefix))
@@ -72,17 +46,13 @@ export const registerCommands = (ctx: HarnessContext) => {
 				ctx.ui.notify(surfaceLine(ctx.cwd), "info");
 				return;
 			} else if (sub === "status") {
-				const disk = state.spec ? null : loadSpecFromDisk(ctx.cwd);
 				ctx.ui.notify(
 					`phase=${state.phase} spec=${state.spec ? `v${state.spec.version} approved=${state.spec.approved}` : "—"}\n` +
-						(disk ? `📄 on-disk spec found: v${disk.version} ${disk.approved ? "(signed)" : "(unsigned)"} — /zense resume to continue it, or ignore to abandon\n` : "") +
 						`turns=${state.turnsUsed} tokens=${state.tokensUsed}\n` +
 						`changes this cycle: ${changePathsSince(ctx.cwd, state.baselineHead).length} path(s) since ${state.baselineHead?.slice(0, 12) ?? "(no baseline)"}\n` +
 						`trajectory flags:\n${state.trajectoryFlags.join("\n") || "(none)"}\nescalations:\n${state.escalations.map((e) => `${e.kind}: ${e.detail}`).join("\n") || "(none)"}`,
 					"info",
 				);
-			} else if (sub === "resume") {
-				resumeZense(ctx);
 			} else if (sub === "discard") {
 				const baseline = state.baselineHead;
 				const dr = discardSinceBaseline(ctx.cwd, baseline);

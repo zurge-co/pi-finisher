@@ -14,9 +14,11 @@ export interface ClassifierGateway {
 
 export interface KeepDecision {
 	keep: boolean;
-	why: "classifier" | "heuristic" | "no-classifier" | "classifier-error" | "too-thin";
+	why: "classifier" | "chat" | "heuristic" | "no-classifier" | "classifier-error" | "too-thin";
 	probability?: number;
 }
+
+export type ChatAsk = (from: string, text: string) => Promise<{ keep: boolean; reason: string } | undefined>;
 
 export const parsePreference = (pattern: string): ClassifierRef | undefined => {
 	const slash = pattern.indexOf("/");
@@ -25,8 +27,12 @@ export const parsePreference = (pattern: string): ClassifierRef | undefined => {
 
 export const preferenceRefs = (preference: readonly string[] = CLASSIFIER_PREFERENCE): ClassifierRef[] => preference.map(parsePreference).filter((r): r is ClassifierRef => !!r);
 
-export const decideKeep = async (gateway: ClassifierGateway | undefined, opts: { from: string; text: string; preference?: readonly string[]; threshold?: number }): Promise<KeepDecision> => {
+export const decideKeep = async (gateway: ClassifierGateway | undefined, opts: { from: string; text: string; preference?: readonly string[]; threshold?: number; chatAsk?: ChatAsk }): Promise<KeepDecision> => {
 	if (!isWorthKeeping(opts.text)) return { keep: false, why: "too-thin" };
+	if (opts.chatAsk) {
+		const verdict = await opts.chatAsk(opts.from, opts.text).catch(() => undefined);
+		return verdict ? { keep: verdict.keep, why: "chat" } : { keep: false, why: "classifier-error" };
+	}
 	if (!gateway) return { keep: false, why: "no-classifier" };
 	const model = await gateway.available(opts.preference ?? CLASSIFIER_PREFERENCE);
 	if (!model) return { keep: false, why: "no-classifier" };
@@ -47,7 +53,8 @@ export const needsClassifierSetup = (d: KeepDecision): boolean => d.why === "no-
 export const describeDecision = (d: KeepDecision, from: string): string => {
 	if (d.why === "too-thin") return `handoff: dropped a ${from} note (too thin to carry)`;
 	if (d.why === "no-classifier") return `handoff: dropped a ${from} note (no classifier with credentials — nothing is kept without a verdict)`;
-	if (d.why === "classifier-error") return `handoff: dropped a ${from} note (the classifier failed, so the note stays unvetted)`;
+	if (d.why === "classifier-error") return `handoff: dropped a ${from} note (the handoff model failed, so the note stays unvetted)`;
+	if (d.why === "chat") return `handoff: ${d.keep ? "kept" : "dropped"} a ${from} note (chat model verdict)`;
 	const verdict = d.keep ? "kept" : "dropped";
 	return `handoff: ${verdict} a ${from} note (classifier p=${d.probability?.toFixed(2) ?? "?"})`;
 };

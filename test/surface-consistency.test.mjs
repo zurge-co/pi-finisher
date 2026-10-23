@@ -41,15 +41,18 @@ test("the removed surfaces cannot come back: no memory, no gate, no ext-config m
 });
 
 test("retired names stay retired and never overlap the live surface", () => {
-	for (const c of ["approve", "gate", "longrun", "memory", "ext-config-show", "distill"]) assert.ok(RETIRED_COMMANDS.includes(c), `${c} must be retired`);
+	for (const c of ["approve", "gate", "longrun", "memory", "ext-config-show", "distill", "resume"]) assert.ok(RETIRED_COMMANDS.includes(c), `${c} must be retired`);
 	assert.deepEqual(SURFACE_COMMANDS.filter((c) => RETIRED_COMMANDS.includes(c)), [], "a name cannot be both live and retired");
 	for (const t of SURFACE_TOOLS) assert.equal(isLiveTool(t), true);
 	for (const t of ["zense_spec", "zense_adr", "zense_eval", "zense_review", "zense_longrun"]) assert.equal(isRetiredTool(t), true);
 });
 
-test("the ask tool no longer has a gate-off escape hatch — it always asks when there is a UI", () => {
+test("no tool can ask a human: the ask surface is retired and the decision rule replaces it", () => {
 	const tools = readFileSync(join(here, "extensions/zense-harness/src/tools.ts"), "utf8");
-	assert.ok(!tools.includes("gateEnabled"), "the switch cannot be set any more, so the branch is dead");
-	assert.ok(!tools.includes("gateOff"));
-	assert.match(tools, /if \(!ctx\.hasUI\)/, "a non-UI session still declines without hanging");
+	assert.ok(!tools.includes("zense_ask"), "the human picker tool is gone");
+	assert.equal(isLiveTool("zense_ask"), false);
+	assert.equal(isRetiredTool("zense_ask"), true);
+	const decisions = readFileSync(join(here, "extensions/zense-harness/src/decisions.ts"), "utf8");
+	assert.match(decisions, /DECISION NEEDED/);
+	assert.match(decisions, /Never stop to wait for an answer/);
 });

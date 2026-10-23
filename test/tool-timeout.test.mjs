@@ -112,7 +112,7 @@ test("no timer survives a finished call, so a bounded tool cannot keep the proce
 test("every zense tool and every rpc call is registered through a bound, not a raw await", () => {
 	const tools = readFileSync(join(here, "extensions/zense-harness/src/tools.ts"), "utf8");
 	const registrations = tools.match(/pi\.registerTool\(/g) ?? [];
-	assert.ok(registrations.length >= 4, "the four tools must still be registered");
+	assert.ok(registrations.length >= 3, "every goal tool must still be registered");
 	assert.equal((tools.match(/pi\.registerTool\(boundedTool\(/g) ?? []).length, registrations.length, "every registration must go through boundedTool");
 	assert.ok(!/pi\.registerTool\(\{\s*\n\s*name:/.test(tools), "no tool may be registered without a bound");
 

@@ -24,8 +24,8 @@ const repo = (models, config) => {
 	return dir;
 };
 
-test("the agent-facing surface is exactly the four goal tools, and the retired ones are gone", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["zense_goal", "zense_swarm", "zense_steer", "zense_ask"]);
+test("the agent-facing surface is the three goal tools — nothing that asks a human", () => {
+	assert.deepEqual([...SURFACE_TOOLS], ["zense_goal", "zense_swarm", "zense_steer"]);
 	for (const t of RETIRED_TOOLS) {
 		assert.equal(isRetiredTool(t), true, `${t} must be retired`);
 		assert.equal(isLiveTool(t), false, `${t} must not be callable`);

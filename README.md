@@ -37,7 +37,8 @@ goal (confirmed once)
 
 | Tool | What it does |
 |---|---|
-| `zense_goal` | The single confirmation. Then the driver owns the run: rounds, evidence, fix-or-stop. |
+| `zense_goal` | The single confirmation. Then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. |
+| `zense_steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
 | `zense_swarm` | `explore` (read-only fan-out), `verify` (independent verifiers), `code` (one git worktree + branch per slice, merged back deterministically, overlapping paths never merged silently). |
 | `zense_ask` | Multiple-choice picker — only for a goal/UI question the agent genuinely cannot decide. |
 
@@ -111,6 +112,32 @@ it never falls back to "keep everything". Log in one of:
 | `openai/gpt-6-luna` | `OPENAI_API_KEY` |
 
 Turn the reset off with `/zense fresh-context off`; inspect the stack with `/zense fresh-context status`.
+
+## No one asks you mid-run
+
+There is no picker and no question tool: a worker that hits a fork declares it in one line instead.
+
+```
+DECISION NEEDED: should the cache be per-tenant?
+assumption: yes, keyed by tenant id
+```
+
+The worker continues with that assumption, the harness collects every declaration, and the single
+report at the end lists them (`decisions made without asking you`) plus `.zense/decisions.md`.
+
+## Choosing the handoff model
+
+The handoff gate needs a model; you pick it in the same ladder file as a slot of its own:
+
+```json
+{ "priority1": "anthropic/claude-sonnet", "handoff": "openai/gpt-5-mini" }
+```
+
+- a **classifier** model (`typesafe/jev-latest`, `cf/clef`, `openai/gpt-6-luna`) → uses `classify()`
+- any **chat** model → asked `KEEP`/`DROP` with one short call
+- unset → falls back to any classifier pi can reach, and drops the note if there is none
+
+The `handoff` slot is never counted as a fan-out rung.
 
 ## Where the work happens
 

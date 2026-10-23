@@ -57,11 +57,11 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 	};
 };
 
-export const buildGoalToolText = (started: GoalRunState, step: GoalStep): string =>
+export const buildGoalToolText = (started: GoalRunState, step: GoalStep, text = step.text): string =>
 	[
 		started.loop.round === 0 ? `goal confirmed once: ${started.goal}` : `goal still running: ${started.goal}`,
 		"",
-		step.text,
+		text,
 	].join("\n");
 
 export const goalFingerprint = (report: VerifyReport): string => evidenceFingerprint(report);

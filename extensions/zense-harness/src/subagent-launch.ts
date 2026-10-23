@@ -3,7 +3,9 @@ import { SUBAGENT_EXCLUDE_TOOLS, SUBAGENT_STRIP_FLAGS, subagentTimeout, buildRpc
 import { runRpcSubagent } from "./subagent-rpc.ts";
 import { subagentLogPath } from "./subagent-log.ts";
 import { appendHandoff, handoffInjection, readHandoff } from "./handoff-stack.ts";
-import { decideKeep, describeDecision, classifyGateway, needsClassifierSetup, classifierGuidance } from "./handoff-classify.ts";
+import { decideKeep, describeDecision, classifyGateway, needsClassifierSetup, classifierGuidance, type ChatAsk } from "./handoff-classify.ts";
+import { readHandoffModel, routeHandoffModel, handoffRouteNote, HANDOFF_ASK_PROMPT, parseHandoffVerdict } from "./handoff-model.ts";
+import { addDecisions, parseDecisions, withDecisionRule } from "./decisions.ts";
 import { streamTail } from "./agent-panel.ts";
 import { resolveModelPattern } from "./models.ts";
 import { type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
@@ -12,6 +14,7 @@ import { type State, type SubagentRun } from "./types.ts";
 export const createSubagentLaunch = (ctx: HarnessContext) => {
 	const state = ctx.state;
 	const classifierWarned = new Map<string, boolean>();
+	const handoffNoted = new Set<string>();
 	const persist = ctx.persist;
 	const pi = ctx.pi;
 	const updateWidget = ctx.updateWidget;
@@ -40,7 +43,7 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 			const subCwd = ctx.cwd;
 			const stripFlags = SUBAGENT_STRIP_FLAGS[role] ?? [];
 			const handoff = handoffInjection(readHandoff(ctx.cwd));
-			const prompt = handoff ? `${task}\n\n${handoff}` : task;
+			const prompt = withDecisionRule(handoff ? `${task}\n\n${handoff}` : task);
 			const r0 = await runRpcSubagent({
 				role,
 				cwd: subCwd,
@@ -63,7 +66,32 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 				ctx.ui.notify(`⚠ sub-agent model mismatch: ${role} — config asked for "${modelPattern}" but actually ran "${r.usedModel}" (pi fallback? check .zense/models.json / /zense models)`, "warning");
 			}
 			if (r.ok && r.output.trim()) {
-				const decision = await decideKeep(classifyGateway(ctx.modelRegistry), { from: role, text: r.output.slice(-4_000) });
+				const captured = parseDecisions(role, r.output);
+				if (captured.length) {
+					state.decisions = addDecisions(state.decisions ?? [], captured);
+					run.decisions = captured.length;
+				}
+				const route = routeHandoffModel(readHandoffModel(ctx.cwd), (p, i) => isClassifierModel(ctx, p, i));
+				const chatAsk: ChatAsk | undefined =
+					route.kind === "chat"
+						? async (from, text) => {
+								const ask = await runRpcSubagent({
+									role: "verifier",
+									cwd: ctx.cwd,
+									prompt: HANDOFF_ASK_PROMPT(from, text),
+									logPath: subagentLogPath(ctx.cwd, `${role}-handoff`),
+									timeoutMs: subagentTimeout("verifier", ctx.cwd),
+									cliArgs: buildRpcSubagentArgs([], "verifier"),
+									model: `${route.provider}/${route.id}`,
+								});
+								return ask.ok ? parseHandoffVerdict(ask.output) : undefined;
+							}
+						: undefined;
+				if (!handoffNoted.has(role)) {
+					handoffNoted.add(role);
+					state.contextBulletin = `${state.contextBulletin ? `${state.contextBulletin}\n` : ""}${handoffRouteNote(route)}`;
+				}
+				const decision = await decideKeep(chatAsk ? undefined : classifyGateway(ctx.modelRegistry), { from: role, text: r.output.slice(-4_000), ...(chatAsk ? { chatAsk } : {}) });
 				if (needsClassifierSetup(decision)) {
 					const seen = classifierWarned.get(role);
 					if (!seen) {
@@ -84,5 +112,14 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		}
 	};
 
-	return { launchSubagent };
+	const isClassifierModel = (ctx: ExtensionContext, provider: string, id: string): boolean => {
+		try {
+			const reg = ctx.modelRegistry as unknown as { getModelOfType?: (t: string, p: string, i: string) => unknown };
+			return !!reg.getModelOfType?.("classifier", provider, id);
+		} catch {
+			return false;
+		}
+	};
+
+	return { launchSubagent, isClassifierModel };
 };
