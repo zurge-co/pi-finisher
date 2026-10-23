@@ -1,6 +1,6 @@
 import { classifyKeep, handoffQuestion, handoffKeepProbability, isWorthKeeping, type HandoffAnswerLike } from "./handoff-stack.ts";
 
-export const CLASSIFIER_PREFERENCE = ["typesafe/jev-latest", "cloudflare-workers-ai/@cf/cloudflare/clef-flash", "cloudflare-workers-ai/@cf/cloudflare/clef", "openai/gpt-6-luna"] as const;
+export const CLASSIFIER_PREFERENCE = ["typesafe/jev-latest", "cloudflare-workers-ai/@cf/cloudflare/clef-flash", "cloudflare-workers-ai/@cf/cloudflare/clef"] as const;
 
 export interface ClassifierRef {
 	provider: string;

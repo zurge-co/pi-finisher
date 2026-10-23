@@ -110,17 +110,20 @@ Sub-agents run under `RpcClient`, so a finding can be pushed into a **run that i
 with `steer()` instead of restarting it. Every role boots with `--exclude-tools finisher_*`, so a
 sub-agent can never re-enter the harness.
 
-The classifier is the gate: **nothing is carried without a verdict.** If no classifier has
-credentials (or it errors), the note is dropped and the harness tells you which one to log in —
-it never falls back to "keep everything". Log in one of:
+The classifier is the gate: **nothing is carried without a verdict.** pi ships classifier models
+across many providers — a few examples:
 
 | classifier | credential |
 |---|---|
 | `typesafe/jev-latest` | `TYPESAFE_API_KEY` |
 | `cloudflare-workers-ai/@cf/cloudflare/clef(-flash)` | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
-| `openai/gpt-6-luna` | `OPENAI_API_KEY` |
+| `openrouter/typesafe/jev-1.14`, `opencode/jev-1.13` | that provider's key |
 
-Turn the reset off with `/finisher fresh-context off`; inspect the stack with `/finisher fresh-context status`.
+That table is **not** the list of what the harness accepts — it prefers `jev` first, then `clef`, and
+otherwise takes whichever classifier `getAvailableOfType("classifier")` returns. With none available
+the gate switches itself off: notes are dropped, no nagging, and the run continues.
+
+There is no switch to turn the context reset off — it always happens at a task boundary.
 
 ## Coders prove their own slice
 
@@ -156,7 +159,7 @@ The handoff gate needs a model; you pick it in the same ladder file as a slot of
 ```
 
 - **unset (default)** → the harness detects whichever classifier your providers expose and uses it; if you have none, handoff simply stays off — nothing to configure, no nagging
-- a **classifier** model (`typesafe/jev-latest`, `cf/clef`, `openai/gpt-6-luna`) → uses `classify()`
+- a **classifier** model (for example `typesafe/jev-latest` or `cf/clef` — pi lists dozens from many providers) → uses `classify()`
 - any **chat** model → asked `KEEP`/`DROP` with one short call
 
 The `handoff` slot is never counted as a fan-out rung.
