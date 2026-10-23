@@ -47,21 +47,6 @@ export const createWorktree = (cwd: string, spec: Spec): Worktree | null => {
 	return { root: wtRoot, branch, dir: wtRoot, ...(head.ok ? { baseline: head.out.trim() } : {}) };
 };
 
-export const ensureLongrunWorktree = (cwd: string, slug: string, branch: string): { wt: Worktree; created: boolean } | null => {
-	const wtParent = join(zenseDir(cwd), "worktree");
-	const wtRoot = join(wtParent, `longrun-${slug}`);
-	const head = gitOk(["rev-parse", "HEAD"], cwd); 	if (existsSync(wtRoot)) {
-		if (!gitOk(["rev-parse", "--is-inside-work-tree"], wtRoot).ok) return null;
-		return { wt: { root: wtRoot, branch, dir: wtRoot, ...(head.ok ? { baseline: head.out.trim() } : {}) }, created: false };
-	}
-	mkdirSync(wtParent, { recursive: true });
-		const haveBranch = gitOk(["rev-parse", "--verify", "-q", branch], cwd).ok;
-	const add = haveBranch ? gitOk(["worktree", "add", wtRoot, branch], cwd) : gitOk(["worktree", "add", wtRoot, "-b", branch], cwd);
-	if (!add.ok) return null;
-	excludeFromGitStatus(cwd, wtParent);
-	return { wt: { root: wtRoot, branch, dir: wtRoot, ...(head.ok ? { baseline: head.out.trim() } : {}) }, created: true };
-};
-
 export const excludeFromGitStatus = (cwd: string, absPath: string): void => {
 	try {
 		const top = gitOk(["rev-parse", "--show-toplevel"], cwd);

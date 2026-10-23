@@ -1,7 +1,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { zenseDir, type Spec, type Tracker, type Worktree, type PendingApply } from "./types.ts";
+import { zenseDir, type Spec, type Worktree, type PendingApply } from "./types.ts";
 import { gitOk } from "./worktree.ts";
 import { PENDING_PATCH, NOT_ZENSE } from "./pending-apply.ts";
 
@@ -95,26 +95,6 @@ export interface ResumeDiscovery {
 	worktree?: Worktree;
 	worktreeExactVersion?: boolean; 	pendingApply?: PendingApply;
 }
-
-export const discoverLongrunTrackers = (cwd: string): Tracker[] => {
-	try {
-		const root = join(zenseDir(cwd), "long-running");
-		if (!existsSync(root)) return [];
-		const out: Tracker[] = [];
-		for (const entry of readdirSync(root)) {
-			try {
-				const p = join(root, entry, "tracker.json");
-				if (!statSync(p).isFile()) continue;
-				const t = JSON.parse(readFileSync(p, "utf8")) as Tracker;
-				if (t && typeof t.slug === "string" && Array.isArray(t.phases)) out.push(t);
-			} catch {
-			}
-		}
-		return out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-	} catch {
-		return [];
-	}
-};
 
 export const discoverResumeState = (cwd: string): ResumeDiscovery | null => {
 	const spec = loadSpecFromDisk(cwd);

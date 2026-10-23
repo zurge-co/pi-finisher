@@ -1,6 +1,10 @@
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SUBAGENT_EXCLUDE_TOOLS, subagentStripFlagsAsync, subagentTimeout, diagnoseProviderMissing, buildProviderMissingGuidance, findProviderExtension, mergeExtInclude, modelMatchesPattern, writeSubagentExtIncludes, subagentExtIncludes, listInstalledExtensions } from "./subagent-config.ts";
-import { runSubagent, subagentLogPath } from "./subagent-runner.ts";
+import { SUBAGENT_EXCLUDE_TOOLS, subagentStripFlagsAsync, subagentTimeout, buildRpcSubagentArgs, diagnoseProviderMissing, buildProviderMissingGuidance, findProviderExtension, mergeExtInclude, modelMatchesPattern, writeSubagentExtIncludes, subagentExtIncludes, listInstalledExtensions } from "./subagent-config.ts";
+import { runRpcSubagent } from "./subagent-rpc.ts";
+import { subagentLogPath } from "./subagent-log.ts";
+import { appendHandoff, handoffInjection, readHandoff } from "./handoff-stack.ts";
+import { decideKeep, describeDecision, classifyGateway, distillThenKeep, subagentDistillGateway, needsClassifierSetup, classifierGuidance } from "./handoff-classify.ts";
+import { parseDistilled } from "./handoff-stack.ts";
 import { streamTail } from "./agent-panel.ts";
 import { resolveModelPattern } from "./models.ts";
 import { type Learn, type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
@@ -8,6 +12,7 @@ import { type State, type SubagentRun } from "./types.ts";
 
 export const createSubagentLaunch = (ctx: HarnessContext) => {
 	const state = ctx.state;
+	const classifierWarned = new Map<string, boolean>();
 	const learn = ctx.learn;
 	const persist = ctx.persist;
 	const pi = ctx.pi;
@@ -32,7 +37,7 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		if (hit && !alreadyIncluded) {
 			ctx.ui.notify(`🔁 zense: provider "${patternProvider}" is unavailable in the sub-agent (${role}) — retrying with extension '${hit.label}' loaded`, "info");
 			run.retried = true;
-			const r2 = await runSubagent(role, task, subCwd, subagentTimeout(role, subCwd, ctx.cwd), onChunk, r0.logPath, modelPattern, SUBAGENT_EXCLUDE_TOOLS[role], [...stripFlags, "-e", hit.path]);
+			const r2 = await runRpcSubagent({ role, cwd: subCwd, prompt: task, logPath: r0.logPath, timeoutMs: subagentTimeout(role, subCwd, ctx.cwd), cliArgs: [...buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS[role], role, stripFlags), "-e", hit.path], model: modelPattern, onChunk });
 			if (r2.ok && r2.usedModel && modelMatchesPattern(r2.usedModel, modelPattern)) {
 				const merged = mergeExtInclude(include, hit.path);
 				if (merged !== include) writeSubagentExtIncludes(ctx.cwd, role, merged);
@@ -47,6 +52,23 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		learn(ctx, `provider missing: ${role} needs "${patternProvider}" but can't heal — ${hit ? (alreadyIncluded ? "extension already included, still falling back (suspect auth)" : "extension ambiguous/unusable") : "no provider extension found"}`);
 		return { ...r0, ok: false, output: `${buildProviderMissingGuidance(role, patternProvider, { hit, alreadyIncluded })}\n---\n${r0.output}` };
 	};
+
+	const distiller = (ctx: ExtensionContext, role: string) =>
+		subagentDistillGateway({
+			runSubagent: async (prompt) => {
+				const res = await runRpcSubagent({
+					role: "distiller",
+					cwd: state.worktree?.root ?? ctx.cwd,
+					prompt,
+					logPath: subagentLogPath(ctx.cwd, "distiller"),
+					timeoutMs: subagentTimeout("distiller", ctx.cwd),
+					cliArgs: buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.distiller, "distiller"),
+					model: resolveModelPattern(ctx.cwd, "distiller", ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined),
+				});
+				return { ok: res.ok, output: res.output };
+			},
+			parse: parseDistilled,
+		});
 
 	const launchSubagent = async (
 		ctx: ExtensionContext,
@@ -70,7 +92,19 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		try {
 			const subCwd = state.worktree?.root ?? ctx.cwd;
 			const stripFlags = await subagentStripFlagsAsync(role, subCwd, ctx.cwd);
-			const r0 = await runSubagent(role, task, subCwd, subagentTimeout(role, subCwd, ctx.cwd), runChunk, logPath, modelPattern, SUBAGENT_EXCLUDE_TOOLS[role], stripFlags, signal);
+			const handoff = handoffInjection(readHandoff(ctx.cwd));
+			const prompt = handoff ? `${task}\n\n${handoff}` : task;
+			const r0 = await runRpcSubagent({
+				role,
+				cwd: subCwd,
+				prompt,
+				logPath,
+				timeoutMs: subagentTimeout(role, subCwd, ctx.cwd),
+				cliArgs: buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS[role], role, stripFlags),
+				model: modelPattern,
+				onChunk: runChunk,
+				signal,
+			});
 			const diagnosis = diagnoseProviderMissing(modelPattern, r0);
 			let r = r0;
 			let healHandled = false;
@@ -88,6 +122,24 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 				ctx.ui.notify(`⚠ sub-agent model mismatch: ${role} — config asked for "${modelPattern}" but actually ran "${r.usedModel}" (pi fallback? check .zense/models.json / /zense models)`, "warning");
 			}
 			if (!r.ok) learn(ctx, `sub-agent failed: ${role} — ${r.output.split("\n")[0].slice(0, 160)}`);
+			if (r.ok && r.output.trim()) {
+				const existing = readHandoff(ctx.cwd);
+				const decision = await decideKeep(classifyGateway(ctx.modelRegistry), { from: role, text: r.output.slice(-4_000) });
+				learn(ctx, describeDecision(decision, role));
+				if (needsClassifierSetup(decision)) {
+					const seen = classifierWarned.get(role);
+					if (!seen) {
+						classifierWarned.set(role, true);
+						learn(ctx, `handoff disabled for ${role}: ${classifierGuidance()}`);
+						if (ctx.hasUI) ctx.ui.notify(`⚠ zense handoff: ${classifierGuidance()}`, "warning");
+					}
+				}
+				const distilled = await distillThenKeep(distiller(ctx, role), decision, { from: role, text: r.output.slice(-4_000), existing });
+				if (distilled) {
+					const next = appendHandoff(ctx.cwd, { at: Date.now(), from: role, text: distilled });
+					run.handoffItems = next.length;
+				}
+			}
 			return r;
 		} finally {
 			rescheduleTicker(ctx);

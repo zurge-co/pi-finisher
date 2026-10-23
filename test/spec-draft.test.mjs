@@ -188,7 +188,7 @@ test("buildSubagentArgv: requirements role is read-only (--exclude-tools write,e
 	const ro = buildSubagentArgv("draft a spec", "anthropic/claude-sonnet", ["write", "edit"]);
 	assert.deepEqual(ro.slice(0, 4), ["PI_ZENSE_SUBAGENT=1", "pi", "--mode", "json"]);
 	const xt = ro.indexOf("--exclude-tools");
-	assert.ok(xt > 0 && ro[xt + 1] === "write,edit");
+	assert.ok(xt > 0 && ro[xt + 1] === "zense_*,write,edit", "the harness tools are excluded before the role's own read-only set");
 	const md = ro.indexOf("--model");
 	assert.ok(md > xt, "--exclude-tools must come before --model");
 	assert.equal(ro.at(-1), "draft a spec");

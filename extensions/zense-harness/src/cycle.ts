@@ -3,7 +3,7 @@ import { type State } from "./types.ts";
 
 export const resetCycleState = (s: State): void => {
 	s.spec = undefined;
-	s.longRun = undefined; 	s.phase = "requirements";
+	s.phase = "requirements";
 	s.lastEval = undefined;
 	s.baselineHead = undefined;
 	s.evalOverrideFails = undefined;

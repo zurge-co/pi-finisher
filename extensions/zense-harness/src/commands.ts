@@ -3,16 +3,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildDiscardBulletin, resetCycleState } from "./cycle.ts";
-import { runSubagent, subagentLogPath } from "./subagent-runner.ts";
-import { SUBAGENT_EXCLUDE_TOOLS, subagentStripFlagsAsync, subagentTimeout } from "./subagent-config.ts";
+import { subagentLogPath } from "./subagent-log.ts";
+import { runRpcSubagent } from "./subagent-rpc.ts";
+import { SUBAGENT_EXCLUDE_TOOLS, buildRpcSubagentArgs, subagentStripFlagsAsync, subagentTimeout } from "./subagent-config.ts";
 import { resolveModelPattern } from "./models.ts";
 import { discardPendingApply } from "./pending-apply.ts";
 import { subagentExtIncludes, writeSubagentExtIncludes, listInstalledExtensions, zenseGlobalConfigDir, extDisplayLabel } from "./subagent-config.ts";
-import { discoverLongrunTrackers, discoverResumeState, loadSpecFromDisk } from "./resume.ts";
-import { abandonLongrunWorktree, loadTracker, saveTracker } from "./longrun.ts";
-import { ensureLongrunWorktree, gitOk } from "./worktree.ts";
+import { discoverResumeState, loadSpecFromDisk } from "./resume.ts";
+import { gitOk } from "./worktree.ts";
 import { acceptPendingApply, isGitRepo, uncommittedChanges } from "./pending-apply.ts";
 import { surfaceLine } from "./goal-run.ts";
+import { freshStatusLine, readFreshContextConfig, writeFreshContextConfig } from "./fresh-context.ts";
+import { readHandoff, writeHandoff } from "./handoff-stack.ts";
 import { memorySummaryLines, aggregateMemory, distillImpact, fmtBytes, parseDistilledLessons, buildDistilledMemory, clearDirFiles, MAX_DISTILL_MEMORY_BYTES, replaceFileAtomic, distillTaskPrompt } from "./memory.ts";
 import { availableModelChoices, readModelsConfig, writeModelsConfig } from "./models.ts";
 import { type AcceptPending, type Escalate, type ExtConfigDialog, type Flag, type LaunchSubagent, type Learn, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
@@ -113,7 +115,15 @@ export const registerCommands = (ctx: HarnessContext) => {
 		ctx.ui.notify(`🧪 distilling ${impact.memoryLines} lessons… (distiller sub-agent, read-only)`, "info");
 		const logPath = subagentLogPath(ctx.cwd, "distiller");
 		const mainModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
-		const r = await runSubagent("distiller", distillTaskPrompt(memoryContent, impact.memoryLines), ctx.cwd, subagentTimeout("distiller", ctx.cwd), undefined, logPath, resolveModelPattern(ctx.cwd, "distiller", mainModel), SUBAGENT_EXCLUDE_TOOLS.distiller, await subagentStripFlagsAsync("distiller", ctx.cwd));
+		const r = await runRpcSubagent({
+			role: "distiller",
+			cwd: ctx.cwd,
+			prompt: distillTaskPrompt(memoryContent, impact.memoryLines),
+			logPath,
+			timeoutMs: subagentTimeout("distiller", ctx.cwd),
+			cliArgs: buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.distiller, "distiller", await subagentStripFlagsAsync("distiller", ctx.cwd)),
+			model: resolveModelPattern(ctx.cwd, "distiller", mainModel),
+		});
 		if (!r.ok) {
 			learn(ctx, `distill aborted: distiller sub-agent failed — ${r.output.split("\n")[0].slice(0, 160)}`);
 			ctx.ui.notify(`⚠ distiller failed — aborted; nothing deleted/overwritten (log: ${relative(ctx.cwd, logPath)})`, "warning");
@@ -241,67 +251,22 @@ export const registerCommands = (ctx: HarnessContext) => {
 				}
 				const r = acceptPending(ctx, commitIfStaged, true);
 				ctx.ui.notify(r.text, r.ok ? "info" : "warning");
-			} else if (sub === "longrun") {
-			const [action, target] = rest;
-			if (action === "status" || action === "list" || !action) {
-				const trackers = discoverLongrunTrackers(ctx.cwd).filter((t) => t.status !== "done");
-				ctx.ui.notify(
-					trackers.length
-						? `🏗 long-running requirements:\n${trackers
-								.map(
-									(t) =>
-										`  ${t.status === "active" ? "▶" : "○"} ${t.slug} — "${t.title}" [v${t.version} ${t.status}] ${t.phases.filter((ph) => ph.status === "done").length}/${t.phases.length} phases done` +
-										(state.longRun?.slug === t.slug ? "  ← session-active" : ""),
-								)
-								.join("\n")}\n\nresume: /zense longrun resume — agent: zense_longrun status`
-						: "no long-running requirements (.zense/long-running/) — start one: /zense longrun start <requirement prompt> (or the agent's zense_longrun init)",
-					"info",
-				);
-			} else if (action === "resume") {
-				const trackers = discoverLongrunTrackers(ctx.cwd).filter((t) => t.status === "active");
-				let t = target ? trackers.find((x) => x.slug === target) : trackers.length === 1 ? trackers[0] : undefined;
-				if (!t && trackers.length && ctx.mode === "tui") {
-					const pick = await ctx.ui.select("resume which long-running requirement?", trackers.map((x) => `${x.slug} — "${x.title}" (${x.phases.filter((ph) => ph.status === "done").length}/${x.phases.length} done)`));
-					if (pick) t = trackers.find((x) => pick.startsWith(x.slug));
+			} else if (sub === "fresh-context") {
+				const action = (rest[0] ?? "status").trim().toLowerCase();
+				if (action === "on" || action === "off") {
+					const enabled = action === "on";
+					const ok = writeFreshContextConfig(ctx.cwd, enabled);
+					if (!ok) return ctx.ui.notify("could not write .zense/config.json", "warning");
+					learn(ctx, `fresh context: ${enabled ? "ON" : "OFF"} (via /zense fresh-context ${action})`);
+					return ctx.ui.notify(`🧠 fresh context ${enabled ? "ON — each finished task resets the context, keeping only the handoff stack" : "OFF — context keeps accumulating across tasks"}`, "info");
 				}
-				if (!t)
-					return ctx.ui.notify(trackers.length ? `pick one: /zense longrun resume <slug>\n${trackers.map((x) => `  ${x.slug}`).join("\n")}` : "no active longrun to resume", "warning");
-				state.longRun = { slug: t.slug, trackerVersion: t.version, ...(t.phases.find((x) => x.status === "active") ? { activePhase: t.phases.find((x) => x.status === "active")!.id } : {}) };
-				persist();
-				updateWidget(ctx);
-				const kick = `Zense: the human resumed longrun "${t.slug}" — continue it now: reconcile + activate the next/current phase with the zense_longrun tool (action=resume slug=${t.slug}, which verifies the worktree), then proceed`;
-				try { pi.sendUserMessage(kick); } catch { try { pi.sendUserMessage(kick, { deliverAs: "followUp" }); } catch { } }
-				ctx.ui.notify(`🔁 resuming longrun "${t.slug}"…`, "info");
-			} else if (action === "sign") {
-				const t = target ? loadTracker(ctx.cwd, target) : undefined;
-				if (!t) return ctx.ui.notify("usage: /zense longrun sign <slug>", "warning");
-				if (t.status !== "planning") return ctx.ui.notify(`tracker "${t.slug}" is ${t.status} — sign applies only to a saved-but-unsigned plan`, "warning");
-				const ok = await ctx.ui.confirm(`🔏 Sign longrun tracker "${t.slug}" v${t.version}?`, `${t.phases.length} phase(s): ${t.phases.map((x) => x.id).join(", ")} — one signature covers all phases\n(full plan: .zense/long-running/${t.slug}/tracker.md)`);
-				if (!ok) return ctx.ui.notify("not signed", "info");
-				t.approvedAt = Date.now();
-				t.status = "active";
-				saveTracker(ctx.cwd, t);
-				state.longRun = { slug: t.slug, trackerVersion: t.version };
-				const ens = ensureLongrunWorktree(ctx.cwd, t.slug, t.worktreeBranch);
-				if (ens) {
-					state.worktree = ens.wt;
-					state.worktreeLeaveNotified = false;
+				if (action === "clear") {
+					writeHandoff(ctx.cwd, []);
+					learn(ctx, "handoff stack cleared by the human");
+					return ctx.ui.notify("🧹 handoff stack cleared — the next fresh context carries nothing", "info");
 				}
-				persist();
-				updateWidget(ctx);
-				ctx.ui.notify(`🔏 tracker "${t.slug}" v${t.version} signed — tell the agent to continue (zense_longrun next)`, "info");
-			} else if (action === "start") {
-				const prompt = rest.slice(1).join(" ").trim();
-				if (!prompt) return ctx.ui.notify("usage: /zense longrun start <requirement prompt>", "warning");
-				if (state.longRun) return ctx.ui.notify(`a longrun is already active in this session: "${state.longRun.slug}" — finish/abandon it first`, "warning");
-				const kick = `Zense: the human started a long-running requirement from the keyboard:\n"""\n${prompt}\n"""\nstart it now with zense_longrun: action=init, title=a concise name for it, intent=what it wants and why, specsMd=the prompt above verbatim (expanded only if the human asked for more), then continue the normal flow (plan → the human signs the tracker once → next)`;
-				try { pi.sendUserMessage(kick); } catch { try { pi.sendUserMessage(kick, { deliverAs: "followUp" }); } catch { } }
-				ctx.ui.notify("🏗 longrun start requested — the agent will init + plan it (you sign the tracker once)", "info");
-			} else if (action === "abandon") {
-				ctx.ui.notify(`use the agent: ask it to run zense_longrun abandon slug=${target ?? "<slug>"} — it enforces the pendingApply guard and confirm flow`, "info");
-			} else {
-				ctx.ui.notify("usage: /zense longrun status|start <prompt>|resume [slug]|sign <slug>|abandon <slug>", "info");
-			}
+				if (action === "status") return ctx.ui.notify(freshStatusLine(readFreshContextConfig(ctx.cwd), readHandoff(ctx.cwd)), "info");
+				return ctx.ui.notify("usage: /zense fresh-context [on|off|status|clear]", "info");
 		} else if (sub === "agents") {
 				await openAgentsViewer(ctx);
 			} else if (sub === "memory") {
@@ -388,7 +353,7 @@ export const registerCommands = (ctx: HarnessContext) => {
 				}
 				await runExtConfig(ctx, role, action, vals);
 			} else {
-				ctx.ui.notify("usage: /zense status|resume|approve|accept [commit]|discard|agents|gate on|off|memory|distill|models|ext-config-show|longrun status|longrun resume|longrun sign", "info");
+				ctx.ui.notify("usage: /zense status|resume|approve|accept [commit]|discard|agents|gate on|off|memory|distill|models|ext-config-show|fresh-context on|off|status|clear", "info");
 			}
 		},
 	});

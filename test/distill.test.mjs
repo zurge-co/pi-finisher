@@ -203,9 +203,10 @@ test("regression: runDistill must resolve strip flags via subagentStripFlagsAsyn
 	const src = rf(join(dirname(fileURLToPath(import.meta.url)), "..", "extensions", "zense-harness", "src", "commands.ts"), "utf8");
 	const i = src.indexOf("const runDistill");
 	assert.ok(i >= 0, "runDistill not found");
-	const j = src.indexOf("runSubagent(", i);
-	assert.ok(j > i, "runDistill must call runSubagent");
+	const j = src.indexOf("runRpcSubagent({", i);
+	assert.ok(j > i, "runDistill must call runRpcSubagent");
 	const call = src.slice(j, src.indexOf(";", j));
 	assert.ok(call.includes('await subagentStripFlagsAsync("distiller"'), "call site must use await subagentStripFlagsAsync(\"distiller\", ...) so the config.json include list is re-added as -e flags");
 	assert.ok(!call.includes("SUBAGENT_STRIP_FLAGS.distiller"), "must not pass the static SUBAGENT_STRIP_FLAGS.distiller (bare boot drops every extension)");
+	assert.ok(call.includes("buildRpcSubagentArgs"), "the rpc boot must be built from the resolved flags, not assembled ad hoc");
 });

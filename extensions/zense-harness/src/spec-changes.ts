@@ -2,7 +2,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ThemeColor } from "@earendil-works/pi-coding-agent";
-import { zenseDir, type Spec, type Tracker } from "./types.ts";
+import { zenseDir, type Spec } from "./types.ts";
 
 export const buildSpecChanges = (prev: Spec, next: Spec): string[] => {
 	const lines: string[] = [];
@@ -153,7 +153,7 @@ export const rejectionDirective = (kind: "spec" | "tracker" | "review" | "gate",
 	if (kind === "spec")
 		return `The human did NOT sign spec${v}. Their reason: "${why}"\nRevise the spec (cross-check cases, scope or approach) to match this correction, then call zense_spec again — do not implement until it is signed.`;
 	if (kind === "tracker")
-		return `The human did NOT sign the longrun tracker${v}. Their reason: "${why}"\nAmend specs.md / the phase plan to match this correction, then call zense_longrun plan again — do not start phases.`;
+		return `The human did NOT sign spec v${v}. Their reason: "${why}"\nRevise the spec to match this correction, then call zense_spec again — do not implement.`;
 	if (kind === "review")
 		return `The human REJECTED the review. Their reason: "${why}"\nDo not treat the work as accepted: fix it or re-spec, then eval/review again. The staged change was left untouched (nothing discarded).`;
 	return `The human did not sign — this write is blocked. Their reason: "${why}"\nRevise the spec to match this correction, then ask for the signature again.`;
@@ -167,22 +167,6 @@ export const renderSignOutcome = (s: Spec): string => {
 	return (
 		`## Cross-check — what we understood you want\n\n${body}\n\n` +
 		`> Full technical spec (approach, scope, checks, constraints, spec debt): \`.zense/spec.md\``
-	);
-};
-
-export const renderTrackerOutcomes = (t: Tracker): string => {
-	const setGoals = goalLines(t);
-	const setBody = setGoals.length ? setGoals.map((g) => `- ${g}`).join("\n") : "- (no summary yet)";
-	const phaseLines = t.phases
-		.map((p) => {
-			const pg = goalLines(p);
-			const body = pg.length ? pg.map((g) => `  - ${g}`).join("\n") : "  - (no summary yet)";
-			return `- **${p.id} “${p.title}”**\n${body}`;
-		})
-		.join("\n");
-	return (
-		`## Cross-check — what we understood you want\n\n${setBody}\n\n### By phase\n\n${phaseLines}\n\n` +
-		`> Full technical plan (scope, checks, constraints per phase): \`.zense/long-running/${t.slug}/tracker.md\``
 	);
 };
 

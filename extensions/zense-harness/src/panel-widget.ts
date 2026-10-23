@@ -1,7 +1,6 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
-import { fmtTok } from "./subagent-runner.ts";
-import { longrunStatusText } from "./longrun-status.ts";
+import { fmtTok } from "./subagent-log.ts";
 import { basename } from "node:path";
 import { panelLines, panelTickMs, streamTail, type PanelRun } from "./agent-panel.ts";
 import { buildWorktreeCommand, rewritePathForWorktree } from "./worktree.ts";
@@ -21,8 +20,6 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 
 	let lastWidget: string | undefined;
 
-	let lastLongrunStatus: string | undefined;
-
 	const updateWidget = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		const s = state.spec;
@@ -36,11 +33,6 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 			(state.trajectoryFlags.length ? ` · ⚠ ${state.trajectoryFlags.length} traj-flags` : "") +
 			(state.hygieneViolations?.length ? ` · 🧹 ${state.hygieneViolations.length} code-rule` : "") +
 			(state.escalations.length ? ` · 🚨 ${state.escalations.length}` : "");
-		const status = longrunStatusText(ctx.cwd, state.longRun, state.phase);
-		if (status !== lastLongrunStatus) {
-			lastLongrunStatus = status;
-			ctx.ui.setStatus("zense-longrun", status);
-		}
 		const text = [line, ...live].join("\n");
 		if (text === lastWidget) return;
 		lastWidget = text;

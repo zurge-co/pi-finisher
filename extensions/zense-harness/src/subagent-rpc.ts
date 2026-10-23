@@ -1,0 +1,184 @@
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { RpcClient, type JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+
+export const RPC_ENTRY_SPEC = "@earendil-works/pi-coding-agent/rpc-entry";
+
+export const fileUrlToPathSafe = (u: string): string => (u.startsWith("file://") ? decodeURIComponent(new URL(u).pathname) : u);
+
+export const resolveRpcCliPath = (resolveSpec: (spec: string) => string | undefined, exists: (p: string) => boolean, specs: string[] = [RPC_ENTRY_SPEC, "@earendil-works/pi-coding-agent/dist/cli.js"]): string | undefined => {
+	for (const spec of specs) {
+		const found = resolveSpec(spec);
+		if (found && exists(found)) return found;
+	}
+	return undefined;
+};
+
+export const rpcCliPath = (): string => {
+	const found = resolveRpcCliPath(
+		(spec) => {
+			try {
+				return fileUrlToPathSafe(import.meta.resolve(spec));
+			} catch {
+				return undefined;
+			}
+		},
+		(p) => existsSync(p),
+	);
+	if (!found) throw new Error(`zense: could not locate pi's RPC entry point (${RPC_ENTRY_SPEC}) — sub-agents cannot start without it`);
+	return found;
+};
+
+export interface RpcRunHandle {
+	role: string;
+	client: RpcClient;
+	startedAt: number;
+	onChunk?: (chunk: string) => void;
+}
+
+export interface RpcRunOptions {
+	role: string;
+	cwd: string;
+	prompt: string;
+	logPath: string;
+	timeoutMs: number;
+	cliArgs?: string[];
+	model?: string;
+	onChunk?: (chunk: string) => void;
+	signal?: AbortSignal;
+}
+
+export const liveRpcRuns = new Map<string, RpcRunHandle>();
+
+export const runKey = (role: string, at: number): string => `${role}:${at}`;
+
+export const textFromEvent = (ev: JsonAgentSessionEvent): string => {
+	const e = ev as { type?: string; assistantMessageEvent?: { type?: string; delta?: string } };
+	return e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta" && typeof e.assistantMessageEvent.delta === "string" ? e.assistantMessageEvent.delta : "";
+};
+
+export const toolLineFromEvent = (ev: JsonAgentSessionEvent): string | undefined => {
+	const e = ev as { type?: string; toolName?: string };
+	return e.type === "tool_execution_start" && e.toolName ? `\n⚙ ${e.toolName}\n` : undefined;
+};
+
+export const isSettled = (ev: JsonAgentSessionEvent): boolean => (ev as { type?: string }).type === "agent_settled";
+
+export const finalTextFromMessages = (messages: readonly unknown[]): string => {
+	const last = [...messages].reverse().find((m) => (m as { role?: string })?.role === "assistant") as { content?: { type?: string; text?: string }[] } | undefined;
+	if (!last || !Array.isArray(last.content)) return "";
+	return last.content.filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text as string).join("");
+};
+
+export const splitModelPattern = (pattern: string | undefined): { provider?: string; model?: string } => {
+	const clean = pattern?.trim();
+	if (!clean) return {};
+	const slash = clean.indexOf("/");
+	if (slash <= 0) return { model: clean };
+	return { provider: clean.slice(0, slash), model: clean.slice(slash + 1) };
+};
+
+export const modelLabel = (m: { provider?: string; id?: string } | undefined): string | undefined => (m?.provider && m?.id ? `${m.provider}/${m.id}` : undefined);
+
+const writeHeader = (logPath: string, role: string, prompt: string): void => {
+	mkdirSync(dirname(logPath), { recursive: true });
+	writeFileSync(logPath, `$ pi --mode rpc (zense sub-agent ${role})\n--- task ${prompt.length} chars ---\n--- live output ---\n`);
+};
+
+const TIMED_OUT = Symbol("timeout");
+
+export const raceTimeout = async <T>(run: Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<T | typeof TIMED_OUT> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let onAbort: (() => void) | undefined;
+	const stopper = new Promise<typeof TIMED_OUT>((res) => {
+		const fire = () => res(TIMED_OUT);
+		timer = setTimeout(fire, timeoutMs);
+		if (signal) {
+			onAbort = fire;
+			signal.addEventListener("abort", onAbort, { once: true });
+		}
+	});
+	try {
+		return await Promise.race([run, stopper]);
+	} finally {
+		if (timer) clearTimeout(timer);
+		if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+	}
+};
+
+export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean; output: string; logPath: string; usedModel?: string }> => {
+	writeHeader(opts.logPath, opts.role, opts.prompt);
+	if (opts.signal?.aborted) return { ok: false, output: "cancelled by user (Esc) — the sub-agent never started", logPath: opts.logPath };
+	const wanted = splitModelPattern(opts.model);
+	const client = new RpcClient({
+		cliPath: rpcCliPath(),
+		cwd: opts.cwd,
+		args: opts.cliArgs ?? [],
+		...(wanted.provider ? { provider: wanted.provider } : {}),
+		...(wanted.model ? { model: wanted.model } : {}),
+	});
+	const startedAt = Date.now();
+	const key = runKey(opts.role, startedAt);
+	liveRpcRuns.set(key, { role: opts.role, client, startedAt, onChunk: opts.onChunk });
+	const append = (s: string) => appendFileSync(opts.logPath, s);
+	try {
+		await client.start();
+		const unsub = client.onEvent((ev) => {
+			const tool = toolLineFromEvent(ev);
+			if (tool) {
+				append(tool);
+				opts.onChunk?.(tool);
+				return;
+			}
+			const text = textFromEvent(ev);
+			if (text) {
+				append(text);
+				opts.onChunk?.(text);
+			}
+		});
+		const raced = await raceTimeout(client.promptAndWait(opts.prompt, undefined, opts.timeoutMs), opts.timeoutMs, opts.signal);
+		unsub();
+		if (raced === TIMED_OUT) {
+			await client.abort().catch(() => undefined);
+			const partial = finalTextFromMessages(await client.getMessages().catch(() => []));
+			const why = opts.signal?.aborted ? "cancelled by user (Esc)" : `TIMEOUT ${Math.round(opts.timeoutMs / 1000)}s`;
+			append(`\n--- ${why} ---\n`);
+			return { ok: false, output: `${why}\nlast output:\n${partial.slice(-2_000)} (log: ${opts.logPath})`, logPath: opts.logPath };
+		}
+		const msgs = await client.getMessages();
+		const state = await client.getState().catch(() => undefined);
+		const usedModel = modelLabel((state as { model?: { provider?: string; id?: string } } | undefined)?.model);
+		const output = finalTextFromMessages(msgs);
+		append(`\n--- exited ok ---\n--- used model: ${usedModel ?? "(unknown)"} ---\n`);
+		return { ok: true, output: output.slice(-16_000), logPath: opts.logPath, ...(usedModel ? { usedModel } : {}) };
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		append(`\n--- rpc error: ${msg} ---\n`);
+		return { ok: false, output: `sub-agent rpc error: ${msg} (log: ${opts.logPath})`, logPath: opts.logPath };
+	} finally {
+		liveRpcRuns.delete(key);
+		await client.stop().catch(() => undefined);
+	}
+};
+
+export const liveByRole = (role?: string): RpcRunHandle[] => [...liveRpcRuns.values()].filter((r) => !role || r.role === role);
+
+export const steerLive = async (role: string, message: string): Promise<number> => {
+	const live = liveByRole(role);
+	for (const r of live) await r.client.steer(message).catch(() => undefined);
+	return live.length;
+};
+
+export const followUpLive = async (role: string, message: string): Promise<number> => {
+	const live = liveByRole(role);
+	for (const r of live) await r.client.followUp(message).catch(() => undefined);
+	return live.length;
+};
+
+export const liveRunSummary = (): { role: string; aliveMs: number }[] => liveByRole().map((r) => ({ role: r.role, aliveMs: Date.now() - r.startedAt }));
+
+export const abortAllLive = async (): Promise<number> => {
+	const all = liveByRole();
+	for (const r of all) await r.client.abort().catch(() => undefined);
+	return all.length;
+};

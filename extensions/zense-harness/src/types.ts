@@ -23,8 +23,8 @@ export interface State {
 	trajectoryFlags: string[];
 	gateEnabled: boolean;
 	subagentRuns: SubagentRun[];
-	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	lastEval?: { verdict: string; perCriteria: Record<string, string>; failedIds: string[]; probes: ProbeResult[]; at: number; specVersion?: number; head?: string }; 	baselineHead?: string;      	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	worktree?: Worktree | null;     	longRun?: LongRunRef;           	pendingLongrunCompact?: { slug: string; summary: string }; 	worktreeLeaveNotified?: boolean; 	pendingApply?: PendingApply;    	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
-	goalDriver?: { goal: string; confirmedAt: number; loop: { round: number; fingerprints: string[]; caseRounds: Record<string, number> }; doneAt?: number; outcome?: "verified" | "stopped" | "exhausted" }; 	hygieneViolations?: HygieneViolationRef[]; }
+	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	lastEval?: { verdict: string; perCriteria: Record<string, string>; failedIds: string[]; probes: ProbeResult[]; at: number; specVersion?: number; head?: string }; 	baselineHead?: string;      	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	worktree?: Worktree | null;     	worktreeLeaveNotified?: boolean; 	pendingApply?: PendingApply;    	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
+	freshResetAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; loop: { round: number; fingerprints: string[]; caseRounds: Record<string, number> }; doneAt?: number; outcome?: "verified" | "stopped" | "exhausted" }; 	hygieneViolations?: HygieneViolationRef[]; }
 
 export interface HygieneViolationRef {
 	path: string;
@@ -39,7 +39,7 @@ export interface SubagentRun {
 	at: number;
 	startedAt?: number;
 	logPath?: string;            	model?: string;              	status?: "running" | "done" | "failed";
-	retried?: boolean;           	autoIncluded?: boolean;      	streamTail?: string;         	slotId?: string;             }
+	retried?: boolean;           	autoIncluded?: boolean;      	streamTail?: string;         	slotId?: string;             	handoffItems?: number;       }
 export interface Worktree {
 	root: string;               	branch: string;             	dir: string;                	baseline?: string;          }
 export interface PendingApply {
@@ -47,23 +47,6 @@ export interface PendingApply {
 	branch: string;             	paths: string[];            	appliedAt: number;
 	preApplyHead?: string;      }
 
-export interface TrackerPhase {
-	id: string;                  	title: string;
-	intent: string;
-	outcomes?: string;           	crossCheck?: string[];       	scope: string[];
-	constraints: string[];
-	criteria: Criterion[];       	status: "pending" | "active" | "done" | "failed";
-	baseline?: string;           	checkpoint?: string;         	specVersion?: number;
-	adrs?: number[];
-	summaryPath?: string;        	verdict?: string;            	criteriaVerdicts?: Record<string, string>; 	filesChanged?: string[];     }
-export interface Tracker {
-	version: number;             	slug: string;                	title: string;
-	intent: string;
-	outcomes?: string;           	crossCheck?: string[];       	worktreeBranch: string;      	status: "planning" | "active" | "done" | "abandoned";
-	auto?: boolean;              	phases: TrackerPhase[];
-	approvedAt?: number;
-	updatedAt: number;
-}
 export interface LongRunRef {
 	slug: string;
 	trackerVersion: number;

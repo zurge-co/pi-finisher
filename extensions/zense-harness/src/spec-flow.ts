@@ -7,7 +7,6 @@ import { buildAcceptBulletin } from "./cycle.ts";
 import { type AcceptPending, type AskRejectReason, type Learn, type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { lintSpecChecks } from "./evidence.ts";
 import { canReuseWorktree, createWorktree, gitOk } from "./worktree.ts";
-import { appendSpecsLog, loadTracker, saveTracker } from "./longrun.ts";
 import { buildSpecChanges, decideSpecApproval, renderSpecMd, sameGoalLines, syncApprovedSpecFiles } from "./spec-changes.ts";
 import { goalCases } from "./goal-confirm.ts";
 import { zenseDir, type Criterion, type Spec, type State } from "./types.ts";
@@ -168,15 +167,6 @@ export const createSpecFlow = (ctx: HarnessContext) => {
 	const acceptPending = (ctx: ExtensionContext, commitIfStaged: boolean, notifyViaBulletin = false): { ok: boolean; text: string; specVersion?: number } => {
 		if (!state.pendingApply)
 			return { ok: false, text: "no pending apply to accept (already accepted/committed, or never applied)" };
-		if (state.longRun) {
-			const t = loadTracker(ctx.cwd, state.longRun.slug);
-			if (t && t.status === "active") {
-				t.status = "done";
-				saveTracker(ctx.cwd, t);
-				appendSpecsLog(ctx.cwd, t.slug, `tracker COMPLETE — final apply accepted on main`);
-				learn(ctx, `longrun ${t.slug}: tracker v${t.version} done (${t.phases.length} phases) — merged into main`);
-			}
-		}
 		const v = state.pendingApply.specVersion;
 		const specTitle = state.spec?.title ?? "";
 		const r = acceptPendingApply(ctx.cwd, { evalTree: state.lastEval?.head, preApplyHead: state.pendingApply.preApplyHead, commitIfStaged });

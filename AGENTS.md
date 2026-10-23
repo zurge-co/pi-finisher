@@ -27,7 +27,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 2. **Find a symbol by grepping, then read only the owning module:**
    `grep -rn "^export .*<name>" extensions/zense-harness/src extensions/zense-harness/index.ts`
 3. **Tests import named exports from the entry point** (`../extensions/zense-harness/index.ts`), which re-exports all of `src/`. Add new helpers to the right `src/` module and they are importable from `index.ts` automatically.
-4. Source-guard tests must point at the file that actually owns the code (they were retargeted from `index.ts` to `src/gui.ts`, `src/tools.ts`, `src/commands.ts`, `src/longrun-flow.ts`, `src/panel-widget.ts` in the split) — never re-broaden them to `index.ts`.
+4. Source-guard tests must point at the file that actually owns the code (they were retargeted from `index.ts` to `src/gui.ts`, `src/tools.ts`, `src/commands.ts`, `src/panel-widget.ts`, `src/subagent-rpc.ts` in the splits) — never re-broaden them to `index.ts`.
 
 ## Repo map
 
@@ -48,7 +48,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `state-box.ts` | Mutable state holder (`createStateBox`) so kits see one live `State` |
 | `panel-widget.ts` | The live widget: `updateWidget` (status line + one row per running agent), `rescheduleTicker`, `applyRedirect` into the session worktree |
 | `agent-panel.ts` | Pure panel rendering: `panelRows`/`panelLines`/`panelTickMs`, `clip`, `elapsedLabel`, `streamTail` |
-| `subagent-launch.ts` | `launchSubagent` (timeout, cancel, live tail, model override) + provider-missing auto-heal |
+| `subagent-launch.ts` | `launchSubagent`: one RPC sub-agent per role (timeout, cancel, live tail, model override) + handoff capture + provider-missing auto-heal |
 | `subagent-runner.ts` | `runSubagent`: spawn `pi --mode json`, stream/kill/timeout, JSONL log under `.zense/subagents/` (+ `fmtTok`) |
 | `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes, provider diagnosis |
 | `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
@@ -65,7 +65,6 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `tools.ts` | `zense_ask`, `zense_swarm`, `zense_goal` registration |
 | `commands.ts` | `/zense …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
 | `spec-flow.ts` | `commitSpec`, `approveCurrentSpec`, pending-apply accept |
-| `longrun-flow.ts` | Multi-phase tracker flow: reconcile, final apply, phase cycle, auto-advance |
 | `spec-changes.ts` | Spec diff → change summary, spec markdown, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
 | `worktree.ts` | Git worktree isolation: path/command rewrite, `gitOk`, create/reuse, git exclude |
 | `pending-apply.ts` | Apply-back: commit/snapshot messages, `applyWorktreeBack`, `discardPendingApply`, `acceptPendingApply` |
@@ -80,7 +79,12 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `adr-deny.ts` | ADR `DENY:` parsing (kept; no longer on the write path) |
 | `decompose.ts` | Planner subtasks / draft merge (kept for the compile path) |
 | `ask.ts` | `zense_ask` policy scanning + answer formatting |
-| `longrun.ts` / `longrun-auto.ts` / `longrun-status.ts` | Tracker persistence, AUTO loop helpers, footer status line |
+| `handoff-stack.ts` | The cross-task knowledge stack: what survives a context reset (dedupe, cap, one-line condensation) |
+| `handoff-classify.ts` | `classify()` keep/drop verdict + LLM condensation for the items it keeps |
+| `fresh-context.ts` | The task-boundary reset: config switch, retain-none summary, status line |
+| `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort |
+| `subagent-log.ts` | Sub-agent log paths + `fmtTok` |
+| `ladder-model.ts` | The `zense/auto` virtual model that routes each request across the priority ladder |
 
 ## Commands
 

@@ -21,6 +21,9 @@ import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
 import { createSpecFlow } from "./src/spec-flow.ts";
+import { buildFreshSummary, readFreshContextConfig, shouldReset, freshCompactionEntry } from "./src/fresh-context.ts";
+import { readHandoff } from "./src/handoff-stack.ts";
+import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
 import { registerTools } from "./src/tools.ts";
 import { registerCommands } from "./src/commands.ts";
 
@@ -37,7 +40,7 @@ export * from "./src/esc-guard.ts";
 export * from "./src/evidence.ts";
 export * from "./src/eval-review.ts";
 export * from "./src/adr-deny.ts";
-export * from "./src/subagent-runner.ts";
+export * from "./src/subagent-log.ts";
 export * from "./src/memory.ts";
 export * from "./src/models.ts";
 export * from "./src/swarm.ts";
@@ -51,9 +54,11 @@ export * from "./src/verify-loop.ts";
 export * from "./src/goal-driver.ts";
 export * from "./src/goal-run.ts";
 export * from "./src/ask.ts";
-export * from "./src/longrun.ts";
-export * from "./src/longrun-auto.ts";
-export * from "./src/longrun-status.ts";
+export * from "./src/handoff-stack.ts";
+export * from "./src/handoff-classify.ts";
+export * from "./src/fresh-context.ts";
+export * from "./src/subagent-rpc.ts";
+export * from "./src/ladder-model.ts";
 
 export default function (pi: ExtensionAPI) {
 	if (process.env.PI_ZENSE_SUBAGENT === "1") return;
@@ -138,6 +143,12 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_ev, ctx) => {
 		ensureFullscreenDefault(ctx);
+		try {
+			const registered = registerLadderModel({ register: (m) => pi.registerVirtualModel(m as never), readLadder: () => ladderFromConfig(ctx.cwd) });
+			if (registered) learn(ctx, `virtual model registered: zense/auto → ${ladderFromConfig(ctx.cwd).join(" > ")}`);
+		} catch (err) {
+			learn(ctx, `virtual model registration skipped: ${err instanceof Error ? err.message : String(err)}`);
+		}
 		kit.escGuard.reset();
 		if (ctx.mode === "tui") {
 			kit.escGuardUnsubscribe?.();
@@ -207,12 +218,18 @@ export default function (pi: ExtensionAPI) {
 		box.get().tokensUsed += m?.role === "assistant" ? (m.usage?.totalTokens ?? 0) : 0;
 		kit.updateWidget(ctx);
 		persist();
-		const marker = box.get().pendingLongrunCompact;
-		if (!marker) return;
-		box.get().pendingLongrunCompact = undefined;
+	});
+
+	pi.on("agent_before_settle", async (ev, ctx) => {
+		const cfg = readFreshContextConfig(ctx.cwd);
+		const hasWork = ev.context.contextEntries.length > 0;
+		const alreadyReset = (box.get().freshResetAt ?? 0) > Date.now() - 2_000;
+		if (!shouldReset({ enabled: cfg.enabled, alreadyReset, hasWork, aborted: ev.outcome !== "completed" })) return;
+		const summary = buildFreshSummary(readHandoff(ctx.cwd));
+		box.get().freshResetAt = Date.now();
 		persist();
-		learn(ctx, `longrun ${marker.slug}: hard context reset (turn_end compaction draft, retain-none)`);
-		return { entries: [{ type: "compaction", summary: marker.summary, firstKeptEntryId: null }] };
+		learn(ctx, `fresh context: task finished — hard reset (retain-none), handoff head ${summary ? `${summary.split("\n").length - 2} item(s)` : "empty"}`);
+		return { entries: [freshCompactionEntry(summary || "[zense fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.")] };
 	});
 
 	pi.on("agent_end", async (ev, ctx) => {

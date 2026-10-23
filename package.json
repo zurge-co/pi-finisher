@@ -1,7 +1,7 @@
 {
   "name": "pi-zense",
-  "version": "0.39.0",
-  "description": "Spec-gated, human-signed SDLC harness for pi (zense = a pun on the Thai word for sign) — sub-agents, dual eval, escalation gates — plus the Zense dark theme.",
+  "version": "0.40.0",
+  "description": "Spec-gated, human-signed SDLC harness for pi (zense = a pun on the Thai word for sign) \u2014 sub-agents, dual eval, escalation gates \u2014 plus the Zense dark theme.",
   "keywords": [
     "pi-package",
     "pi",
@@ -16,16 +16,16 @@
   "scripts": {
     "release": "bash scripts/release.sh",
     "typecheck": "tsc --noEmit --skipLibCheck --module esnext --moduleResolution bundler --allowImportingTsExtensions extensions/zense-harness/index.ts",
-    "test": "node --no-warnings --test test/index.test.mjs test/adr-deny.test.mjs test/worktree.test.mjs test/spec-draft.test.mjs test/eval-review.test.mjs test/fullscreen-default.test.mjs test/subagent-timeout.test.mjs test/reviewer-grounding.test.mjs test/spec-changes.test.mjs test/ext-config.test.mjs test/prespec-dirty.test.mjs test/distill.test.mjs test/esc-guard.test.mjs test/subagent-cancel.test.mjs test/decompose.test.mjs test/approve-sync.test.mjs test/provider-diagnosis.test.mjs test/context-bulletin.test.mjs test/resume.test.mjs test/ask-tool.test.mjs test/longrun.test.mjs test/longrun-auto.test.mjs test/longrun-status.test.mjs test/longrun-final-apply.test.mjs test/swarm-scheduler.test.mjs test/model-priority.test.mjs test/goal-confirm.test.mjs test/code-hygiene.test.mjs test/agent-panel.test.mjs test/swarm-code-worktree.test.mjs test/swarm-code-merge.test.mjs test/swarm-code-security.test.mjs test/verify-loop.test.mjs test/goal-driver.test.mjs test/goal-run.test.mjs test/module-budget.test.mjs test/no-comments.test.mjs test/test-quality.test.mjs test/eval-result-text.test.mjs test/eval-git-evidence.test.mjs test/pending-accept.test.mjs test/worktree-reuse.test.mjs test/quality-gate.test.mjs"
+    "test": "node --no-warnings --test test/index.test.mjs test/adr-deny.test.mjs test/worktree.test.mjs test/spec-draft.test.mjs test/eval-review.test.mjs test/fullscreen-default.test.mjs test/subagent-timeout.test.mjs test/reviewer-grounding.test.mjs test/spec-changes.test.mjs test/ext-config.test.mjs test/prespec-dirty.test.mjs test/distill.test.mjs test/esc-guard.test.mjs test/subagent-cancel.test.mjs test/decompose.test.mjs test/approve-sync.test.mjs test/provider-diagnosis.test.mjs test/context-bulletin.test.mjs test/resume.test.mjs test/ask-tool.test.mjs test/swarm-scheduler.test.mjs test/model-priority.test.mjs test/goal-confirm.test.mjs test/code-hygiene.test.mjs test/agent-panel.test.mjs test/swarm-code-worktree.test.mjs test/swarm-code-merge.test.mjs test/swarm-code-security.test.mjs test/verify-loop.test.mjs test/goal-driver.test.mjs test/goal-run.test.mjs test/module-budget.test.mjs test/no-comments.test.mjs test/test-quality.test.mjs test/eval-result-text.test.mjs test/eval-git-evidence.test.mjs test/pending-accept.test.mjs test/worktree-reuse.test.mjs test/quality-gate.test.mjs test/handoff-stack.test.mjs test/fresh-context.test.mjs test/subagent-rpc.test.mjs test/ladder-model.test.mjs test/handoff-classify.test.mjs"
   },
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/zurge-co/pi-zense.git"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
+    "@earendil-works/pi-coding-agent": "^1.3.0",
+    "@earendil-works/pi-tui": "^1.3.0",
+    "typebox": "^1.3.27"
   },
   "pi": {
     "extensions": [

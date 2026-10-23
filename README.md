@@ -65,6 +65,7 @@ GRAD  ▶ grader              12s  running probes
 | `/zense memory` | grouped lesson summary (`json` = raw) |
 | `/zense distill` | compact `memory.jsonl` into one lesson set (aborts without deleting on failure) |
 | `/zense resume` | continue a run found on disk |
+| `/zense fresh-context on/off/status/clear` | the task-boundary context reset and the knowledge stack behind it |
 
 ## Configuration
 
@@ -77,11 +78,41 @@ GRAD  ▶ grader              12s  running probes
 `.zense/config.json`
 
 ```json
-{ "swarmConcurrency": 5, "subagentTimeoutMs": { "default": 1200000 } }
+{ "swarmConcurrency": 5, "subagentTimeoutMs": { "default": 1200000 }, "freshContext": true }
 ```
 
 Unset slots are simply not used; there is no ceiling key anywhere — if one is present it is
 reported as ignored, never obeyed.
+
+## Fresh context and the handoff stack
+
+Every finished task resets the main session's context on purpose (`agent_before_settle` → a
+retain-none compaction entry). What survives is **not** a transcript or a statistic — it is the
+handoff stack in `.zense/handoff.jsonl`:
+
+```
+sub-agent finishes
+   └─ classify() asks: would this make the NEXT task faster or more correct?
+        ├─ no  → dropped (no model call is spent on it)
+        └─ yes → condensed to ONE line → stack (deduped, capped at 12)
+   └─► next task starts with that stack injected + an empty context
+```
+
+Sub-agents run under `RpcClient`, so a finding can be pushed into a **run that is already working**
+with `steer()` instead of restarting it. Every role boots with `--exclude-tools zense_*`, so a
+sub-agent can never re-enter the harness.
+
+The classifier is the gate: **nothing is carried without a verdict.** If no classifier has
+credentials (or it errors), the note is dropped and the harness tells you which one to log in —
+it never falls back to "keep everything". Log in one of:
+
+| classifier | credential |
+|---|---|
+| `typesafe/jev-latest` | `TYPESAFE_API_KEY` |
+| `cloudflare-workers-ai/@cf/cloudflare/clef(-flash)` | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
+| `openai/gpt-6-luna` | `OPENAI_API_KEY` |
+
+Turn the reset off with `/zense fresh-context off`; inspect the stack with `/zense fresh-context status`.
 
 ## Rules the harness enforces on the result
 

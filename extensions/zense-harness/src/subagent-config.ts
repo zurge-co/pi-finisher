@@ -239,14 +239,26 @@ export const buildProviderMissingGuidance = (
 	return lines.join("\n");
 };
 
+export const ZENSE_TOOL_GLOB = "zense_*";
+
+export const withZenseToolGlob = (excludeTools?: string[]): string[] => {
+	const base = (excludeTools ?? []).filter((t) => t !== ZENSE_TOOL_GLOB);
+	return [ZENSE_TOOL_GLOB, ...base];
+};
+
 export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {
 	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : undefined);
 	const argv = ["PI_ZENSE_SUBAGENT=1", "pi", "--mode", "json", "--no-session"];
 	if (flags?.length) argv.push(...flags);
-	if (excludeTools?.length) argv.push("--exclude-tools", excludeTools.join(","));
+	if (excludeTools?.length) argv.push("--exclude-tools", withZenseToolGlob(excludeTools).join(","));
 	if (modelPattern) argv.push("--model", modelPattern);
 	argv.push(task);
 	return argv;
+};
+
+export const buildRpcSubagentArgs = (excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {
+	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : []);
+	return ["--no-session", ...flags, "--exclude-tools", withZenseToolGlob(excludeTools).join(",")];
 };
 
 export const buildRequirementsPrompt = (intent: string, lessons: string[], facts?: string[], exemplar?: string | null, timeoutMs = 300_000): string =>
