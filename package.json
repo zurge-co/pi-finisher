@@ -33,5 +33,9 @@
     "themes": [
       "./themes"
     ]
-  }
+  },
+  "files": [
+    "extensions",
+    "themes"
+  ]
 }
