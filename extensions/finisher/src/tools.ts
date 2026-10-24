@@ -4,6 +4,7 @@ import { buildGoalToolText, casesForGate, goalGateAsks, goalGateFor, reopenGoal,
 import { costCeilingKeysPresent, readConfirmTimeout, surfaceLine } from "./goal-run.ts";
 import { GOAL_ALREADY_VERIFIED_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, GOAL_UNCHANGED_NOTE, cleanChrome, consentBlocks, goalCases, humanTurnsFrom, sessionIdFrom, tooManyCasesNote, UNKNOWN_HUMAN_TURNS, type GoalAskOutcome, type GoalChromeOverrides } from "./goal-confirm.ts";
 import { DEFAULT_GOAL_LANG, goalLanguageNote, languageTag, readableIn, resolveGoalLang } from "./human-language.ts";
+import { armGoalStop, goalStopMessage } from "./goal-stop.ts";
 import { type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots } from "./swarm.ts";
 import { planRefusalText, planRefusals, readPlanSlices } from "./swarm-plan.ts";
@@ -40,7 +41,6 @@ export const registerTools = (ctx: HarnessContext) => {
 	const pi = ctx.pi;
 	const state = ctx.state;
 	const updateWidget = ctx.updateWidget;
-	const escalate = ctx.escalate;
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const askGoalConfirm = ctx.askGoalConfirm;
 
@@ -201,25 +201,19 @@ export const registerTools = (ctx: HarnessContext) => {
 
 			const askSeconds = Math.round(readConfirmTimeout(ctx.cwd) / 1000);
 			const refusal = (outcome: GoalAskOutcome, extra = "") => {
-				const note = outcome === "timeout" ? `${GOAL_TIMEOUT_NOTE(askSeconds)}${extra}` : outcome === "declined" ? `${GOAL_DECLINED_NOTE}${extra}` : `${GOAL_NO_UI_NOTE}${extra}`;
-				if (outcome === "timeout" || outcome === "declined") {
-					state.goalConsent = { humanTurns, reason: outcome, sessionId };
-					const line =
-						outcome === "timeout"
-							? `⏱ finisher: nobody answered the goal dialog in ${askSeconds}s — nothing was started; the run is stopped until you ask again`
-							: "finisher: the goal was declined — nothing was started; the run is stopped until you ask again";
-					try {
-						escalate(outcome === "timeout" ? "goal-confirm-timeout" : "goal-declined", `${goal} — ${askSeconds}s`, ctx);
-					} catch {
-					}
-					try {
-						ctx.ui.notify(line, "warning");
-					} catch {
-					}
-					persist();
-					updateWidget(ctx);
+				if (outcome !== "timeout" && outcome !== "declined")
+					return { content: [{ type: "text" as const, text: `${GOAL_NO_UI_NOTE}${extra}` }], details: { goal, confirmed: false, outcome }, isError: true };
+				state.goalConsent = { humanTurns, reason: outcome, sessionId };
+				const stop = armGoalStop(state, outcome, askSeconds);
+				state.escalations.push({ kind: outcome === "timeout" ? "goal-confirm-timeout" : "goal-declined", detail: `${goal} — ${askSeconds}s`, at: Date.now() });
+				try {
+					ctx.ui.notify(goalStopMessage(stop, lang), "warning");
+				} catch {
 				}
-				return { content: [{ type: "text" as const, text: note }], details: { goal, confirmed: false, outcome }, isError: true };
+				persist();
+				updateWidget(ctx);
+				const note = `${outcome === "timeout" ? GOAL_TIMEOUT_NOTE(askSeconds) : GOAL_DECLINED_NOTE}${extra}\n\n${goalStopMessage(stop, lang)}`;
+				return { content: [{ type: "text" as const, text: note }], details: { goal, confirmed: false, outcome, stop }, isError: true, terminate: true };
 			};
 
 			if (asks) {
@@ -234,6 +228,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const adopted = casesForGate(gate, cases, confirmed, started.cases ?? before);
 			state.goalDriver = adopted.length ? { ...started, cases: adopted } : started;
 			state.goalConsent = undefined;
+			state.goalStop = undefined;
 			if (adopted.length && !state.spec) {
 				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: adopted, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
 				state.phase = "implementation";

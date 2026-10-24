@@ -152,6 +152,15 @@ test("a case with no named command stays UNVERIFIED even on a green suite — a 
 	assert.equal(s.box.get().goalDriver.outcome, undefined, "an unproven case is a repair lap, not the end of the goal — the goal is never closed and never re-confirmed for it");
 	assert.equal(s.box.get().goalDriver.phases.length, 2, "the closed plan gains exactly one fix lap — the goal is not closed and not re-confirmed for it");
 	assert.match(s.box.get().goalDriver.phases[1].text, /the probe passes/, "and that lap names the case in the human's own words");
+	assert.ok(s.box.get().goalDriver.phases[1].text.startsWith("the probe passes"), "the lap leads with the case text the report will name, so it binds back");
+
+	await s.run("finisher_phase", { done: true });
+	const again = await s.run("finisher_verify", { cases: [] });
+	assert.equal(again.isError, true);
+	assert.match(again.content[0].text, /no command was named/);
+	assert.equal(s.box.get().goalDriver.outcome, undefined, "the same gap twice is still a fix lap, never a halt: naming nothing changes nothing, but the round budget is what ends it");
+	assert.equal(s.box.get().goalDriver.phases.length, 3, "the second gap buys a second fix lap, aimed at the same case");
+	assert.ok(s.box.get().goalDriver.phases[2].text.startsWith("the probe passes"), "and it names that case the same way the first one did");
 });
 
 test("a named command the harness has not recorded yet is RUN by the harness — the exit code is the evidence, never a claim", () => {

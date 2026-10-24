@@ -1,6 +1,7 @@
 
 import { join } from "node:path";
 import type { ReportMeta } from "./report-file.ts";
+import type { GoalStop } from "./goal-stop.ts";
 
 export interface Criterion {
 	id: string; text: string; check: string; verified?: boolean;
@@ -23,7 +24,7 @@ export interface State {
 	trajectoryFlags: string[];
 	subagentRuns: SubagentRun[];
 	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
-	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetGoalAt?: number; 	freshResetLapAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[]; cases?: string[] }; 	goalConsent?: { humanTurns: number; reason: "declined" | "timeout"; sessionId?: string }; humanAt?: number; humanLang?: string; goalLang?: string; goalChrome?: { title?: string; keys?: string; keysLine?: string; header?: string; note?: string; emptyGoal?: string }; toolOutputExpanded?: boolean; verifyCalls?: { command: string; ok: boolean; at?: number }[]; hygieneViolations?: HygieneViolationRef[]; lastReport?: ReportMeta; }
+	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetGoalAt?: number; 	freshResetLapAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[]; cases?: string[] }; 	goalConsent?: { humanTurns: number; reason: "declined" | "timeout"; sessionId?: string }; goalStop?: GoalStop; humanAt?: number; humanLang?: string; goalLang?: string; goalChrome?: { title?: string; keys?: string; keysLine?: string; header?: string; note?: string; emptyGoal?: string }; toolOutputExpanded?: boolean; verifyCalls?: { command: string; ok: boolean; at?: number }[]; hygieneViolations?: HygieneViolationRef[]; lastReport?: ReportMeta; }
 
 export interface HygieneViolationRef {
 	path: string;

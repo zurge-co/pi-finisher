@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
 import { consentLifts, humanResumes } from "./src/goal-confirm.ts";
+import { claimGoalStopAbort, clearGoalStop, goalStopGate, stopLanguage } from "./src/goal-stop.ts";
 import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
 import { harnessSystemPrompt } from "./src/system-prompt.ts";
 import { appendCommand } from "./src/command-record.ts";
@@ -46,6 +47,7 @@ export * from "./src/code-hygiene.ts";
 export * from "./src/test-quality.ts";
 export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
+export * from "./src/goal-stop.ts";
 export * from "./src/human-language.ts";
 export * from "./src/system-prompt.ts";
 export * from "./src/goal-dialog.ts";
@@ -179,6 +181,7 @@ export default function (pi: ExtensionAPI) {
 			if (e.type === "custom" && e.customType === "finisher-state")
 				box.set({ ...freshState(), ...(e.data as State) });
 		consentLifts(box.get());
+		box.get().goalStop = undefined;
 		kit.updateWidget(ctx);
 	});
 
@@ -199,11 +202,22 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
+	pi.on("tool_call", async () => goalStopGate(box.get(), stopLanguage(box.get())));
+
+	pi.on("turn_end", async (_ev, ctx) => {
+		if (!claimGoalStopAbort(box.get())) return;
+		try {
+			ctx.abort();
+		} catch {
+		}
+	});
+
 	pi.on("before_agent_start", async (event) => {
 		if (event.messageType !== "user") return;
 		const live = box.get();
 		live.humanAt = Date.now();
 		humanResumes(live, live.humanAt);
+		if (clearGoalStop(live)) persist();
 		const lang = humanLanguage(live.humanLang, event.prompt);
 		if (lang !== live.humanLang) {
 			live.humanLang = lang;

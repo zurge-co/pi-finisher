@@ -129,17 +129,43 @@ const INSIDE_MIN = 12;
 
 const withoutTruncation = (id: string): string => id.replace(/[…]+|\s*\.{2,}\s*$/g, "").trim();
 
-const candidatesFor = (cases: string[], id: string): string[] => {
-	const key = caseKey(id);
-	if (!key) return [];
-	const exact = cases.filter((c) => c === id || caseKey(c) === key);
-	if (exact.length) return exact;
-	const bare = caseKey(withoutTruncation(id));
-	const prefix = bare.length >= BARE_MIN ? cases.filter((c) => caseKey(c).startsWith(bare)) : [];
+export const VERB_LEAD = /^(?:fix|make|prove|do|ensure|verify|check|test|rerun|re-run)\s+/i;
+
+export const REMEDY_MARK = /\s+(?:—|–|::|\|)\s+/;
+
+export const claimKey = (id: string): { verbatim: string; withoutRemedy: string; withoutLead: string } => {
+	const verbatim = caseKey(withoutTruncation(id));
+	const withoutRemedy = verbatim.split(REMEDY_MARK)[0].trim();
+	return { verbatim, withoutRemedy, withoutLead: withoutRemedy.replace(VERB_LEAD, "").trim() };
+};
+
+const claimKeys = (id: string): string[] => {
+	const keys = claimKey(id);
+	return [...new Set([keys.verbatim, keys.withoutRemedy, keys.withoutLead])].filter((k) => k.length > 0);
+};
+
+const matchKey = (cases: string[], key: string): string[] => {
+	const whole = cases.filter((c) => caseKey(c) === key);
+	if (whole.length === 1) return whole;
+	const namesACase = cases.filter((c) => caseKey(c).length >= BARE_MIN && key.startsWith(caseKey(c)));
+	if (namesACase.length === 1) return namesACase;
+	const prefix = key.length >= BARE_MIN ? cases.filter((c) => caseKey(c).startsWith(key)) : [];
 	if (prefix.length === 1) return prefix;
-	const inside = bare.length >= INSIDE_MIN ? cases.filter((c) => caseKey(c).includes(bare)) : [];
+	const inside = key.length >= INSIDE_MIN ? cases.filter((c) => caseKey(c).includes(key)) : [];
 	if (inside.length === 1) return inside;
-	return [...new Set([...prefix, ...inside])];
+	return [...new Set([...namesACase, ...prefix, ...inside])];
+};
+
+const candidatesFor = (cases: string[], id: string): string[] => {
+	if (!caseKey(id)) return [];
+	const exact = cases.filter((c) => c === id || caseKey(c) === caseKey(id));
+	if (exact.length) return exact;
+	const keys = claimKeys(id);
+	for (const key of keys) {
+		const hits = matchKey(cases, key);
+		if (hits.length === 1) return hits;
+	}
+	return [...new Set(keys.flatMap((key) => matchKey(cases, key)))];
 };
 
 export const bindClaims = (cases: string[], claims: CaseClaim[]): BoundClaims => {
@@ -171,6 +197,9 @@ export const unboundNote = (unbound: { id: string; candidates: string[] }[]): st
 		? [
 				`⚠ ${unbound.length} named case id(s) matched no single case, so their commands prove nothing — name the case's exact text instead:`,
 				...unbound.map((u) => `  ${u.id}${u.candidates.length ? ` (matches ${u.candidates.length} cases)` : " (matches no case)"}`),
+				...(unbound.filter((u) => u.candidates.length).length
+					? ["", "the ids it could mean — copy one verbatim:", ...unbound.flatMap((u) => u.candidates.slice(0, 6).map((c) => `  ${c}`))]
+					: []),
 			].join("\n")
 		: "";
 

@@ -135,8 +135,6 @@ export const decideOnce = (report: VerifyReport, attempts: VerifyAttempts, maxBa
 	}
 	const repairable = repairableCases(report);
 	if (repairable.length) {
-		if (attempts.rounds > 0 && attempts.lastFingerprint === evidenceFingerprint(report))
-			return { kind: "halt", reason: "identical evidence to the previous round — no command was named again, so naming nothing twice proves nothing" };
 		if (attempts.rounds >= maxBatches) return { kind: "halt", reason: `no command proved ${repairable.map((c) => c.caseId).join(", ")} after ${attempts.rounds} rounds — stopping instead of looping forever` };
 		return { kind: "replan", reason: `no command proved ${repairable.map((c) => c.caseId).join(", ")}` };
 	}

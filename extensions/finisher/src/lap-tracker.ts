@@ -11,7 +11,7 @@ export const TRACKER_CASE_MAX = 80;
 export const TRACKER_COMMAND_MAX = 80;
 export const TRACKER_STEPS_MAX = 10;
 export const TRACKER_NEXT_MAX = 2;
-export const TRACKER_CASES_MAX = 4;
+export const TRACKER_CASES_PER_LINE = 2;
 export const TRACKER_EVIDENCE_MAX = 5;
 export const TRACKER_RENDER_MAX = 1_200;
 
@@ -88,7 +88,7 @@ export const buildLapTracker = (
 	const afterActive = active < 0 ? steps.length : active + 1;
 	return {
 		at,
-		goal: clipTrackerText(goal.goal, TRACKER_GOAL_MAX),
+		goal: goal.goal.trim(),
 		round: goal.attempts?.rounds ?? 0,
 		lap: lapNumberOf(plan),
 		laps: totalPhases(plan),
@@ -96,7 +96,7 @@ export const buildLapTracker = (
 		steps,
 		...(active < 0 ? {} : { current: steps[active] }),
 		next: steps.slice(afterActive, afterActive + TRACKER_NEXT_MAX),
-		cases: (goal.cases ?? []).map((c) => clipTrackerText(c, TRACKER_CASE_MAX)).slice(0, TRACKER_CASES_MAX),
+		cases: [...(goal.cases ?? [])],
 		evidence: trackerEvidence(evidence),
 	};
 };
@@ -116,7 +116,7 @@ export const trackerLines = (t: LapTracker): { core: string[]; extra: string[] }
 		? `where: lap ${Math.max(1, t.lap)}/${t.laps}${t.done ? ` — ${t.done} closed` : ""}`
 		: "where: no plan declared yet";
 	const core = [
-		`[finisher lap tracker] goal: ${t.goal}`,
+		`[finisher lap tracker] goal: ${clipTrackerText(t.goal, TRACKER_GOAL_MAX)}`,
 		where,
 		...(t.current ? [`now: ${t.current.text}`] : []),
 		...(t.next.length ? [`then: ${t.next.map((s) => s.text).join(" | ")}`] : []),
@@ -125,9 +125,18 @@ export const trackerLines = (t: LapTracker): { core: string[]; extra: string[] }
 	const extra: string[] = [];
 	if (t.steps.length)
 		extra.push(from > 0 ? `plan: …${from} lap(s) already behind` : "plan:", ...t.steps.slice(from, to).map((s, i) => `  ${stepMark(s.state)} ${from + i + 1}. ${s.text}`), ...(to < t.steps.length ? [`  …${t.steps.length - to} lap(s) after`] : []));
-	if (t.cases.length) extra.push(`cases: ${t.cases.join(" | ")}`);
+	if (t.cases.length) extra.push(...caseLines(t.cases.map((c) => clipTrackerText(c, TRACKER_CASE_MAX))));
 	if (t.evidence.length) extra.push(`evidence: ${t.evidence.map((e) => `${e.command} ${e.ok ? "exit 0" : "failed"}`).join(" | ")}`);
 	return { core, extra };
+};
+
+const caseLines = (cases: string[]): string[] => {
+	const lines: string[] = [];
+	for (let i = 0; i < cases.length; i += TRACKER_CASES_PER_LINE) {
+		const chunk = cases.slice(i, i + TRACKER_CASES_PER_LINE).join(" | ");
+		lines.push(i === 0 ? `cases: ${chunk}` : `       ${chunk}`);
+	}
+	return lines;
 };
 
 const pack = (lines: string[], budget: number): string[] => {

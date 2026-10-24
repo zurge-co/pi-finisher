@@ -131,14 +131,14 @@ test("an unproven case that only lacked a command becomes a fix lap, not a human
 	const oneRound = decideOnce(buildReport([unproven("c1")]), freshAttempts());
 	assert.equal(oneRound.kind, "replan", "naming no command is a repair the agent can do, so the goal stays open");
 	const same = recordEvidence({ rounds: 1 }, buildReport([unproven("c1")]));
-	assert.equal(decideOnce(buildReport([unproven("c1")]), same).kind, "halt", "naming nothing twice proves nothing");
+	assert.equal(decideOnce(buildReport([unproven("c1")]), same).kind, "replan", "a missing command is a report gap, never a reason to stop: naming none twice is not evidence of failure");
 	const bound = decideOnce(buildReport([unproven("c1")]), { rounds: 3 });
 	assert.equal(bound.kind, "halt", "the repair is bounded like every other round");
 
 	const step = nextGoalDriverStep({ ...freshGoalRun("ship the race HUD", 1_000, ["c1"]) }, buildReport([unproven("c1")]));
 	assert.equal(step.action, "replan");
 	assert.equal(step.state.outcome, undefined, "the goal is not closed by a missing command");
-	assert.match(step.state.phases[0].text, /make c1 UNVERIFIED .* provable by a command that exits 0/);
+	assert.ok(step.state.phases[0].text.startsWith("c1 — "), "the fix lap names the case first, so it can be claimed back verbatim");
 });
 
 test("a human check is reported apart and never counted as a failure", () => {

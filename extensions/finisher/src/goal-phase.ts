@@ -15,7 +15,7 @@ export interface PhasePlan {
 	lapMs: number[];
 }
 
-export const FIX_PHASES_MAX = 6;
+export const REMEDY_TAIL_MAX = 140;
 export const PHASE_TEXT_MAX = 200;
 
 export const emptyPlan = (): PhasePlan => ({ phases: [], lap: 0, lapAt: 0, lapMs: [] });
@@ -103,19 +103,26 @@ export const completeLap = (plan: PhasePlan, ref?: string | number, at = Date.no
 	return { phases: plan.phases, lap: index + 2, lapAt: at, lapMs };
 };
 
-const reasonOf = (caseId: string, verdict: string, reason?: string): string => `${caseId} ${verdict}${reason ? ` — ${reason}` : ""}`;
+export const REMEDY_SEP = " — ";
+
+const remedyTail = (reason: string | undefined): string => (reason ? reason.replace(/\s+/g, " ").trim().slice(0, REMEDY_TAIL_MAX) : "");
+
+export const remedyFor = (verdict: string, reason?: string): string => {
+	const tail = remedyTail(reason);
+	if (verdict === "FAIL") return tail ? `fix this — ${tail}` : "fix this";
+	if (verdict === "BLOCKED") return "make this runnable — a case that never produced output proves nothing";
+	return "name one command that exercises this case and make it exit 0";
+};
+
+export const fixLapText = (caseId: string, verdict: string, reason?: string): string => `${caseId}${REMEDY_SEP}${remedyFor(verdict, reason)}`;
 
 export const fixPhases = (report: VerifyReport): string[] => {
-	const out: string[] = [];
 	const byId = new Map(report.cases.map((c) => [c.caseId, c]));
-	const reason = (caseId: string): string => {
+	const lap = (caseId: string): string => {
 		const c = byId.get(caseId);
-		return c ? reasonOf(c.caseId, c.verdict, c.reason) : caseId;
+		return fixLapText(caseId, c?.verdict ?? "UNVERIFIED", c?.reason);
 	};
-	for (const caseId of report.failed) out.push(`fix ${reason(caseId)}`);
-	for (const caseId of report.unverified) out.push(`make ${reason(caseId)} provable by a command that exits 0`);
-	for (const caseId of report.blocked ?? []) out.push(`make ${reason(caseId)} runnable — a case that never produced output proves nothing`);
-	return out.slice(0, FIX_PHASES_MAX);
+	return [...report.failed, ...report.unverified, ...(report.blocked ?? [])].map(lap);
 };
 
 export const planGrewBy = (before: PhasePlan, after: PhasePlan): number => Math.max(0, totalPhases(after) - totalPhases(before));

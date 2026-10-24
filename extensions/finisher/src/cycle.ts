@@ -11,6 +11,7 @@ export const resetCycleState = (s: State): void => {
 	s.lastCompileLessons = undefined;
 	s.goalDriver = undefined;
 	s.goalConsent = undefined;
+	s.goalStop = undefined;
 	s.verifyLoop = undefined;
 };
 
