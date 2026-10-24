@@ -161,3 +161,14 @@ test("clicking an agent's row opens that agent's page, and clicking the frame do
 	assert.deepEqual(opened, [11, 22], "each click opens the agent whose row is under it");
 	assert.deepEqual(component.handleMouse({ type: "move", y: second, x: 0, screenX: 0, screenY: second, button: "none", shift: false, alt: false, ctrl: false, width: 120, height: hits.length }), undefined, "hovering opens nothing");
 });
+
+test("no warning tally anywhere in the HUD: not on the box, not on the idle line", async () => {
+	const { hudLines, hudIdleLine, hudFrames } = await import("../extensions/finisher/index.ts");
+	const runs = [{ role: "swarm", status: "running", startedAt: 1, at: 1, slotId: "slot1" }];
+	const goal = { goal: "g", confirmedAt: 1_000, phases: [{ id: "p-a", text: "a", round: 0, addedAt: 1_000 }], lap: 1, lapAt: 5_000 };
+	const noisy = { runs, goal, lanes: 5, width: 120, flags: 2, hygiene: 1, escalations: 3 };
+	const quiet = { runs, goal, lanes: 5, width: 120 };
+	assert.deepEqual(hudLines(noisy), hudLines(quiet), "the counters are not rendered at all, so they cannot change a single line");
+	assert.deepEqual(hudFrames(noisy), hudFrames(quiet));
+	for (const line of [...hudLines(noisy), hudIdleLine(noisy)]) assert.ok(!/⚠|🧹|🚨/.test(line), `a warning glyph must never appear: ${line}`);
+});

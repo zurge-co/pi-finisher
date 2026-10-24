@@ -24,9 +24,10 @@ missing most often, so the plan can be made better instead of guessed.
 
 - **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
   click between the goal and the result.
-- **A quiet idle line.** When nothing is running the HUD is one line — lights, phase, and for a
-  finished goal the total clock, the lap count and the pit split. No cost counters anywhere in the
-  HUD, and warnings only appear on the box while work is live.
+- **A quiet HUD.** No cost counters and no warning tally anywhere: the idle line is lights + phase
+  (and, for a finished goal, the total clock, the lap count and the pit split), and the box carries
+  only the goal, the race and the live agents. Hygiene and trajectory findings still block or flag
+  the work itself — they just never cost you a column.
 - **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
 - **Nobody answers, nothing starts.** Every goal dialog has a deadline
   (`confirmTimeoutMs` in `.finisher/config.json`, `FINISHER_CONFIRM_TIMEOUT_MS`, default 120s, `0` = wait

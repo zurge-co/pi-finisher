@@ -13,9 +13,6 @@ export interface HudInput {
 	runs: PanelRun[];
 	width: number;
 	goal?: HudGoal;
-	flags?: number;
-	hygiene?: number;
-	escalations?: number;
 	lanes?: number;
 	now?: number;
 	maxRows?: number;
@@ -32,14 +29,6 @@ export const hudActive = (input: HudInput): boolean =>
 	liveRuns(input.runs).length > 0 || (!!input.goal && !input.goal.doneAt);
 
 export const goalSegment = (race: Race): string => raceSegment(race);
-
-export const tallySegment = (input: HudInput): string => {
-	const parts: string[] = [];
-	if (input.flags) parts.push(`⚠ ${input.flags}`);
-	if (input.hygiene) parts.push(`🧹 ${input.hygiene}`);
-	if (input.escalations) parts.push(`🚨 ${input.escalations}`);
-	return parts.join(" · ");
-};
 
 export const boxTop = (segments: string[], width: number): string => {
 	const inner = width - 2;
@@ -80,7 +69,7 @@ export const hudSignature = (input: Omit<HudInput, "width">): string => {
 	const done = input.runs.filter((r) => r.status !== "running").length;
 	const race = raceOf({ ...input, now, width: 0 });
 	const g = input.goal ? [input.goal.goal, race.phase, race.lap, race.laps, race.totalClock, race.lapClock, input.goal.doneAt ?? 0] : null;
-	return JSON.stringify([live, done, g, input.flags ?? 0, input.hygiene ?? 0, input.escalations ?? 0, race.busy, race.lanes]);
+	return JSON.stringify([live, done, g, race.busy, race.lanes]);
 };
 
 const ROW_STATE_FG: Record<string, string> = { "▶": "accent", "✓": "success", "✗": "error" };
@@ -116,7 +105,7 @@ export const hudFrames = (input: HudInput): HudFrame[] => {
 	const race = raceOf({ ...input, width });
 	if (!hudActive(input)) return [{ kind: "idle", text: truncateToWidth(raceIdleLine(race, HUD_MARK, HUD_NAME), width, "…") }];
 	const live = liveRuns(input.runs).length;
-	const segments = [`${HUD_MARK} ${HUD_NAME}`, raceSegment(race), live ? `${live} live · click a row · ctrl+_ pages` : "", tallySegment(input)];
+	const segments = [`${HUD_MARK} ${HUD_NAME}`, raceSegment(race), live ? `${live} live · click a row · ctrl+_ pages` : ""];
 	const body: HudFrame[] = [
 		...(input.goal ? [{ kind: "goal" as const, text: truncateToWidth(`▸ ${clip(input.goal.goal, 120)}`, Math.max(0, width - 4), "…") }] : []),
 		...hudRowEntries(input).map(({ text, hit }) => ({ kind: "row" as const, text, hit })),

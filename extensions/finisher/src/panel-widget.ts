@@ -38,9 +38,6 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		runs: state.subagentRuns,
 		goal: goalOf(),
 		lanes: LANES,
-		flags: state.trajectoryFlags.length,
-		hygiene: state.hygieneViolations?.length ?? 0,
-		escalations: state.escalations.length,
 		maxRows: HUD_MAX_ROWS,
 	});
 
