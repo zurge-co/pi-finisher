@@ -15,7 +15,7 @@ import {
 } from "../extensions/finisher/index.ts";
 import { ladderPatterns } from "../extensions/finisher/index.ts";
 
-const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-handoff-model-"));
+const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-handoff-model-"));
 
 const writeJson = (cwd, file, cfg) => {
 	mkdirSync(join(cwd, ".finisher"), { recursive: true });

@@ -14,7 +14,7 @@ import {
 	splitPattern,
 } from "../extensions/finisher/index.ts";
 
-const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-ladder-"));
+const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-ladder-"));
 
 const writeModels = (cwd, cfg) => {
 	mkdirSync(join(cwd, ".finisher"), { recursive: true });

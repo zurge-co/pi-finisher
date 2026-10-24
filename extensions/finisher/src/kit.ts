@@ -12,6 +12,7 @@ export type Flag = (msg: string, ctx: ExtensionContext) => void;
 export type ArmGoalRound = (text: string) => void;
 export type AskRejectReason = (ctx: ExtensionContext, what: string) => Promise<string | undefined>;
 export type OpenAgentsViewer = (ctx: ExtensionContext) => Promise<void>;
+export type OpenAgentSession = (ctx: ExtensionContext, at?: import("./types.ts").SubagentRun) => Promise<null>;
 
 export type LaunchSubagent = (
 	ctx: ExtensionContext,
@@ -37,14 +38,14 @@ export type RunCodeSwarm = (
 	},
 ) => Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown>; isError?: boolean }>;
 
-export type ZenseCustom = <T>(
+export type FinisherCustom = <T>(
 	ctx: ExtensionContext,
 	overlay: OverlayOptions,
 	build: (tui: any, theme: any, kb: (name: string) => string, done: (v: T) => void) => any,
 	allowPeek?: (() => boolean) | boolean,
 ) => Promise<T>;
 
-export type ZensePick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint?: string) => Promise<string | null>;
+export type FinisherPick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint?: string) => Promise<string | null>;
 export type AskClarify = (ctx: ExtensionContext, q: { question: string; choices?: string[]; freeText?: boolean }) => Promise<string | undefined>;
 export type AcceptPending = (ctx: ExtensionContext, commitIfStaged: boolean, notifyViaBulletin?: boolean) => { ok: boolean; text: string; specVersion?: number };
 export type ScrollAction = { dir: 1 | -1; page: boolean } | "top" | "bottom" | null;
@@ -64,9 +65,10 @@ export interface HarnessContext {
 	armGoalRound: ArmGoalRound;
 	askClarifyQuestion: AskClarify;
 	acceptPending: AcceptPending;
-	finisherPick: ZensePick;
+	finisherPick: FinisherPick;
 	openAgentsViewer: OpenAgentsViewer;
-	finisherCustom: ZenseCustom;
+	openAgentSession: OpenAgentSession;
+	finisherCustom: FinisherCustom;
 	OVERLAY_LG: OverlayOptions;
 	OVERLAY_MD: OverlayOptions;
 	OVERLAY_XL: OverlayOptions;

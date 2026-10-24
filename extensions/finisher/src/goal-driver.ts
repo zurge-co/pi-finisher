@@ -3,6 +3,9 @@ import {
 	buildReplanPrompt,
 	decideOnce,
 	freshAttempts,
+	MAX_LOOP_BATCHES,
+	needsHuman,
+	recordEvidence,
 	renderVerifyReport,
 	type VerifyAttempts,
 	type VerifyReport,
@@ -35,10 +38,10 @@ export const resumeOrStart = (prev: GoalRunState | undefined, goal: string, at =
 
 export const goalDriverDone = (g: GoalRunState | undefined): boolean => !!g?.doneAt;
 
-export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, maxBatches = 3, at = Date.now()): GoalStep => {
+export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, maxBatches = MAX_LOOP_BATCHES, at = Date.now()): GoalStep => {
 	const decision = decideOnce(report, state.attempts, maxBatches);
 	const round = state.attempts.rounds + 1;
-	const advanced: GoalRunState = { ...state, attempts: { ...state.attempts, rounds: round } };
+	const advanced: GoalRunState = { ...state, attempts: { ...recordEvidence(state.attempts, report), rounds: round } };
 	if (decision.kind === "pass")
 		return {
 			action: "finish",
@@ -47,14 +50,23 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 			report,
 			text: [renderVerifyReport(report), "", `goal reached: ${state.goal}`, "every case is backed by code that was actually run — report this once and stop"].join("\n"),
 		};
-	if (decision.kind === "replan")
+	if (decision.kind === "replan") {
+		const human = needsHuman(report);
 		return {
 			action: "replan",
 			round,
 			state: advanced,
 			report,
-			text: [renderVerifyReport(report), "", buildReplanPrompt(report, state.goal), "", `this is attempt ${round} of ${maxBatches} — plan the next loop yourself, then verify once at the end again`].join("\n"),
+			text: [
+				renderVerifyReport(report),
+				"",
+				buildReplanPrompt(report, state.goal),
+				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — if it cannot be exercised from a command, say so and hand it to the human instead of forcing it.`] : []),
+				"",
+				`this is attempt ${round} of ${maxBatches} — plan the next loop yourself, then verify once at the end again`,
+			].join("\n"),
 		};
+	}
 	if (decision.kind === "human")
 		return {
 			action: "human",

@@ -12,7 +12,7 @@ import {
 	usedProviderOf,
 } from "../extensions/finisher/index.ts";
 
-const mkTmp = () => mkdtempSync(join(tmpdir(), "zense-provdiag-"));
+const mkTmp = () => mkdtempSync(join(tmpdir(), "finisher-provdiag-"));
 
 test("providerIdOfModelPattern / usedProviderOf: provider is everything before '/', no '/' = undefined", () => {
 	assert.equal(providerIdOfModelPattern("synthetic/hf:x:free"), "synthetic");

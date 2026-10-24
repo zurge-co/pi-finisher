@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { HYGIENE_MAX_LINES, countLines } from "../extensions/finisher/index.ts";
 
@@ -44,4 +44,23 @@ test("shell scripts keep their shebang and stay executable (a comment stripper m
 		assert.ok((statSync(f).mode & 0o111) !== 0, `${f} must stay executable`);
 	}
 	assert.ok(existsSync(join(here, "scripts", "release.sh")));
+});
+
+test("the module map in AGENTS.md names every module, so it cannot drift from the tree", () => {
+	const map = readFileSync(join(here, "AGENTS.md"), "utf8");
+	const modules = readdirSync(join(here, "extensions/finisher/src")).filter((f) => f.endsWith(".ts"));
+	const undocumented = modules.filter((f) => !map.includes(`\`${f}\``));
+	assert.deepEqual(undocumented, [], `AGENTS.md omits: ${undocumented.join(", ")} — add a row to the module map`);
+	const named = [...map.matchAll(/^\| `([a-z0-9-]+\.ts)` \|/gm)].map((m) => m[1]);
+	const ghosts = named.filter((f) => !modules.includes(f));
+	assert.deepEqual(ghosts, [], `AGENTS.md describes modules that no longer exist: ${ghosts.join(", ")}`);
+});
+
+test("the test script runs every test file on disk, and names none that is gone", () => {
+	const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
+	const listed = pkg.scripts.test.split(/\s+/).filter((t) => t.startsWith("test/"));
+	const onDisk = readdirSync(join(here, "test")).filter((f) => f.endsWith(".test.mjs")).map((f) => `test/${f}`);
+	assert.deepEqual([...listed].sort(), [...onDisk].sort(), "a test that is not in `npm test` never runs — add it, or delete it");
+	assert.equal(new Set(listed).size, listed.length, "the script must not list a file twice");
+	for (const f of listed) assert.ok(existsSync(join(here, f)), `${f} is listed but does not exist`);
 });

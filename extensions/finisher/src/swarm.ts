@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { finisherDir } from "./types.ts";
+import { declaredVerdict } from "./evidence.ts";
 
 export const SWARM_SLOT_KEYS = ["priority1", "priority2", "priority3", "priority4", "priority5"] as const;
 export const SWARM_DEFAULT_CONCURRENCY = 5;
@@ -49,7 +50,13 @@ export interface SwarmOptions<T = unknown> {
 	maxAttempts?: number;
 	run: (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => Promise<SwarmTaskRun>;
 	onAttempt?: (attempt: SwarmAttempt) => void;
+	stopOnDeclaredAnswer?: boolean;
 }
+
+export const decisiveAnswer = (output: string): boolean => {
+	const verdict = declaredVerdict(output);
+	return verdict === "FAIL" || verdict === "UNVERIFIED";
+};
 
 export const swarmSlots = (patterns: string[]): SwarmSlot[] =>
 	patterns
@@ -83,16 +90,27 @@ const readJsonObject = (file: string): Record<string, unknown> => {
 	return {};
 };
 
-const readZenseJson = (cwd: string, name: string): Record<string, unknown> => readJsonObject(join(finisherDir(cwd), name));
+const readFinisherJson = (cwd: string, name: string): Record<string, unknown> => readJsonObject(join(finisherDir(cwd), name));
 
 export const readModelLadder = (cwd: string): string[] =>
-	[...ladderPatterns(readZenseJson(cwd, "models.json")), ...ladderPatterns(readZenseJson(cwd, "config.json"))].filter((m, i, all) => all.indexOf(m) === i).slice(0, SWARM_LADDER_MAX);
+	[...ladderPatterns(readFinisherJson(cwd, "models.json")), ...ladderPatterns(readFinisherJson(cwd, "config.json"))].filter((m, i, all) => all.indexOf(m) === i).slice(0, SWARM_LADDER_MAX);
 
 export const readSwarmConcurrency = (cwd: string, fallback = SWARM_DEFAULT_CONCURRENCY): number => {
-	const raw = readZenseJson(cwd, "config.json").swarmConcurrency;
+	const raw = readFinisherJson(cwd, "config.json").swarmConcurrency;
 	const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
 	if (!Number.isFinite(n) || n < 1) return fallback;
 	return Math.min(Math.floor(n), SWARM_MAX_CONCURRENCY);
+};
+
+export const concurrencyFor = (cwd: string, slotCount: number, taskCount: number): { concurrency: number; source: "config" | "slots" | "tasks" | "none" } => {
+	const configured = readFinisherJson(cwd, "config.json").swarmConcurrency;
+	const n = typeof configured === "number" ? configured : typeof configured === "string" ? Number(configured) : NaN;
+	const wanted = Number.isFinite(n) && n >= 1 ? Math.floor(n) : SWARM_DEFAULT_CONCURRENCY;
+	const capped = clampConcurrency(wanted, slotCount, taskCount);
+	if (!capped) return { concurrency: 0, source: "none" };
+	if (Number.isFinite(n) && n >= 1) return { concurrency: capped, source: "config" };
+	if (slotCount <= taskCount) return { concurrency: capped, source: "slots" };
+	return { concurrency: capped, source: "tasks" };
 };
 
 export const clampConcurrency = (requested: number | undefined, slotCount: number, taskCount: number): number => {
@@ -173,6 +191,7 @@ export const runSwarm = async <T = unknown>(tasks: SwarmTask<T>[], opts: SwarmOp
 					break;
 				}
 				result.failures.push(attempt);
+				if (opts.stopOnDeclaredAnswer && decisiveAnswer(run.output)) break;
 			}
 		}
 	};
@@ -197,6 +216,7 @@ export const fanOutPrompt = (instruction: string, taskId: string): string =>
 
 export const SWARM_ROUTING_GUIDELINE = [
 	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call finisher_swarm instead of serialising the work through yourself.",
+	"A fan-out report IS the evidence: act on its findings instead of re-reading what a worker already read or re-running what it already ran, and open a file yourself only when the report names a gap.",
 	"The swarm runs the configured model ladder (priority1..priority5 in .finisher/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
 	"A goal is only done when finisher_swarm verify returns VERDICT: PASS for it; on FAIL keep fixing the real cause and verify again, reporting only at the end.",
 ].join("\n");
@@ -212,11 +232,11 @@ export const buildFanOutPrompt = (args: FanOutArgs, subtask: { id: string; instr
 	if (args.mode === "verify")
 		return [
 			`You are swarm verifier ${subtask.id}. GOAL: ${args.goal ?? "(goal supplied by the main agent)"}`,
-			"This runs ONCE, at the end. Read what changed (git diff) and exercise the changed code directly — run the command, call the function, feed it the input that matters.",
+			"This runs ONCE, at the end. Read the change once with git diff, then run the smallest command that exercises the changed behaviour — do not re-read whole modules the diff already shows.",
 			"do not run the test suite and do not run a build as your evidence: a green suite is not proof, it is a claim you can borrow from someone else.",
 			"Judge the PROPERTY, not the example: does the bound hold for every input, is the ordering total, is the boundary exact, does the invariant survive?",
 			"If you cannot exercise the changed code directly, run NOTHING else and answer exactly: VERDICT: UNVERIFIED — then one line naming what a human must test by hand.",
-			"Never edit files; never fake a pass. Report each command you ran and its real result, then end with one line: VERDICT: PASS, VERDICT: FAIL, or VERDICT: UNVERIFIED plus the reason.",
+			"Never edit files; never fake a pass. For each command you ran, give the command and its exit status on its own line, then end with one line: VERDICT: PASS, VERDICT: FAIL, or VERDICT: UNVERIFIED plus the reason.",
 			retry,
 			"",
 			`Your slice (${subtask.id}): ${subtask.instruction}`,

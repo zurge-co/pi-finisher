@@ -1,5 +1,5 @@
 node_modules/
+.finisher/
 .pi/
-.zense/
 .DS_Store
 npm-debug.log*

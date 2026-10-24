@@ -18,7 +18,7 @@ import {
 } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
-const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-timeout-"));
+const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-timeout-"));
 
 const writeCfg = (cwd, cfg) => {
 	mkdirSync(join(cwd, ".finisher"), { recursive: true });
@@ -109,7 +109,7 @@ test("no timer survives a finished call, so a bounded tool cannot keep the proce
 	assert.ok(after <= before, `timeouts leaked: ${before} → ${after}`);
 });
 
-test("every zense tool and every rpc call is registered through a bound, not a raw await", () => {
+test("every finisher tool and every rpc call is registered through a bound, not a raw await", () => {
 	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
 	const registrations = tools.match(/pi\.registerTool\(/g) ?? [];
 	assert.ok(registrations.length >= 3, "every goal tool must still be registered");

@@ -12,7 +12,7 @@ test("subagentTimeout: per-role map + default fallback (no more env override)", 
 	assert.equal(subagentTimeout("unknown-role"), 300_000); });
 
 test("subagentTimeout: .finisher/config.json overrides built-in map, read fresh per call", () => {
-	const dir = mkdtempSync(join(tmpdir(), "zense-cfg-"));
+	const dir = mkdtempSync(join(tmpdir(), "finisher-cfg-"));
 	try {
 				assert.equal(subagentTimeout("verifier", dir), 600_000);
 		mkdirSync(join(dir, ".finisher"), { recursive: true });
@@ -37,8 +37,8 @@ test("subagentTimeout: .finisher/config.json overrides built-in map, read fresh 
 });
 
 test("subagentTimeout: cwd without config → falls back to the next dir (worktree → main repo)", () => {
-	const wt = mkdtempSync(join(tmpdir(), "zense-wt-"));
-	const main = mkdtempSync(join(tmpdir(), "zense-main-"));
+	const wt = mkdtempSync(join(tmpdir(), "finisher-wt-"));
+	const main = mkdtempSync(join(tmpdir(), "finisher-main-"));
 	try {
 		mkdirSync(join(main, ".finisher"), { recursive: true });
 		writeFileSync(join(main, ".finisher", "config.json"), JSON.stringify({ subagentTimeoutMs: { verifier: 800_000 } }));

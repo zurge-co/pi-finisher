@@ -44,7 +44,7 @@ export const buildVirtualModelDefinition = (opts: {
 }): Record<string, unknown> => ({
 	provider: opts.provider,
 	id: opts.id,
-	name: "Zense Ladder (auto)",
+	name: "finisher priority ladder (auto)",
 	thinkingLevels: LADDER_THINKING_LEVELS,
 	route(request: { reason: RouteReason; previous?: { model?: { provider?: string; id?: string } }; messages: readonly unknown[] }) {
 		const ladder = opts.ladder();
@@ -82,7 +82,7 @@ export const registerLadderModel = (opts: RegisterLadderOpts): boolean => {
 	opts.register({
 		provider: LADDER_PROVIDER,
 		id: LADDER_MODEL_ID,
-		name: "Zense Ladder (auto)",
+		name: "finisher priority ladder (auto)",
 		thinkingLevels: LADDER_THINKING_LEVELS,
 		route(request, extCtx) {
 			const find = (provider: string, id: string) => extCtx.modelRegistry.find(provider, id);

@@ -1,4 +1,4 @@
-const m = await import("../../extensions/zense-harness/index.ts");
+const m = await import("../../extensions/finisher/index.ts");
 const py = "def test_law():\n    assert clamp(9,5,5) == 5\n\ndef test_filler():\n    pass\n";
 const go = "func TestLaw(t *testing.T) {\n\tif x != 5 { t.Fatalf(1) }\n}\nfunc TestFiller(t *testing.T) {\n}\n";
 const kinds = m.analyzeTestFile(py, "pkg/x_test.py").map((f) => f.kind);

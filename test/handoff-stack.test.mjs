@@ -18,7 +18,7 @@ import {
 	stackSummary,
 } from "../extensions/finisher/index.ts";
 
-const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-handoff-"));
+const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-handoff-"));
 
 test("a line never exceeds the cap, whatever whitespace or length the input has", () => {
 	const inputs = ["", "   ", "x".repeat(5_000), "a b c ".repeat(2_000), "word\n\t\r  padded", "ก".repeat(HANDOFF_LINE_MAX * 3)];

@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { RETIRED_COMMANDS, SURFACE_COMMANDS, SURFACE_TOOLS, isLiveTool, isRetiredTool } from "../extensions/finisher/index.ts";
+import { RETIRED_COMMANDS, RETIRED_TOOLS, SURFACE_COMMANDS, SURFACE_TOOLS, isLiveTool, isRetiredTool } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const commandsSrc = () => readFileSync(join(here, "extensions/finisher/src/commands.ts"), "utf8");
@@ -46,14 +46,17 @@ test("retired names stay retired and never overlap the live surface", () => {
 	for (const c of ["approve", "gate", "longrun", "memory", "ext-config-show", "distill", "resume"]) assert.ok(RETIRED_COMMANDS.includes(c), `${c} must be retired`);
 	assert.deepEqual(SURFACE_COMMANDS.filter((c) => RETIRED_COMMANDS.includes(c)), [], "a name cannot be both live and retired");
 	for (const t of SURFACE_TOOLS) assert.equal(isLiveTool(t), true);
-	for (const t of ["zense_spec", "zense_adr", "zense_eval", "zense_review", "zense_longrun"]) assert.equal(isRetiredTool(t), true);
+	for (const t of RETIRED_TOOLS) assert.equal(isRetiredTool(t), true);
+	assert.deepEqual(RETIRED_TOOLS.filter((t) => isLiveTool(t)), [], "a retired tool can never be callable again");
 });
 
 test("no tool can ask a human: the ask surface is retired and the decision rule replaces it", () => {
 	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
-	assert.ok(!tools.includes("zense_ask"), "the human picker tool is gone");
-	assert.equal(isLiveTool("zense_ask"), false);
-	assert.equal(isRetiredTool("zense_ask"), true);
+	const askTool = RETIRED_TOOLS.find((t) => t.endsWith("ask"));
+	assert.ok(askTool, "the human picker must be listed as retired");
+	for (const t of RETIRED_TOOLS) assert.ok(!tools.includes(`name: "${t}"`), `${t} must not be registered`);
+	assert.equal(isLiveTool(askTool), false);
+	assert.equal(isRetiredTool(askTool), true);
 	const decisions = readFileSync(join(here, "extensions/finisher/src/decisions.ts"), "utf8");
 	assert.match(decisions, /DECISION NEEDED/);
 	assert.match(decisions, /Never stop to wait for an answer/);

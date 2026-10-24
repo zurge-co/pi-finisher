@@ -16,7 +16,7 @@ import {
 } from "../extensions/finisher/index.ts";
 
 const makeRepo = () => {
-	const base = mkdtempSync(join(tmpdir(), "zense-cycle-"));
+	const base = mkdtempSync(join(tmpdir(), "finisher-cycle-"));
 	const cwd = join(base, "repo");
 	mkdirSync(cwd, { recursive: true });
 	const git = (args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });

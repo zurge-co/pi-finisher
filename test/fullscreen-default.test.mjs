@@ -3,11 +3,11 @@ import test from "node:test";
 import { applyFullscreenDefault } from "../extensions/finisher/index.ts";
 
 test("absent tuiMode → set fullscreen while preserving existing keys", () => {
-	const r = applyFullscreenDefault(JSON.stringify({ theme: "dark", packages: ["npm:pi-zense"] }));
+	const r = applyFullscreenDefault(JSON.stringify({ theme: "dark", packages: ["npm:pi-finisher"] }));
 	assert.ok(r?.changed);
 	const obj = JSON.parse(r.text);
 	assert.equal(obj.theme, "dark");
-	assert.deepEqual(obj.packages, ["npm:pi-zense"]);
+	assert.deepEqual(obj.packages, ["npm:pi-finisher"]);
 	assert.equal(obj.tuiMode, "fullscreen");
 });
 

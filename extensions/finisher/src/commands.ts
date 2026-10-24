@@ -1,31 +1,58 @@
 import { Key } from "@earendil-works/pi-tui";
-import { existsSync, readFileSync } from "node:fs";
-import { basename, join, relative } from "node:path";
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { subagentLogPath } from "./subagent-log.ts";
-import { runRpcSubagent } from "./subagent-rpc.ts";
-import { SUBAGENT_ROLES, orphanRoleKeys, subagentTimeout } from "./subagent-config.ts";
-import { resolveModelPattern } from "./models.ts";
+import { existsSync } from "node:fs";
+import { relative } from "node:path";
+import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SURFACE_COMMANDS } from "./goal-run.ts";
-import { availableModelChoices, readModelsConfig, writeModelsConfig } from "./models.ts";
-import { type AcceptPending, type Escalate, type Flag, type LaunchSubagent, type OpenAgentsViewer, type Persist, type UpdateWidget, type ZensePick, type HarnessContext } from "./kit.ts";
-import { finisherDir, type State } from "./types.ts";
+import { availableModelChoices, ignoredModelKeys, modelsPath, readLadderSlots, writeLadderSlot } from "./models.ts";
+import { ladderLabel } from "./ladder-model.ts";
+import { readModelLadder } from "./swarm.ts";
+import { type HarnessContext } from "./kit.ts";
+
+export const ladderRows = (cwd: string): { key: string; pattern?: string }[] => readLadderSlots(cwd);
+
+export const ladderSummaryLine = (cwd: string): string => {
+	const ladder = readModelLadder(cwd);
+	return ladder.length ? `priority ladder: ${ladder.join(" > ")}` : "priority ladder: empty — sub-agents fall back to the main session model";
+};
+
+export const clearSlotLabel = (key: string): string => `🗑 clear ${key}`;
 
 export const registerCommands = (ctx: HarnessContext) => {
-	const state = ctx.state;
 	const pi = ctx.pi;
-	const launchSubagent = ctx.launchSubagent;
-	const flag = ctx.flag;
 	const finisherPick = ctx.finisherPick;
 	const openAgentsViewer = ctx.openAgentsViewer;
 
-	pi.registerShortcut(Key.ctrl("_"), {
-		description: "Zense: watch sub-agent runs live (live tail)",
-		handler: (ctx) => openAgentsViewer(ctx),
-	});
+	const setSlot = async (ctx: ExtensionContext, key: string): Promise<void> => {
+		const choices = availableModelChoices(ctx);
+		const current = readLadderSlots(ctx.cwd).find((s) => s.key === key)?.pattern;
+		const sel = await finisherPick(
+			ctx,
+			`▚ ${key} — which model does this priority run on?`,
+			[
+				...(current ? [{ value: "__clear__", label: clearSlotLabel(key), description: `currently ${current} — leave this rung empty` }] : []),
+				{ value: "__custom__", label: "✏️ type a pattern yourself", description: "e.g. openai/gpt-4o-mini or sonnet:high" },
+				...choices.map((c) => ({ value: c.pattern, label: c.label, description: c.description })),
+			],
+			choices.length ? `${choices.length} models from the catalogue · lower rungs only run when a higher one fails` : "catalogue empty — pick 'type a pattern yourself'",
+		);
+		if (!sel) return;
+		if (sel === "__clear__") {
+			writeLadderSlot(ctx.cwd, key, null);
+			ctx.ui.notify(`✅ ${key} cleared — sub-agents keep this rung unused`, "info");
+			return;
+		}
+		let pattern = sel;
+		if (sel === "__custom__") {
+			const typed = (await ctx.ui.input(`model pattern for ${key}:`, "provider/model-id"))?.trim();
+			if (!typed) return ctx.ui.notify("cancelled — ladder unchanged", "info");
+			pattern = typed;
+		}
+		writeLadderSlot(ctx.cwd, key, pattern);
+		ctx.ui.notify(`✅ ${key}: ${pattern} — wrote ${relative(ctx.cwd, modelsPath(ctx.cwd))} (sub-agents pick it up on their next run)`, "info");
+	};
 
 	pi.registerCommand("finisher", {
-		description: `Zense: ${SURFACE_COMMANDS.map((c) => `/finisher ${c}`).join(" | ")} — choose which model each sub-agent role runs on`,
+		description: `finisher: ${SURFACE_COMMANDS.map((c) => `/finisher ${c}`).join(" | ")} — set the model priority ladder every sub-agent picks from`,
 		getArgumentCompletions: (prefix) =>
 			[...SURFACE_COMMANDS]
 				.filter((s) => s.startsWith(prefix))
@@ -34,60 +61,44 @@ export const registerCommands = (ctx: HarnessContext) => {
 			const [sub] = args.trim().split(/\s+/);
 			if (sub !== "models") return ctx.ui.notify("usage: /finisher models", "info");
 			if (sub === "models") {
-				const cfgPath = join(finisherDir(ctx.cwd), "models.json");
-				const cfg = readModelsConfig(ctx.cwd);
+				const rows = ladderRows(ctx.cwd);
+				const ladder = readModelLadder(ctx.cwd);
 				const mainModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(no active model)";
-				const roles: readonly string[] = [...SUBAGENT_ROLES];
-				const orphans = orphanRoleKeys(cfg, roles);
+				const ignored = ignoredModelKeys(ctx.cwd);
+				const cfgPath = modelsPath(ctx.cwd);
 				if (ctx.mode !== "tui") {
 					const lines = [
-						`🧪 sub-agent models — config: ${existsSync(cfgPath) ? relative(ctx.cwd, cfgPath) : "(no .finisher/models.json — every role uses the main model)"}`,
+						`▚ priority ladder — config: ${existsSync(cfgPath) ? relative(ctx.cwd, cfgPath) : "(no .finisher/models.json — every sub-agent uses the main model)"}`,
 						`main agent: ${mainModel}`,
-						...roles.map((r) => `  ${r}: ${cfg[r] ? cfg[r] + " (from config)" : mainModel + " (fallback)"}`),
-						"edit by creating .finisher/models.json, e.g. { \"verifier\": \"openai/gpt-4o-mini\" } — or open the TUI and use /finisher models for an interactive picker",
-						...(orphans.length ? [`⚠ keys with no role any more (ignored, delete when you like): ${orphans.join(", ")}`] : []),
+						...rows.map((r, i) => `  ${r.key}: ${r.pattern ?? "— (unused)"}${i === 0 && r.pattern ? "  ← first pick" : ""}`),
+						`effective order: ${ladder.length ? ladder.join(" > ") : "(none — main model)"}`,
+						"a sub-agent runs the highest-priority rung that is set; the next rung runs only when that one fails.",
+						"edit by creating .finisher/models.json, e.g. { \"priority1\": \"anthropic/claude-sonnet\", \"priority2\": \"openai/gpt-5\" } — or open the TUI and use /finisher models",
+						...(ignored.length ? [`⚠ keys with no meaning here (ignored, delete when you like): ${ignored.join(", ")}`] : []),
 					];
 					ctx.ui.notify(lines.join("\n"), "info");
 					return;
 				}
-				const role = await finisherPick(
+				const key = await finisherPick(
 					ctx,
-					"🧪 pick the sub-agent role to set a model for",
-					roles.map((r) => ({
-						value: r,
-						label: r,
-						description: cfg[r] ? `${cfg[r]} (from config)` : `${mainModel} (fallback)`,
+					"▚ pick the priority rung to set",
+					rows.map((r, i) => ({
+						value: r.key,
+						label: `${i + 1}. ${r.key}`,
+						description: r.pattern ?? "(unused)",
 					})),
-					`main agent: ${mainModel}`,
+					`${ladderSummaryLine(ctx.cwd)} · main agent: ${mainModel} · sub-agents auto-pick from the ladder`,
 				);
-				if (!role) return;
-				const choices = availableModelChoices(ctx);
-				const sel = await finisherPick(
-					ctx,
-					`🧪 pick a model for role "${role}"`,
-					[
-						{ value: "__default__", label: "↩️ use the main model (remove override)", description: `falls back to ${mainModel}` },
-						{ value: "__custom__", label: "✏️ type a pattern yourself", description: "e.g. openai/gpt-4o-mini or sonnet:high" },
-						...choices.map((c) => ({ value: c.pattern, label: c.label, description: c.description })),
-					],
-					choices.length ? `${choices.length} models from the catalogue` : "catalogue empty — pick 'type a pattern yourself'",
-				);
-				if (!sel) return;
-				if (sel === "__default__") {
-					writeModelsConfig(ctx.cwd, role, null);
-					ctx.ui.notify(`✅ ${role}: override removed — the next sub-agent run falls back to the main model (${mainModel})`, "info");
-					return;
-				}
-				let pattern = sel;
-				if (sel === "__custom__") {
-					const typed = (await ctx.ui.input(`model pattern for "${role}":`, "provider/model-id"))?.trim();
-					if (!typed) return ctx.ui.notify("cancelled — model unchanged", "info");
-					pattern = typed;
-				}
-				writeModelsConfig(ctx.cwd, role, pattern);
-				ctx.ui.notify(`✅ ${role}: ${pattern} — wrote ${relative(ctx.cwd, cfgPath)} (takes effect on the next sub-agent run)`, "info");
+				if (!key) return;
+				await setSlot(ctx, key);
+				const after = readModelLadder(ctx.cwd);
+				ctx.ui.notify(`▚ ${ladderLabel(after)}${ignored.length ? `\n⚠ ignored keys: ${ignored.join(", ")}` : ""}`, "info");
 			}
 		},
 	});
 
+	pi.registerShortcut(Key.ctrl("_"), {
+		description: "finisher: open a sub-agent's live session — ←/→ switches between the running agents",
+		handler: (ctx) => openAgentsViewer(ctx),
+	});
 };

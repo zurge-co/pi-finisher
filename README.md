@@ -37,36 +37,94 @@ goal (confirmed once)
 | `finisher_goal` | The single confirmation. Then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. |
 | `finisher_steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
 | `finisher_swarm` | `explore` (read-only fan-out), `verify` (independent verifiers), `code` (one git worktree + branch per slice, merged back deterministically, overlapping paths never merged silently). |
-| `finisher_ask` | Multiple-choice picker — only for a goal/UI question the agent genuinely cannot decide. |
 
 ## Watching it run
 
-Every concurrent agent gets its own row in the widget — tag, model, slot, elapsed time and live
-tail — so five agents look like five lines, not five keypresses:
+One framed HUD, drawn below the editor and measured against the real terminal width (pi hands the
+width to the render, so the box never overflows). While a goal is open or an agent is working it is a
+box: one line for the goal, one row per live agent (tag, model, slot, elapsed, live tail). When
+nothing is running it collapses to a single idle line, so a quiet session costs one row, not a panel.
 
 ```
-ZENSE ▸ IMPLEMENTATION · turns 12 · tok 84k · 🧪 5 agents live
-AGENTS ▸ 5 running
-SWA   ▶ swarm   s1 provider/a  42s  fixing the scheduler bound…
-SWA2  ▶ swarm   s2 provider/b  41s  reading src/swarm.ts…
-GRAD  ▶ grader              12s  running probes
+╭─ ▚ finisher ─ goal round 2 ─ 5 live ─ turns 12 · tok 84k ╮
+│ ▸ make the scheduler prove its bound, not assert it
+│ SWA  ▶ swarm    slot1 provider/a   42s  fixing the scheduler bound…
+│ SWA2 ▶ swarm    slot2 provider/b   41s  reading src/swarm.ts…
+│ VER  ▶ verifier        provider/c   12s  $ npm test -- swarm-scheduler
+╰────────────────────────────────────────────────────────╯
 ```
+
+Idle:
+
+```
+▚ finisher · idle · turns 3 · tok 12k
+```
+
+### One page per sub-agent
+
+**Click a row in the HUD** (or press **`ctrl+_`**) and you are inside a sub-agent's own session — not a
+status row: the **task it was given** (input), everything **steered into it** while it ran, and its
+**live output** (model text, every tool call with its **full command**, and each tool's own output).
+**`t`** folds or unfolds the tool output — the command itself is always on screen, so a folded page still
+tells you exactly what the agent ran. **←/→** moves between sub-agents (live ones first, then finished
+ones), **1-9** jumps straight to one, and the tab strip plus the header always say which one you are
+looking at:
+
+```
+▚ sub-agent session — 2/3 · VERIFIER · ▶ 12s · provider/c · c2 · 1 steer
+▚ pages 1:SWARM s1 provider/a ▶ · [2:VERIFIER c2 provider/c ▶] · 3:SWARM s3 ✓
+.finisher/subagents/…-verifier.log • live — closing this page never interrupts the run
+  ▸ task — what this agent was told
+    prove case c1: the scheduler bound holds for every input
+  ▸ steered (1) — what was pushed in while it ran
+    → steer: the bound is 16, not 5
+  ▸ session — live output · 3 tool call(s) · t = show tool output
+  ────────────────────────
+  reading src/swarm.ts
+  ✓ bash — npm test -- swarm-scheduler 412ms
+      ▸ 6 line(s) of output hidden — press t to show
+  ✓ read — extensions/finisher/src/swarm.ts 22ms
+      ▸ 1 line(s) of output hidden — press t to show
+```
+
+Press `t` and those blocks unfold in place:
+
+```
+  ✓ bash — npm test -- swarm-scheduler 412ms
+      ℹ tests 8
+      ℹ pass 8
+      ℹ fail 0
+  ✗ bash — npm run typecheck 903ms
+      src/tools.ts(15,24): error TS2305: has no exported member
+```
+
+A tool call that failed is marked `✗`, a finished one `✓`, a live one `⚙` — and a large output keeps its
+newest lines with `… N earlier line(s) hidden`, so one noisy command can never push the page off screen.
+
+↑↓ scroll, `PgUp`/`PgDn` page, `g`/`G` jump, `t` folds tool output, `space` peeks at the chat, `Esc` closes — the agent keeps
+running. Outside the TUI the same page degrades to a notification listing every agent with its task,
+steer count and log path.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/finisher models` | choose which model each sub-agent role (`swarm`, `verifier`) runs on |
+| `/finisher models` | set the **model priority ladder** (`priority1` … `priority5`) — there are no per-role overrides: every sub-agent auto-picks from the ladder |
 
 There is nothing else to switch: fresh context, handoff and verification are automatic.
 
 ## Configuration
 
-`.finisher/models.json`
+`.finisher/models.json` — the priority ladder. Rung 1 is what a sub-agent runs; later rungs are
+failover, and a gap is skipped:
 
 ```json
-{ "priority": ["anthropic/claude-sonnet", "openai/gpt-5", "google/gemini-pro"] }
+{ "priority1": "anthropic/claude-sonnet", "priority2": "openai/gpt-5", "priority3": "google/gemini-pro" }
 ```
+
+An explicit slot model (a swarm slot) outranks the ladder; with no ladder at all a sub-agent falls
+back to the main session model. A leftover per-role key (`swarm`, `verifier`, …) never selects a
+model any more — it is reported as ignored.
 
 `.finisher/config.json`
 
@@ -91,8 +149,14 @@ to run the test suite as proof. Three outcomes:
 
 ## Fresh context and the handoff stack
 
-Every finished task resets the main session's context on purpose (`agent_before_settle` → a
-retain-none compaction entry). There is no switch: it always happens.
+A context reset happens at exactly one moment: when a **confirmed goal closes** (`agent_before_settle`
+→ one compaction entry, only once per goal). Asking the agent a question, getting an answer, or any
+other reply that is not the end of a goal run never compacts anything — the transcript you just read
+stays there.
+
+When a goal does close, the compaction keeps every entry from the **last user message onward**, so the
+request and the report that answered it remain readable (and in context) while the noisy middle is
+summarized. Everything before that is replaced by the handoff stack below.
 
 What survives is **not** a transcript or a statistic — it is the handoff stack in
 `.finisher/handoff.jsonl`, and it is scoped to **one goal**: notes carry the goal they were learned
@@ -123,7 +187,8 @@ That table is **not** the list of what the harness accepts — it prefers `jev` 
 otherwise takes whichever classifier `getAvailableOfType("classifier")` returns. With none available
 the gate switches itself off: notes are dropped, no nagging, and the run continues.
 
-There is no switch to turn the context reset off — it always happens at a task boundary.
+There is no switch to turn the context reset off — it fires once per closed goal, and never on a plain
+reply.
 
 ## Coders prove their own slice
 
@@ -183,7 +248,7 @@ whenever one is missing or invalid.
 | call | bound |
 |---|---|
 | `bash` | injected if absent (default 900 s, override with `toolTimeoutMs` in `.finisher/config.json`) |
-| `finisher_goal` / `finisher_swarm` / `finisher_steer` / `finisher_ask` | wrapped, reports `⏱ … exceeded its Ns limit` instead of hanging |
+| `finisher_goal` / `finisher_swarm` / `finisher_steer` | wrapped, reports `⏱ … exceeded its Ns limit` instead of hanging |
 | every RPC call to a sub-agent (`start`, `promptAndWait`, `steer`, `getMessages`, …) | its own deadline |
 | every `git` subprocess | 120 s, `SIGKILL` on expiry |
 
@@ -209,7 +274,7 @@ pi-finisher/
 │   ├── index.ts                     # pi wiring: hooks, tools, commands, TUI
 │   └── src/                         # pure helpers (goal driver, swarm, verify loop, panel, …)
 ├── test/                            # node:test suites
-└── themes/                          # Zense dark theme
+└── themes/                          # finisher dark theme (violet / cyan / mint on graphite)
 ```
 
 Theme (optional): `/settings` → theme → `finisher`.

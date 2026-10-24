@@ -2,7 +2,7 @@ import { Container, Key, Markdown, SelectList, Spacer, Text, matchesKey, truncat
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createEscGuard } from "./esc-guard.ts";
 import { panelize } from "./models.ts";
-import { type AskClarify, type AskRejectReason, type ScrollKeyAction, type ZenseCustom, type ZensePick, type HarnessContext } from "./kit.ts";
+import { type AskClarify, type AskRejectReason, type FinisherCustom, type FinisherPick, type ScrollKeyAction, type HarnessContext } from "./kit.ts";
 
 export const createGui = (ctx: HarnessContext) => {
 	const pi = ctx.pi;

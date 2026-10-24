@@ -16,8 +16,8 @@ export const SUBAGENT_EXCLUDE_TOOLS: Record<string, string[]> = {
 };
 
 export const SUBAGENT_STRIP_FLAGS: Record<string, string[]> = {
-	swarm: ["--no-themes", "--no-prompt-templates"],
-	verifier: ["--no-themes", "--no-prompt-templates"],
+	swarm: ["--no-themes", "--no-prompt-templates", "--no-mcp", "--no-skills"],
+	verifier: ["--no-themes", "--no-prompt-templates", "--no-mcp", "--no-skills"],
 };
 
 export const SUBAGENT_TIMEOUT_MS: Record<string, number> = {
@@ -90,7 +90,7 @@ export const buildProviderMissingGuidance = (role: string, providerId: string): 
 
 export const FINISHER_TOOL_GLOB = "finisher_*";
 
-export const withZenseToolGlob = (excludeTools?: string[]): string[] => {
+export const withFinisherToolGlob = (excludeTools?: string[]): string[] => {
 	const base = (excludeTools ?? []).filter((t) => t !== FINISHER_TOOL_GLOB);
 	return [FINISHER_TOOL_GLOB, ...base];
 };
@@ -99,7 +99,7 @@ export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTo
 	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : undefined);
 	const argv = ["PI_FINISHER_SUBAGENT=1", "pi", "--mode", "json"];
 	if (flags?.length) argv.push(...flags);
-	if (excludeTools?.length) argv.push("--exclude-tools", withZenseToolGlob(excludeTools).join(","));
+	if (excludeTools?.length) argv.push("--exclude-tools", withFinisherToolGlob(excludeTools).join(","));
 	if (modelPattern) argv.push("--model", modelPattern);
 	argv.push(task);
 	return argv;
@@ -107,19 +107,10 @@ export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTo
 
 export const buildRpcSubagentArgs = (excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {
 	const flags = stripFlags ?? (role ? SUBAGENT_STRIP_FLAGS[role] : []);
-	return [...flags, "--exclude-tools", withZenseToolGlob(excludeTools).join(",")];
+	return [...flags, "--exclude-tools", withFinisherToolGlob(excludeTools).join(",")];
 };
 
-
-export const orphanRoleKeys = (cfg: Record<string, unknown>, roles: readonly string[]): string[] =>
-	Object.keys(cfg).filter((k) => !roles.includes(k) && !isLadderKey(k));
 
 export const LADDER_KEY_RX = /^priority([1-5]?|)$/;
 
 export const isLadderKey = (key: string): boolean => LADDER_KEY_RX.test(key) || key === "priority";
-
-export const modelForRole = (cfg: Record<string, unknown>, role: string): string | undefined => {
-	if (!isSubagentRole(role)) return undefined;
-	const v = cfg[role];
-	return typeof v === "string" && v.trim() ? v.trim() : undefined;
-};

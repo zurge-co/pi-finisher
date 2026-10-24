@@ -17,7 +17,7 @@ import {
 } from "../extensions/finisher/index.ts";
 
 const repo = (models, config) => {
-	const dir = mkdtempSync(join(tmpdir(), "zense-surface-"));
+	const dir = mkdtempSync(join(tmpdir(), "finisher-surface-"));
 	mkdirSync(join(dir, ".finisher"), { recursive: true });
 	if (models !== undefined) writeFileSync(join(dir, ".finisher", "models.json"), JSON.stringify(models));
 	if (config !== undefined) writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(config));

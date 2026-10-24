@@ -8,6 +8,8 @@ export interface PanelRun {
 	model?: string;
 	slotId?: string;
 	streamTail?: string;
+	prompt?: string;
+	steers?: { at: number; mode: "steer" | "followUp"; message: string }[];
 }
 
 export interface PanelRow {
@@ -46,30 +48,41 @@ export const clip = (s: string, max: number): string => {
 
 export const liveRuns = (runs: PanelRun[]): PanelRun[] => runs.filter((r) => r.status === "running");
 
-export const panelRows = (runs: PanelRun[], opts: PanelOptions = {}): PanelRow[] => {
+export interface PanelEntry {
+	row: PanelRow;
+	index: number;
+}
+
+export const panelRowEntries = (runs: PanelRun[], opts: PanelOptions = {}): PanelEntry[] => {
 	const now = opts.now ?? Date.now();
 	const finishedKeep = opts.finishedKeep ?? 3;
-	const live = runs.filter((r) => r.status === "running");
-	const finished = runs.filter((r) => r.status !== "running").slice(-finishedKeep);
+	const indexed = runs.map((run, index) => ({ run, index }));
+	const live = indexed.filter((e) => e.run.status === "running");
+	const finished = indexed.filter((e) => e.run.status !== "running").slice(-finishedKeep);
 	const merged = [...live, ...(opts.showFinished === false ? [] : finished)];
 	const seen = new Map<string, number>();
-	return merged.map((r) => {
+	return merged.map(({ run: r, index }) => {
 		const key = `${r.role}:${r.model ?? ""}`;
 		const n = (seen.get(key) ?? 0) + 1;
 		seen.set(key, n);
 		const tag = `${r.role.slice(0, 3).toUpperCase()}${n > 1 ? n : ""}`;
 		const liveRow = r.status === "running";
 		return {
-			tag,
-			role: r.role,
-			...(r.slotId ? { slot: r.slotId } : {}),
-			...(r.model ? { model: r.model } : {}),
-			state: liveRow ? "▶" : r.status === "done" ? "✓" : "✗",
-			...(liveRow ? { elapsed: elapsedLabel(now - (r.startedAt ?? r.at)) } : r.summary ? { tail: clip(r.summary, opts.maxTail ?? 40) } : {}),
-			...(liveRow && r.streamTail ? { tail: clip(r.streamTail, opts.maxTail ?? 40) } : {}),
+			index,
+			row: {
+				tag,
+				role: r.role,
+				...(r.slotId ? { slot: r.slotId } : {}),
+				...(r.model ? { model: r.model } : {}),
+				state: liveRow ? "▶" : r.status === "done" ? "✓" : "✗",
+				...(liveRow ? { elapsed: elapsedLabel(now - (r.startedAt ?? r.at)) } : r.summary ? { tail: clip(r.summary, opts.maxTail ?? 40) } : {}),
+				...(liveRow && r.streamTail ? { tail: clip(r.streamTail, opts.maxTail ?? 40) } : {}),
+			},
 		};
 	});
 };
+
+export const panelRows = (runs: PanelRun[], opts: PanelOptions = {}): PanelRow[] => panelRowEntries(runs, opts).map((e) => e.row);
 
 export const formatPanelRow = (row: PanelRow, width = 100, maxTail = 40): string => {
 	const head = `${row.tag.padEnd(5)} ${row.state} ${row.role.padEnd(ROLE_WIDTH).slice(0, ROLE_WIDTH)}`;

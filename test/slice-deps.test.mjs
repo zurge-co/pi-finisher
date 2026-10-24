@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { detectTestCommand, parseWorkerTests, buildCodeWorkerPrompt, linkDeps, excludeInWorktree } from "../extensions/finisher/index.ts";
 
 const makeRepo = () => {
-	const base = mkdtempSync(join(tmpdir(), "zense-slice-"));
+	const base = mkdtempSync(join(tmpdir(), "finisher-slice-"));
 	const cwd = join(base, "repo");
 	mkdirSync(cwd, { recursive: true });
 	const git = (args, at = cwd) => execFileSync("git", args, { cwd: at, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -59,7 +59,7 @@ test("linking the dependency keeps the slice's diff and the merge clean", () => 
 });
 
 test("linking is skipped safely when there is nothing to link", () => {
-	const base = mkdtempSync(join(tmpdir(), "zense-nolink-"));
+	const base = mkdtempSync(join(tmpdir(), "finisher-nolink-"));
 	try {
 		assert.equal(existsSync(join(base, "node_modules")), false, "no deps in the repo → nothing happens");
 		const target = join(base, "wt");

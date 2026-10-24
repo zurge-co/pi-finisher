@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendHandoff, clearOtherGoals, goalKey, handoffForGoal, handoffInjection, readHandoff, writeHandoff } from "../extensions/finisher/index.ts";
 
-const tmpRepo = () => mkdtempSync(join(tmpdir(), "zense-goal-scope-"));
+const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-goal-scope-"));
 
 test("a note carries the goal it was learned in", () => {
 	const cwd = tmpRepo();

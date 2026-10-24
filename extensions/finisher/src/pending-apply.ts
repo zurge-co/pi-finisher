@@ -1,7 +1,7 @@
 import { gitOk } from "./worktree.ts";
 import { type Spec } from "./types.ts";
 
-export const NOT_ZENSE = ":!.finisher";
+export const HARNESS_STATE_EXCLUDE = ":!.finisher";
 
 export const sanitizeSubject = (title: string): string => {
 	const oneLine = (title || "").replace(/\s+/g, " ").trim();
@@ -12,7 +12,7 @@ export const sanitizeSubject = (title: string): string => {
 export const isGitRepo = (cwd: string): boolean => gitOk(["rev-parse", "--is-inside-work-tree"], cwd).ok;
 
 export const uncommittedChanges = (cwd: string): string[] => {
-	const r = gitOk(["status", "--porcelain", "--", ".", NOT_ZENSE], cwd);
+	const r = gitOk(["status", "--porcelain", "--", ".", HARNESS_STATE_EXCLUDE], cwd);
 	if (!r.ok) return [];
 	return r.out.split("\n").map((s) => s.trimEnd()).filter(Boolean);
 };
@@ -23,9 +23,9 @@ export const headOf = (cwd: string): string | undefined => {
 };
 
 export const changePathsSince = (cwd: string, baseline?: string): string[] => {
-	const args = baseline ? ["diff", "--name-only", baseline, "--", ".", NOT_ZENSE] : ["diff", "--name-only", "--", ".", NOT_ZENSE];
+	const args = baseline ? ["diff", "--name-only", baseline, "--", ".", HARNESS_STATE_EXCLUDE] : ["diff", "--name-only", "--", ".", HARNESS_STATE_EXCLUDE];
 	const tracked = gitOk(args, cwd);
-	const untracked = gitOk(["ls-files", "--others", "--exclude-standard", "--", ".", NOT_ZENSE], cwd);
+	const untracked = gitOk(["ls-files", "--others", "--exclude-standard", "--", ".", HARNESS_STATE_EXCLUDE], cwd);
 	const all = [tracked.ok ? tracked.out : "", untracked.ok ? untracked.out : ""].join("\n");
 	return all.split("\n").map((s) => s.trim()).filter((s, i, arr) => !!s && arr.indexOf(s) === i);
 };
@@ -44,7 +44,7 @@ export interface CommitResult {
 }
 
 export const commitWorkingTree = (cwd: string, message: string): CommitResult => {
-	const add = gitOk(["add", "-A", "--", ".", NOT_ZENSE], cwd);
+	const add = gitOk(["add", "-A", "--", ".", HARNESS_STATE_EXCLUDE], cwd);
 	if (!add.ok) return { ok: false, msg: `git add failed: ${add.err}` };
 	if (gitOk(["diff", "--cached", "--quiet"], cwd).ok) return { ok: true, msg: "nothing to commit" };
 	const cm = gitOk(["commit", "-m", message, "--no-verify"], cwd);

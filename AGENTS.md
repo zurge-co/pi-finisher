@@ -36,7 +36,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `extensions/finisher/index.ts` | Entry point: the `HarnessContext` wiring, session hooks, the tool-timeout `tool_call` hook, hygiene `tool_result` check |
 | `extensions/finisher/src/` | All helpers — one concern per file (map below) |
 | `test/*.test.mjs` | `node:test` suites; named imports from the entry point; a few read module source for regression guards |
-| `themes/` | Zense dark theme |
+| `themes/` | The finisher dark theme (violet / cyan / mint on graphite) |
 | `scripts/release.sh` | Release script (`npm run release`) |
 
 ## `extensions/finisher/src/` module map
@@ -46,44 +46,44 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`, `Tracker`) + `finisherDir` |
 | `kit.ts` | `HarnessContext` — the shared plumbing type every kit receives |
 | `state-box.ts` | Mutable state holder (`createStateBox`) so kits see one live `State` |
-| `panel-widget.ts` | The live widget: `updateWidget` (status line + one row per running agent), `rescheduleTicker` |
-| `agent-panel.ts` | Pure panel rendering: `panelRows`/`panelLines`/`panelTickMs`, `clip`, `elapsedLabel`, `streamTail` |
+| `panel-widget.ts` | Wires the HUD into pi: `updateWidget` pushes a render component (pi supplies the real width) below the editor, deduped by `hudSignature`; the same component handles a **click on a row** and opens that run's page (`handleMouse` → `openAgentSession`); `rescheduleTicker`, `widgetVisible`, `activeRun` |
+| `hud.ts` | Pure HUD: `hudFrames`/`hudLines` (framed box while a goal/agents are live, one idle line otherwise), `hudPaint`/`styledHudLines` (palette by frame kind, text unchanged), `hudSignature` (change detection), `hudRowEntries`/`hudRows`, `hudRender`/`hudHitMap` (each painted line → the run index it draws), `boxTop`/`boxLine`/`boxBottom` |
+| `agent-panel.ts` | Pure row rendering shared by the HUD and the tail viewer: `panelRowEntries`/`panelRows`/`panelLines`/`panelTickMs`, `clip`, `elapsedLabel`, `streamTail` |
 | `subagent-launch.ts` | `launchSubagent`: one RPC sub-agent per role (timeout, cancel, live tail, model override) + handoff capture + provider-missing auto-heal |
-| `subagent-runner.ts` | `runSubagent`: spawn `pi --mode json`, stream/kill/timeout, JSONL log under `.finisher/subagents/` (+ `fmtTok`) |
 | `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes, provider diagnosis |
 | `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
-| `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `pickSlot`, `runSwarm` retry/failover |
+| `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `concurrencyFor` (says whether config/slots/tasks limited it), `pickSlot`, `runSwarm` retry/failover with `stopOnDeclaredAnswer`, fan-out prompts |
 | `swarm-code.ts` | Slice planning/ids, worker prompt, `FILES:` parse, overlap detection, merge plan |
-| `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), bounded rounds (`nextVerifyRound`), report render |
+| `evidence.ts` | Reading a verifier's output: `extractCommands` (each command bound to *its own* exit status), `cellExitCode`, `declaredVerdict`, `stripFences`/`unclaimedStatus` |
+| `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), the bounded loop (`decideOnce`, `evidenceFingerprint`, `recordEvidence`, `MAX_LOOP_BATCHES`), report render |
 | `goal-driver.ts` | The confirmed-goal driver: finish / fix / stop, round bookkeeping |
 | `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys |
 | `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, the one-shot confirm prompt) |
 | `code-hygiene.ts` | Comment/length scanner (string- and regex-aware) + the rule text given to agents |
+| `test-quality.ts` | Filler-test detector (`no-assertion` / `tautology` / `shape-only`) used by the hygiene gate |
+| `review-file.ts` | One written file's review: hygiene violations + weak tests in a single message |
 | `hygiene-hook.ts` | The `tool_result` enforcement hook |
 | `gui.ts` | TUI dialogs: `finisherCustom`, overlay sizes, `finisherPick`, ext-config checkbox, clarify questions |
-| `viewers.ts` | Live sub-agent tail viewer + `openAgentsViewer` |
-| `tools.ts` | `finisher_ask`, `finisher_swarm`, `finisher_goal` registration |
-| `commands.ts` | `/finisher …` command + per-role ext-config commands, `runDistill`, `resumeZense` |
-| `spec-flow.ts` | `commitSpec`, `approveCurrentSpec`, pending-apply accept |
-| `spec-changes.ts` | Spec diff → change summary, spec markdown, `syncApprovedSpecFiles`, `applyFullscreenDefault` |
+| `viewers.ts` | The sub-agent session page: one page per run (task input + steers + live output), ←/→ paging, 1-9 jumps, ↑↓ scroll, tab strip of every agent, `openAgentSession`/`openAgentsViewer`, non-TUI text fallback |
+| `agent-session.ts` | Pure paging + page text: `orderedSessionRuns`, `stepSessionIndex`, `sessionLabel`/`sessionTitle`/`sessionTabs`, `sessionBody`, `recordSteerOnRun`, `sessionSummaryLine` |
+| `tools.ts` | `finisher_goal`, `finisher_swarm`, `finisher_steer` registration (every tool wrapped in a timeout bound) |
+| `commands.ts` | `/finisher models` — the priority-ladder editor (`setSlot`), the `ctrl+_` live-tail shortcut, `ladderRows`, `ladderSummaryLine` |
 | `worktree.ts` | Bounded `gitOk`, `excludeFromGitStatus`, `linkDeps` (slice deps), `excludeInWorktree` |
 | `pending-apply.ts` | Cycle bookkeeping: `changePathsSince`, `discardSinceBaseline`, `commitWorkingTree` |
-| `resume.ts` | `/finisher resume` disk discovery |
 | `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |
-| `evidence.ts` | Check probes, repo facts, git change summary, `lintSpecChecks` |
-| `eval-review.ts` | Grader/reviewer contracts (still used by the verify path's prompts) |
-| `spec-draft.ts` | Requirements-output parsing + quality gate (used by the compile path) |
-| `models.ts` | Per-role model config, picker choices, `panelize` |
+| `models.ts` | The model contract: `readLadderSlots`/`writeLadderSlot` (priority1..5), `resolveSubagentModel` (**ladder first, no per-role keys**), `ignoredModelKeys`, `availableModelChoices` (the virtual ladder model is filtered out), `panelize` |
 | `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
-| `decompose.ts` | Planner subtasks / draft merge (kept for the compile path) |
-| `ask.ts` | `finisher_ask` policy scanning + answer formatting |
 | `handoff-stack.ts` | The cross-task knowledge stack: what survives a context reset (dedupe, cap, one-line condensation) |
 | `handoff-classify.ts` | The keep/drop verdict (classifier or chat ask) |
 | `handoff-model.ts` | The `handoff` ladder slot: read it, route it to classify() or an ask |
 | `decisions.ts` | `DECISION NEEDED` capture + the report at goal done |
 | `fullscreen.ts` | `tuiMode` default helper (was inside the deleted spec-changes) |
-| `fresh-context.ts` | The task-boundary reset: config switch, retain-none summary, status line |
-| `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort |
+| `fresh-context.ts` | The goal-boundary reset: `freshResetDecision` (fires once per closed goal, never on a plain reply), `lastUserEntryId` (keeps the human's tail), `shouldReset`, summary/directive, status line |
+| `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort, `toolEventFrom` (args + result, not just a name) |
+| `tool-log.ts` | The sub-agent page's tool blocks: `toolTarget` (full command / path / pattern), `toolHeadline`, log encoding (`encodeToolEvent`), `parseLogItems` + `renderLogItems` (fold/unfold, bounded output) |
+| `budget.ts` | One verify pass vs the tool cap: `effortFor` (verify always 1 attempt), `wavesFor`, `swarmWallMs`, `budgetFits`, `budgetNote` |
+| `compaction-guard.ts` | `compactionHold`/`reportUnread`: an unread `halted`/`needs-human` report is never compacted away before the human replies |
+| `handoff-gate.ts` | The handoff stack is parked: `HANDOFF_ENABLED = false`, `handoffStackFor` returns `[]`, `handoffInjectionFor` returns `undefined` |
 | `subagent-log.ts` | Sub-agent log paths + `fmtTok` |
 | `ladder-model.ts` | The `finisher/auto` virtual model that routes each request across the priority ladder |
 | `timeout.ts` | The timeout rule: bash deadline injection, `withTimeout`/`settleWithTimeout`, `readToolTimeout` |

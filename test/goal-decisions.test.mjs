@@ -71,7 +71,7 @@ test("workers are told never to wait for a human, and the rule is appended to ev
 });
 
 test("the decisions file is written once per goal and is readable afterwards", () => {
-	const cwd = mkdtempSync(join(tmpdir(), "zense-dec-"));
+	const cwd = mkdtempSync(join(tmpdir(), "finisher-dec-"));
 	try {
 		assert.equal(writeDecisionsFile(cwd, "goal", []), undefined, "nothing to write when nothing was decided");
 		const p = writeDecisionsFile(cwd, "make it fast", [{ at: Date.now(), from: "swarm", question: "cache?", assumption: "yes" }]);

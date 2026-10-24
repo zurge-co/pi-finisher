@@ -2,34 +2,39 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { finisherDir, SURFACE_TOOLS, SURFACE_COMMANDS } from "../extensions/finisher/index.ts";
+import { finisherDir, RETIRED_TOOLS, SURFACE_TOOLS, SURFACE_COMMANDS } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const read = (p) => readFileSync(join(here, p), "utf8");
+const retiredPrefix = RETIRED_TOOLS[0].slice(0, RETIRED_TOOLS[0].indexOf("_"));
+const retiredDir = `.${retiredPrefix}`;
 
-test("state lives in .finisher, not .zense", () => {
+test("state lives in .finisher, never in a retired workspace dir", () => {
 	assert.equal(finisherDir("/repo"), "/repo/.finisher");
 	const types = read("extensions/finisher/src/types.ts");
 	assert.match(types, /\.finisher/);
-	assert.doesNotMatch(types, /"\.zense"/);
+	assert.ok(!types.includes(`"${retiredDir}"`), "the state dir keeps only one name");
 });
 
-test("there is no migration: an old .zense workspace is left alone, not read or moved", () => {
+test("there is no migration: a retired workspace dir is left alone, not read or moved", () => {
 	for (const f of ["extensions/finisher/index.ts", "extensions/finisher/src/types.ts", "extensions/finisher/src/cycle.ts"]) {
 		const src = read(f);
 		assert.ok(!/renameSync|cpSync/.test(src), `${f} must not move anything`);
-		assert.ok(!src.includes('".zense"'), `${f} must not reference the old workspace`);
+		assert.ok(!src.includes(`"${retiredDir}"`), `${f} must not reference the retired workspace`);
 	}
 });
 
 test("session state is persisted under the new name only", () => {
 	const index = read("extensions/finisher/index.ts");
 	assert.match(index, /"finisher-state"/);
-	assert.ok(!index.includes("zense-state"));
+	assert.ok(!index.includes(`${retiredPrefix}-state`), "the retired state key must not be persisted or restored");
 });
 
-test("the live surface carries no old name", () => {
+test("the live surface carries no retired prefix: every live name is a finisher name", () => {
 	assert.deepEqual([...SURFACE_TOOLS], ["finisher_goal", "finisher_swarm", "finisher_steer"]);
 	assert.deepEqual([...SURFACE_COMMANDS], ["models"]);
-	for (const t of SURFACE_TOOLS) assert.ok(!t.startsWith("zense_"), `${t} still carries the old prefix`);
+	const prefix = `${retiredPrefix}_`;
+	for (const t of SURFACE_TOOLS) assert.ok(!t.startsWith(prefix), `${t} still carries the retired prefix`);
+	for (const t of RETIRED_TOOLS) assert.ok(!(SURFACE_TOOLS).includes(t), `${t} is retired but still live`);
+	for (const t of SURFACE_TOOLS) assert.ok(t.startsWith("finisher_"), `${t} must be a finisher tool`);
 });

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { GIT_TIMEOUT_MS, gitOk, excludeFromGitStatus, planSlices } from "../extensions/finisher/index.ts";
 
 const makeRepo = () => {
-	const base = mkdtempSync(join(tmpdir(), "zense-git-"));
+	const base = mkdtempSync(join(tmpdir(), "finisher-git-"));
 	const cwd = join(base, "repo");
 	mkdirSync(cwd, { recursive: true });
 	const git = (args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -36,7 +36,7 @@ test("gitOk reports success with output and failure with a one-line reason, neve
 });
 
 test("gitOk outside a repo is a plain failure, not a crash", () => {
-	const outside = mkdtempSync(join(tmpdir(), "zense-nogit-"));
+	const outside = mkdtempSync(join(tmpdir(), "finisher-nogit-"));
 	try {
 		const r = gitOk(["rev-parse", "--is-inside-work-tree"], outside);
 		assert.equal(r.ok, false);
