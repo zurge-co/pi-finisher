@@ -1,6 +1,7 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { clip, formatPanelRow, liveRuns, panelRowEntries, type PanelOptions, type PanelRun } from "./agent-panel.ts";
 import { GOAL_HIT } from "./goal-page.ts";
+import { REPORT_HIT, reportIdleTail, reportRowText, withReportTail, type HudReport } from "./report-page.ts";
 import { raceIdleLine, raceLampToken, raceSegment, raceState, type Race, type RaceGoal } from "./race-state.ts";
 
 export const HUD_MARK = "▚";
@@ -13,6 +14,7 @@ export interface HudInput {
 	runs: PanelRun[];
 	width: number;
 	goal?: HudGoal;
+	report?: HudReport;
 	lanes?: number;
 	now?: number;
 	maxRows?: number;
@@ -51,11 +53,16 @@ export const hudRowEntries = (input: HudInput, maxRows = HUD_MAX_ROWS): { text: 
 
 export const hudRows = (input: HudInput, maxRows = HUD_MAX_ROWS): string[] => hudRowEntries(input, maxRows).map((e) => e.text);
 
-export const hudIdleLine = (input: HudInput): string =>
-	truncateToWidth(raceIdleLine(raceOf({ ...input, width: 0 }), HUD_MARK), Math.max(0, input.width), "…");
+const shownReport = (input: HudInput): HudReport | undefined => input.report;
+
+export const hudIdleLine = (input: HudInput): string => {
+	const base = raceIdleLine(raceOf({ ...input, width: 0 }), HUD_MARK);
+	const report = shownReport(input);
+	return report ? withReportTail(base, reportIdleTail(report), input.width) : truncateToWidth(base, Math.max(0, input.width), "…");
+};
 export const hudLines = (input: HudInput): string[] => hudFrames(input).map((f) => f.text);
 
-export type HudKind = "border" | "goal" | "row" | "idle";
+export type HudKind = "border" | "goal" | "report" | "row" | "idle";
 
 export interface HudFrame {
 	kind: HudKind;
@@ -69,7 +76,9 @@ export const hudSignature = (input: Omit<HudInput, "width">): string => {
 	const done = input.runs.filter((r) => r.status !== "running").length;
 	const race = raceOf({ ...input, now, width: 0 });
 	const g = input.goal ? [input.goal.goal, race.phase, race.lap, race.laps, race.totalClock, race.lapClock, input.goal.doneAt ?? 0] : null;
-	return JSON.stringify([live, done, g, race.busy, race.lanes]);
+	const report = shownReport({ ...input, now, width: 0 });
+	const r = report ? [report.at ?? 0, report.outcome ?? "", report.laps ?? 0] : null;
+	return JSON.stringify([live, done, g, r, race.busy, race.lanes]);
 };
 
 const ROW_STATE_FG: Record<string, string> = { "▶": "accent", "✓": "success", "✗": "error" };
@@ -88,6 +97,7 @@ export const hudPaint = (frames: HudFrame[], theme: HudTheme, race?: Race): stri
 			return theme.fg("borderAccent", text.slice(0, at)) + theme.fg(raceLampToken(race), seg) + theme.fg("borderAccent", text.slice(at + seg.length));
 		}
 		if (kind === "goal") return theme.fg("accent", text);
+		if (kind === "report") return theme.fg("success", text);
 		if (kind === "idle") {
 			if (!race) return theme.fg("dim", text);
 			const seg = raceSegment(race);
@@ -103,11 +113,13 @@ export const hudPaint = (frames: HudFrame[], theme: HudTheme, race?: Race): stri
 export const hudFrames = (input: HudInput): HudFrame[] => {
 	const width = Math.max(8, Math.floor(input.width));
 	const race = raceOf({ ...input, width });
-	if (!hudActive(input)) return [{ kind: "idle", text: truncateToWidth(raceIdleLine(race, HUD_MARK), width, "…") }];
+	const report = shownReport(input);
+	if (!hudActive(input)) return [{ kind: "idle", text: hudIdleLine({ ...input, width }), ...(report ? { hit: REPORT_HIT } : {}) }];
 	const live = liveRuns(input.runs).length;
 	const segments = [`${HUD_MARK} ${raceSegment(race)}`, live ? `${live} live · click a row · ctrl+_ pages` : ""];
 	const body: HudFrame[] = [
 		...(input.goal ? [{ kind: "goal" as const, text: truncateToWidth(`▸ ${clip(input.goal.goal, 120)}`, Math.max(0, width - 4), "…"), hit: GOAL_HIT }] : []),
+		...(report ? [{ kind: "report" as const, text: truncateToWidth(reportRowText(report), Math.max(0, width - 4), "…"), hit: REPORT_HIT }] : []),
 		...hudRowEntries(input).map(({ text, hit }) => ({ kind: "row" as const, text, hit })),
 	];
 	if (width < HUD_MIN_BOX_WIDTH)

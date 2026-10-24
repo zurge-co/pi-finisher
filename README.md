@@ -137,6 +137,27 @@ A lap that has closed carries the time it spent in parentheses; the header keeps
 (`LAP 4/5`) and the clock of the whole goal, the second line splits the run into laps, verify and pit.
 A plan longer than the terminal pages instead of clipping: no lap text is ever cut in half.
 
+### The report page
+
+The moment a goal closes, `finisher_verify` writes the report it just gave you to
+**`.finisher/report.md`** — verdict first, then the goal, the lap count, the round, when it was written,
+and every case with the command that proved it. The HUD always advertises it: a `📄 report` row while a
+closed goal is still boxed, and a tail on the idle line otherwise.
+
+```
+▚ ○○○○○ READY · 📄 report
+╭─ ▚ ●●●●● P1 1:01 · 1 laps ─ 1 live · click a row ─╮
+│ ▸ ship the report row                              │
+│ 📄 report · verified · 2 laps · click to read      │
+╰───────────────────────────────────────────────────╯
+```
+
+**Click it** and the whole file opens as a page — every line, wrapped rather than cut, `↑↓` scrolls,
+`PgUp/PgDn` pages, `g`/`G` jumps to the ends, `Esc` closes. The page re-reads the file on every frame and
+falls back to what is on disk, so a report written by an earlier session still offers itself with
+nothing in memory; a file that has since been deleted says so instead of opening an empty page. While a
+goal is still open there is no report yet, so the row is hidden rather than lying about one.
+
 ### One page per sub-agent
 
 **Click a row in the HUD** (or press **`ctrl+_`**) and you are inside a sub-agent's own session — not a

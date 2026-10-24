@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkLine, detectChecks, failingChecks, judgeDeterministic, runCheck, runChecks, runCommand, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
@@ -111,6 +111,7 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 	await s.run("finisher_phase", { done: true });
 	const failing = await s.run("finisher_verify", { cases: [{ id: "the probe passes", command: "npm test" }] });
 	assert.equal(failing.isError, true, "the deterministic check really failed in a real repo");
+	assert.equal(existsSync(join(s.ctx.cwd, ".finisher", "report.md")), false, "a goal that is still open leaves no report behind");
 	assert.equal(s.rounds.length, 1, "a failing verify hands the round back to main — the loop is alive");
 	assert.match(failing.content[0].text, /LAP/i, "and it tells main which lap to work next");
 	assert.ok((s.box.get().goalDriver.phases ?? []).length >= 2, "a fix lap was appended to the plan");
@@ -128,6 +129,11 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 		assert.ok(driver.doneAt, "with the check green and the command recorded, the goal finishes — the loop is not dead");
 		assert.equal(driver.outcome, "verified");
 		assert.equal(passing.isError, undefined);
+		const written = readFileSync(join(s.ctx.cwd, ".finisher", "report.md"), "utf8");
+		assert.match(written, /^# finisher report — verified/, "closing the goal writes the report the HUD offers to open");
+		assert.match(written, /the probe passes/, "and it carries the case the run was proven against");
+		assert.equal(s.box.get().lastReport.outcome, "verified", "the state keeps the meta the HUD reads");
+		assert.equal(s.box.get().lastReport.path, join(s.ctx.cwd, ".finisher", "report.md"));
 	} finally {
 		delete process.env.PROBE;
 	}

@@ -14,6 +14,7 @@ export type AskRejectReason = (ctx: ExtensionContext, what: string) => Promise<s
 export type OpenAgentsViewer = (ctx: ExtensionContext) => Promise<void>;
 export type OpenAgentSession = (ctx: ExtensionContext, at?: import("./types.ts").SubagentRun) => Promise<null>;
 export type OpenGoalPage = (ctx: ExtensionContext) => Promise<null>;
+export type OpenReportPage = (ctx: ExtensionContext) => Promise<null>;
 
 export type LaunchSubagent = (
 	ctx: ExtensionContext,
@@ -80,6 +81,7 @@ export interface HarnessContext {
 	openAgentsViewer: OpenAgentsViewer;
 	openAgentSession: OpenAgentSession;
 	openGoalPage: OpenGoalPage;
+	openReportPage: OpenReportPage;
 	finisherCustom: FinisherCustom;
 	OVERLAY_LG: CustomDialogOptions;
 	OVERLAY_MD: CustomDialogOptions;

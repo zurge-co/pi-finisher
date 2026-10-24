@@ -4,6 +4,8 @@ import { relative } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { panelize } from "./models.ts";
 import { GOAL_PAGE_KEYS, GOAL_PAGE_MIN_ROWS, goalPageLines, goalPageMaxOffset, goalPageSummary, goalPageTitle, goalPageWindow } from "./goal-page.ts";
+import { REPORT_PAGE_KEYS, REPORT_PAGE_MIN_ROWS, reportPageLines, reportPageMaxOffset, reportPageSummary, reportPageTitle, reportPageWindow } from "./report-page.ts";
+import { liveReport, readReportFile, reportMetaFromFile } from "./report-file.ts";
 import { goalDriverDone } from "./goal-driver.ts";
 import { orderedSessionRuns, sessionBody, sessionKeyLine, sessionNoteLine, sessionSummaryLine, sessionTabs, sessionTitle, sessionToolCount, startSessionIndex, stepSessionIndex, SESSION_MIN_BODY_ROWS } from "./agent-session.ts";
 import { type HarnessContext, type OpenAgentsViewer } from "./kit.ts";
@@ -216,11 +218,92 @@ export const createViewers = (ctx: HarnessContext) => {
 		}, () => true);
 	};
 
+	const openReportPage = (ctx: ExtensionContext): Promise<null> => {
+		const recorded = state.lastReport;
+		const meta = recorded && liveReport(recorded) ? recorded : reportMetaFromFile(ctx.cwd);
+		if (!meta) {
+			ctx.ui.notify(recorded ? `the report file is gone: ${recorded.path}` : "no report yet — finisher_verify writes one to .finisher/report.md when a goal closes", "info");
+			return Promise.resolve(null);
+		}
+		const text = readReportFile(meta.path);
+		if (!text) {
+			ctx.ui.notify(`the report file is gone: ${meta.path}`, "info");
+			return Promise.resolve(null);
+		}
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify([reportPageTitle(meta), reportPageSummary(meta), "", ...reportPageLines(text).slice(0, 80)].join("\n"), "info");
+			return Promise.resolve(null);
+		}
+		return finisherCustom<null>(ctx, OVERLAY_XL, (tui, theme, _kb, done) => {
+			const border = new DynamicBorder((s: string) => theme.fg("borderAccent", s));
+			const tick = setInterval(() => tui.requestRender(), 1_000);
+			const rows = () => Math.max(REPORT_PAGE_MIN_ROWS, Math.floor(tui.terminal.rows * 0.9) - 8);
+			let offset = 0;
+			let following = true;
+			let cache: { key: string; wrapped: string[] } = { key: "", wrapped: [] };
+			const bodyAt = (width: number): string[] => {
+				const current = readReportFile(meta.path) ?? text;
+				const key = `${width}:${current.length}:${current.slice(0, 40)}`;
+				if (key !== cache.key) cache = { key, wrapped: reportPageLines(current).flatMap((ln) => wrapTextWithAnsi(ln, width)) };
+				return cache.wrapped;
+			};
+			return {
+				render: (w: number) => {
+					const body = bodyAt(Math.max(20, w - 4));
+					const h = rows();
+					const maxOffset = reportPageMaxOffset(body.length, h);
+					if (following) offset = maxOffset;
+					offset = Math.max(0, Math.min(offset, maxOffset));
+					const out: string[] = [...border.render(w)];
+					out.push(...new Text(theme.fg("accent", theme.bold(reportPageTitle(meta))), 1, 0).render(w));
+					out.push(...new Text(theme.fg("muted", reportPageSummary(meta)), 1, 0).render(w));
+					const win = reportPageWindow(body.length, h, offset);
+					for (const ln of body.slice(win.from, win.to)) out.push(`  ${ln}`);
+					for (let i = win.to - win.from; i < h; i++) out.push("");
+					const range = body.length > h ? ` · ${win.from + 1}-${win.to}/${body.length}${following ? " following" : ""}` : "";
+					out.push(...new Text(theme.fg("dim", `${REPORT_PAGE_KEYS}${range}`), 1, 0).render(w));
+					out.push(...border.render(w));
+					return panelize(theme, out, w);
+				},
+				invalidate: () => {
+					cache = { key: "", wrapped: [] };
+				},
+				handleInput: (data: string) => {
+					if (matchesKey(data, Key.escape) || matchesKey(data, Key.enter)) {
+						done(null);
+						return;
+					}
+					const total = bodyAt(Math.max(20, tui.terminal.columns - 4)).length;
+					const maxOffset = () => reportPageMaxOffset(total, rows());
+					const act = scrollKeyAction(data);
+					if (act === "top") {
+						following = false;
+						offset = 0;
+					} else if (act === "bottom") {
+						following = true;
+						offset = maxOffset();
+					} else if (act) {
+						const next = Math.max(0, Math.min(maxOffset(), offset + act.dir * (act.page ? rows() : 1)));
+						offset = next;
+						following = next >= maxOffset();
+					} else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
+						const dir = matchesKey(data, Key.pageDown) ? 1 : -1;
+						const next = Math.max(0, Math.min(maxOffset(), offset + dir * rows()));
+						offset = next;
+						following = next >= maxOffset();
+					}
+					tui.requestRender();
+				},
+				dispose: () => clearInterval(tick),
+			};
+		}, () => true);
+	};
+
 	const tailViewer = (ctx: ExtensionContext, run: SubagentRun): Promise<null> => openAgentSession(ctx, run);
 
 	const openAgentsViewer: OpenAgentsViewer = async (ctx: ExtensionContext): Promise<void> => {
 		await openAgentSession(ctx);
 	};
 
-	return { tailViewer, runLabel, openAgentsViewer, openAgentSession, openGoalPage };
+	return { tailViewer, runLabel, openAgentsViewer, openAgentSession, openGoalPage, openReportPage };
 };

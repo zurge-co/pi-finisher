@@ -3,6 +3,8 @@ import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { goalDriverDone } from "./goal-driver.ts";
 import { hudActive, hudRender, hudSignature, HUD_MAX_ROWS, type HudGoal, type HudInput, type HudTheme } from "./hud.ts";
 import { GOAL_HIT } from "./goal-page.ts";
+import { REPORT_HIT } from "./report-page.ts";
+import { currentReport } from "./report-file.ts";
 import { panelTickMs } from "./agent-panel.ts";
 import { raceLoaderFrames, raceLoaderMessage, raceState } from "./race-state.ts";
 import { type HarnessContext } from "./kit.ts";
@@ -15,6 +17,7 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 	const state = ctx.state;
 	const openAgentSession = ctx.openAgentSession;
 	const openGoalPage = ctx.openGoalPage;
+	const openReportPage = ctx.openReportPage;
 
 	const activeRun = (): SubagentRun | undefined => {
 		for (let i = state.subagentRuns.length - 1; i >= 0; i--) if (state.subagentRuns[i].status === "running") return state.subagentRuns[i];
@@ -39,6 +42,7 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 	const hudInput = (): Omit<HudInput, "width"> => ({
 		runs: state.subagentRuns,
 		goal: goalOf(),
+		report: currentReport(lastCtx?.cwd, state.lastReport),
 		lanes: LANES,
 		maxRows: HUD_MAX_ROWS,
 	});
@@ -90,6 +94,10 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 						if (index === undefined || !lastCtx) return undefined;
 						if (index === GOAL_HIT) {
 							void openGoalPage(lastCtx);
+							return { handled: true };
+						}
+						if (index === REPORT_HIT) {
+							void openReportPage(lastCtx);
 							return { handled: true };
 						}
 						const run = state.subagentRuns[index];

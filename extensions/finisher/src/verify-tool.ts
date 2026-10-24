@@ -12,6 +12,7 @@ import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
 import { planOf, verifyGate } from "./goal-phase.ts";
 import { readToolTimeout } from "./timeout.ts";
 import { type HarnessContext } from "./kit.ts";
+import { writeReportFile } from "./report-file.ts";
 import { appendCommand } from "./command-record.ts";
 
 export const VERIFY_TOOL = "finisher_verify";
@@ -290,6 +291,17 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			if (step.action !== "replan") writeDecisionsFile(cwd, driver.goal, state.decisions ?? []);
 			const before = state.goalDriver as GoalRunState;
 			state.goalDriver = step.state;
+			if (step.action !== "replan") {
+				const written = writeReportFile(cwd, {
+					goal: driver.goal,
+					outcome: step.state.outcome ?? "halted",
+					at: step.state.doneAt ?? Date.now(),
+					laps: (step.state.phases ?? []).length,
+					round: step.round,
+					body: [summary, "", finalText].join("\n"),
+				});
+				if (written) state.lastReport = written;
+			}
 			persist();
 			updateWidget(toolCtx);
 			if (journalEnabled()) {
