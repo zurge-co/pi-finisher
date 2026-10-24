@@ -15,6 +15,9 @@ import {
 	withTimeout,
 	timeoutNote,
 	applyBashTimeout,
+	enforceDeadline,
+	TIMED_TOOLS,
+	TIMEOUT_RULE,
 } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
@@ -139,4 +142,43 @@ test("git runs under a timeout — a hung subprocess cannot stall a tool call", 
 	const wt = readFileSync(join(here, "extensions/finisher/src/worktree.ts"), "utf8");
 	assert.match(wt, /timeout: GIT_TIMEOUT_MS/, "every git subprocess carries a deadline");
 	assert.match(wt, /killSignal/);
+});
+
+test("no command can reach the executor unbounded: every input shape leaves a valid deadline or is refused", () => {
+	const shapes = [
+		{ command: "sleep 999" },
+		{ command: "x", timeout: 30 },
+		{ command: "x", timeout: 0 },
+		{ command: "x", timeout: -1 },
+		{ command: "x", timeout: Number.NaN },
+		{ command: "x", timeout: "60" },
+		{ command: "x", timeout: null },
+		{ command: "x", timeout: MAX_BASH_TIMEOUT_SECONDS + 1 },
+		{ command: "x", timeout: 1 },
+	];
+	for (const tool of TIMED_TOOLS) {
+		for (const shape of shapes) {
+			const input = { ...shape };
+			const r = enforceDeadline(tool, input, tmpRepo());
+			if (r.blocked) {
+				assert.match(r.reason ?? "", /not a valid deadline/, `${tool} ${JSON.stringify(shape)} must say why it was refused`);
+				continue;
+			}
+			assert.equal(isValidBashTimeout(input.timeout), true, `${tool} ${JSON.stringify(shape)} ran with ${JSON.stringify(input.timeout)}`);
+			assert.equal(r.timeout, input.timeout, "the reported deadline is the one the executor sees");
+			assert.equal(r.changed, shape.timeout === undefined, "only an omitted timeout is injected");
+		}
+	}
+	const untouched = { path: "x" };
+	assert.deepEqual(enforceDeadline("read", untouched, tmpRepo()), { changed: false, timeout: 0, blocked: false }, "a tool without a command is never rewritten");
+	assert.equal("timeout" in untouched, false);
+});
+
+test("the timeout rule reaches the model, so an injected deadline is never a surprise", () => {
+	assert.match(TIMEOUT_RULE, /timeout/);
+	assert.match(TIMEOUT_RULE, /SECONDS/);
+	const index = readFileSync(join(here, "extensions/finisher/index.ts"), "utf8");
+	assert.match(index, /TIMEOUT_RULE/, "the rule is part of the system prompt, not just the hook");
+	assert.match(index, /enforceDeadline\(ev\.toolName/, "the hook enforces it on the real tool call");
+	assert.match(index, /block: true/, "an unbounded call is refused, not silently rewritten and forgotten");
 });

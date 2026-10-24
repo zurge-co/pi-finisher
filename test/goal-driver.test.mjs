@@ -18,7 +18,9 @@ test("a failing case hands the plan back to the main agent instead of finishing"
 	assert.equal(step.action, "replan");
 	assert.equal(step.state.doneAt, undefined, "the run is still open");
 	assert.equal(step.state.attempts.rounds, 1);
-	assert.match(step.text, /plan the next loop/);
+	assert.equal(step.state.phases.length, 1, "a failing case appends exactly one fix lap to the plan");
+	assert.equal(step.state.lap, 1, "the first fix lap is the lap now being worked");
+	assert.match(step.text, /fix lap\(s\) were added/);
 });
 
 test("a case nobody could exercise ends as needs-human, not as a failure", () => {

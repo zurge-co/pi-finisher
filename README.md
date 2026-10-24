@@ -8,11 +8,19 @@
 
 ```
 goal (confirmed once)
-   └─ finisher_goal ──► finisher_swarm explore / code   (N agents at once, one model per ladder slot)
-                     finisher_swarm verify           (verifiers must RUN commands)
-                     goal driver                  (evidence-gated rounds, fixed → verify → …)
+   └─ finisher_goal        confirm the goal + its cases, once
+   └─ finisher_phase       declare the plan, then close one lap at a time: LAP 1/n → LAP n/n
+   └─ finisher_swarm       explore / code   (N agents at once, one model per ladder slot)
+   └─ finisher_swarm       verify           (ONE shot, refused while a lap is still open)
+   └─ a failing verify appends fix laps, never a fresh plan: the work and time already spent stay
    └─► ONE report: every case + its evidence, or an honest "not proven"
 ```
+
+The verifier does not write its evidence — the harness **records** every command it runs and the
+status it really got, and the verdict comes back as a record (`finisher_verdict`), so a report can
+be prose, logs or nonsense without changing the outcome. A verifier cannot write into the repo.
+Every extra lap is journaled to `~/.pi/finisher/laps.jsonl`; `/finisher gaps` ranks what was
+missing most often, so the plan can be made better instead of guessed.
 
 - **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
   click between the goal and the result.

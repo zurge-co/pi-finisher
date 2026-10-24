@@ -23,7 +23,9 @@ import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
 import { readHandoff } from "./src/handoff-stack.ts";
 import { handoffStackFor } from "./src/handoff-gate.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
-import { applyBashTimeout, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
+import { enforceDeadline, TIMEOUT_RULE, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
+import { registerReadonlyGuard, registerVerdictTool } from "./src/verdict-tool.ts";
+import { childRole } from "./src/verdict-file.ts";
 import { registerTools } from "./src/tools.ts";
 import { registerCommands } from "./src/commands.ts";
 export * from "./src/commands.ts";
@@ -53,6 +55,13 @@ export * from "./src/budget.ts";
 export * from "./src/evidence.ts";
 export * from "./src/verify-loop.ts";
 export * from "./src/goal-driver.ts";
+export * from "./src/goal-phase.ts";
+export * from "./src/phase-tool.ts";
+export * from "./src/race-state.ts";
+export * from "./src/evidence-record.ts";
+export * from "./src/verdict-file.ts";
+export * from "./src/verdict-tool.ts";
+export * from "./src/lap-journal.ts";
 export * from "./src/goal-run.ts";
 export * from "./src/handoff-stack.ts";
 export * from "./src/handoff-classify.ts";
@@ -69,13 +78,17 @@ export * from "./src/timeout.ts";
 
 const registerToolTimeoutHook = (pi: ExtensionAPI): void => {
 	pi.on("tool_call", async (ev, ctx) => {
-		applyBashTimeout(ev.toolName, ev.input, ctx.cwd);
+		const r = enforceDeadline(ev.toolName, ev.input, ctx.cwd);
+		if (!r.blocked) return undefined;
+		return { block: true, reason: r.reason ?? "the harness could not bound this command's deadline" };
 	});
 };
 
 export default function (pi: ExtensionAPI) {
 	if (process.env.PI_FINISHER_SUBAGENT === "1") {
 		registerToolTimeoutHook(pi);
+		registerReadonlyGuard(pi, childRole());
+		registerVerdictTool(pi);
 		return;
 	}
 
@@ -186,7 +199,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		let sp = event.systemPrompt;
-		sp += "\n\n" + CODE_HYGIENE_GUIDELINE + "\n\n" + SWARM_ROUTING_GUIDELINE;
+		sp += "\n\n" + CODE_HYGIENE_GUIDELINE + "\n\n" + SWARM_ROUTING_GUIDELINE + "\n\n" + TIMEOUT_RULE;
 		const bulletin = takeContextBulletin(box.get());
 		if (bulletin) {
 			sp += "\n\n" + bulletin;

@@ -1,3 +1,8 @@
+export const UNOWNED_PREFIX = "(unowned status) ";
+
+export const OUTPUT_INDENT = /^\s{2,}\S/;
+const PURE_STATUS = /^\s*(?:exit(?:ed)?(?:\s*(?:code|status))?\s*[:=]?\s*-?\d{1,3}|EXIT\s*=\s*-?\d{1,3})\s*$/i;
+
 export interface EvidenceCommand {
 	command: string;
 	exitCode?: number;
@@ -47,8 +52,18 @@ export const cellExitCode = (cell: string): number | undefined => {
 	return labelled ? Number(labelled[1]) : undefined;
 };
 
+const TRAILING_STATUS = /\s*(?:\u2192|->|\u2794|\u2014|\u2013|-{1,2}|\|)?\s*(?:exit(?:ed)?(?:(?:\s*(?:code|status))?\s*[:=]?)|EXIT\s*=)\s*-?\d{1,3}\b.*$/i;
+const SEPARATOR_ONLY = /[\s\u2192\u2794\u2014\u2013|=\-]+$/;
+
 export const commandName = (text: string): string | undefined => {
-	const cleaned = text.trim().replace(/^(?:\$|>)\s*/, "").replace(/^[-*+\d.|\s]+?[|]\s*/, "").replace(/\*\*/g, "").trim();
+	const cleaned = text
+		.trim()
+		.replace(/^(?:\$|>)\s*/, "")
+		.replace(/^[-*+\d.|\s]+?[|]\s*/, "")
+		.replace(/\*\*/g, "")
+		.replace(TRAILING_STATUS, "")
+		.replace(SEPARATOR_ONLY, "")
+		.trim();
 	return COMMAND_START.test(cleaned) ? cleaned : undefined;
 };
 
@@ -98,21 +113,28 @@ export const statusInCode = (line: string): boolean => {
 	return own ? own[1].replace(/[\s*`_|>-]/g, "").length > 0 : true;
 };
 
+const INVOCATION = /(?:^|[\s`'"(\[])(?:bash|sh|zsh|fish|git|npm|npx|pnpm|yarn|bun|deno|node|python3?|pytest|go|cargo|make|tsc|vitest|jest|curl|wget|rg|grep|find|ls|cat|sed|awk|jq|docker|gh)\s+[\w./~$*"'\-]/;
+
 export const unclaimedStatus = (line: string): boolean => {
 	const body = stripFences(line).trim();
 	if (!body) return false;
 	if (commandsOnLine(body).length) return false;
 	const own = body.match(STATUS_BEFORE_EXIT);
 	if (!own || !body.match(EXIT_LINE)) return false;
-	return own[1].replace(/[*`|\-\s]/g, "").length >= 2;
+	const owner = own[1];
+	if (owner.replace(/[*`|\-\s]/g, "").length < 2) return false;
+	return INVOCATION.test(owner);
 };
 
-const commandsOnLine = (line: string): Candidate[] => {
+const commandsOnLine = (line: string, strict = false): Candidate[] => {
 	const found: Candidate[] = [];
 	const body = stripFences(line);
 	if (!body) return found;
-	const whole = anchoredCommand(body) ? commandName(body.includes("|") ? body.split("|").slice(1).join(" ") : body) : undefined;
+	const withoutStatus = body.replace(TRAILING_STATUS, "");
+	const piped = body.includes("|") ? withoutStatus.split("|").slice(1).join(" ").trim() : "";
+	const whole = anchoredCommand(body) ? commandName(piped || withoutStatus) : undefined;
 	if (whole) found.push({ command: whole, at: 0, explicit: false });
+	if (strict) return found;
 	for (const m of body.matchAll(/`([^`\n]+)`/g)) {
 		const inner = commandName(m[1]);
 		if (inner && !found.some((f) => f.command === inner)) found.push({ command: inner, at: m.index ?? 0, explicit: true });
@@ -136,6 +158,7 @@ const exitFor = (lines: string[], index: number, cand: Candidate): number | unde
 		}
 	}
 	for (const line of lines.slice(index + 1, Math.min(index + 4, lines.length))) {
+		if (OUTPUT_INDENT.test(line) && !PURE_STATUS.test(stripFences(line))) return undefined;
 		if (commandsOnLine(line).length || commandShaped(line)) return undefined;
 		if (statusInCode(line)) continue;
 		const later = stripFences(line).match(EXIT_LINE);
@@ -144,25 +167,49 @@ const exitFor = (lines: string[], index: number, cand: Candidate): number | unde
 	return undefined;
 };
 
-export const extractCommands = (output: string): EvidenceCommand[] => {
-	const commands: EvidenceCommand[] = [];
-	const seen = new Set<string>();
+export const EVIDENCE_MARKER = /^[\s#>*_`\-]*EVIDENCE[\s*_`]*:?[\s*_`]*$/i;
+const VERDICT_LINE = /^\s*VERDICT\s*:/i;
+
+export const evidenceRegion = (output: string): string => {
 	const lines = output.split("\n");
+	const start = lines.findIndex((l) => EVIDENCE_MARKER.test(l));
+	if (start < 0) return output;
+	let end = lines.length;
+	for (let i = start + 1; i < lines.length; i++)
+		if (VERDICT_LINE.test(lines[i])) {
+			end = i;
+			break;
+		}
+	return lines.slice(start + 1, end).join("\n");
+};
+
+export const extractCommands = (output: string): EvidenceCommand[] => {
+	const named = new Map<string, EvidenceCommand>();
+	const region = evidenceRegion(output);
+	const declared = region !== output;
+	const lines = region.split("\n");
 	for (let i = 0; i < lines.length; i++) {
-		const unowned = !pastedSource(lines[i]) && unclaimedStatus(lines[i]);
-		for (const cand of [...commandsOnLine(lines[i]), ...(unowned ? [{ command: `(unowned status) ${stripFences(lines[i]).trim().slice(0, 120)}`, at: 0, explicit: true, unowned: true }] : [])]) {
+		if (OUTPUT_INDENT.test(lines[i])) continue;
+		const unowned = !declared && !pastedSource(lines[i]) && unclaimedStatus(lines[i]);
+		for (const cand of [...commandsOnLine(lines[i], declared), ...(unowned ? [{ command: `${UNOWNED_PREFIX}${stripFences(lines[i]).trim().slice(0, 120)}`, at: 0, explicit: true, unowned: true }] : [])]) {
 			const exitCode = exitFor(lines, i, cand);
-			const key = `${cand.command}=${exitCode ?? "?"}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			if (commands.length >= 40) return commands;
+			const key = cand.unowned === true ? `${cand.command}=?` : cand.command;
+			const prior = named.get(key);
+			if (prior && !(cand.unowned === true && exitCode === undefined)) {
+				const body = lines.slice(i + 1, Math.min(i + 4, lines.length)).map((l) => l.trim()).filter(Boolean).join(" ");
+				if (exitCode !== undefined) prior.exitCode = exitCode;
+				if (body) prior.output = body.slice(0, 300);
+				continue;
+			}
+			if (prior) continue;
 			const evidence: EvidenceCommand = { command: cand.command };
 			if (exitCode !== undefined) evidence.exitCode = exitCode;
 			else if (cand.unowned === true) continue;
 			const body = lines.slice(i + 1, Math.min(i + 4, lines.length)).map((l) => l.trim()).filter(Boolean).join(" ");
 			if (body) evidence.output = body.slice(0, 300);
-			commands.push(evidence);
+			named.set(key, evidence);
+			if (named.size >= 40) return [...named.values()];
 		}
 	}
-	return commands;
+	return [...named.values()];
 };

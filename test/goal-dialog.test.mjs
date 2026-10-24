@@ -157,6 +157,11 @@ test("an unreadably long case list is refused before anyone is asked, instead of
 	assert.equal(atLimit.isError, undefined);
 });
 
+const recordedFor = (output) =>
+	/(?:exit code|exited) [1-9]/.test(output)
+		? { calls: [{ command: "node -e run()", ok: false }], verdict: { verdict: "FAIL", why: "the command exited non-zero" } }
+		: { calls: [{ command: "node -e run()", ok: true }], verdict: { verdict: "PASS", why: "the command exited 0" } };
+
 const swarmSession = (verifyOutput = "$ node -e run()\nexit code 0\nVERDICT: PASS") => {
 	const defs = [];
 	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
@@ -176,7 +181,7 @@ const swarmSession = (verifyOutput = "$ node -e run()\nexit code 0\nVERDICT: PAS
 		},
 		launchSubagent: async (_ctx, role) => {
 			box.get().subagentRuns.push({ role, ok: true, summary: "", at: Date.now(), status: "done", logPath: "/tmp/x.log" });
-			return { ok: true, output: verifyOutput, logPath: "/tmp/x.log" };
+			return { ok: true, output: verifyOutput, logPath: "/tmp/x.log", ...recordedFor(verifyOutput) };
 		},
 	});
 	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-swarm-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };

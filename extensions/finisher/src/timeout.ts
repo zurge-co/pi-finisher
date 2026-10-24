@@ -82,6 +82,46 @@ export const applyBashTimeout = (toolName: string, input: unknown, cwd: string):
 	return ensureBashTimeout(input, readToolTimeout(cwd, "bash")).changed;
 };
 
+export const TIMED_TOOLS = ["bash", "powershell"] as const;
+
+export interface EnforcedDeadline {
+	changed: boolean;
+	timeout: number;
+	blocked: boolean;
+	reason?: string;
+	note?: string;
+}
+
+export const TIMEOUT_RULE = [	"Every command you run carries a deadline. bash/powershell calls must pass `timeout` in SECONDS; the harness injects one when you omit it and refuses a call whose timeout cannot be bounded (0, negative, NaN, a string, or above the maximum pi accepts).",
+	"Pick the smallest deadline that still lets the command finish: a test suite 120–300s, a build 300–600s, a search 60s. A deadline is not a budget — it is what stops a hang from eating the whole run.",
+].join("\n");
+
+export const TIMEOUT_BINARIES = ["/usr/bin/timeout", "/bin/timeout", "/usr/local/bin/timeout", "/opt/homebrew/bin/timeout"] as const;
+
+export const hasTimeoutBinary = (): boolean => TIMEOUT_BINARIES.some((p) => existsSync(p));
+
+export const boundWrapper = (hasTimeout = hasTimeoutBinary()): string =>
+	hasTimeout
+		? "prefix it: `timeout 120 <command>` (seconds, then the command)"
+		: "this host has no `timeout` binary — wrap it: `perl -e 'alarm 120; exec @ARGV' -- <command>` (alarm takes seconds)";
+
+export const enforceDeadline = (toolName: string, input: unknown, cwd: string): EnforcedDeadline => {
+	if (!(TIMED_TOOLS as readonly string[]).includes(toolName)) return { changed: false, timeout: 0, blocked: false };
+	const box = input as { timeout?: unknown } | undefined;
+	const requested = box?.timeout;
+	if (requested !== undefined && !isValidBashTimeout(requested)) {
+		const repaired = ensureBashTimeout(box, readToolTimeout(cwd, toolName));
+		return {
+			changed: repaired.changed,
+			timeout: repaired.timeout,
+			blocked: true,
+			reason: `${toolName}: timeout ${JSON.stringify(requested)} is not a valid deadline (1..${MAX_BASH_TIMEOUT_SECONDS} seconds). Pass an explicit positive number of seconds, e.g. ${repaired.timeout}.`,
+		};
+	}
+	const r = ensureBashTimeout(box, readToolTimeout(cwd, toolName));
+	return { changed: r.changed, timeout: r.timeout, blocked: false, ...(r.changed ? { note: `${toolName} ran with an injected ${r.timeout}s deadline — pass your own timeout whenever the command can hang.` } : {}) };
+};
+
 export type ToolLike = { name: string; execute: (...args: any[]) => Promise<any> };
 
 export const boundToolExecute = <A extends any[]>(name: string, cwdOf: (args: unknown[]) => string, execute: (...args: A) => Promise<unknown>) =>

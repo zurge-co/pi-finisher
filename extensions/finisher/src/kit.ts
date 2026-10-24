@@ -21,7 +21,8 @@ export type LaunchSubagent = (
 	onChunk?: (chunk: string) => void,
 	signal?: AbortSignal,
 	modelOverride?: string,
-) => Promise<{ ok: boolean; output: string; logPath: string }>;
+	opts?: { caseId?: string },
+) => Promise<{ ok: boolean; output: string; logPath: string; calls?: import("./evidence-record.ts").RecordedCall[]; verdict?: import("./evidence-record.ts").RecordedVerdict }>;
 
 export type RunCodeSwarm = (
 	ctx: ExtensionContext,

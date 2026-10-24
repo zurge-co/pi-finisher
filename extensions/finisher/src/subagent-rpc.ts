@@ -57,6 +57,8 @@ export interface RpcRunOptions {
 	model?: string;
 	onChunk?: (chunk: string) => void;
 	signal?: AbortSignal;
+	verdictFile?: string;
+	onTool?: (tool: ToolEvent) => void;
 }
 
 export const liveRpcRuns = new Map<string, RpcRunHandle>();
@@ -143,7 +145,11 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 	const client = new RpcClient({
 		cliPath: rpcCliPath(),
 		cwd: opts.cwd,
-		env: { PI_FINISHER_SUBAGENT: "1" },
+		env: {
+			PI_FINISHER_SUBAGENT: "1",
+			FINISHER_ROLE: opts.role,
+			...(opts.verdictFile ? { FINISHER_VERDICT_FILE: opts.verdictFile } : {}),
+		},
 		args: opts.cliArgs ?? [],
 		...(wanted.provider ? { provider: wanted.provider } : {}),
 		...(wanted.model ? { model: wanted.model } : {}),
@@ -156,6 +162,8 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 		const started = await withTimeout(client.start(), opts.timeoutMs, `rpc start (${opts.role})`);
 		if (started.timedOut) return { ok: false, output: `${timeoutLabel("rpc start", opts.timeoutMs)} — the sub-agent never came up`, logPath: opts.logPath };
 		const unsub = client.onEvent((ev) => {
+			const raw = toolEventFrom(ev);
+			if (raw) opts.onTool?.(raw);
 			const tool = toolLineFromEvent(ev);
 			if (tool) {
 				append(tool);

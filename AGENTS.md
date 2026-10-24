@@ -57,6 +57,13 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `evidence.ts` | Reading a verifier's output: `extractCommands` (each command bound to *its own* exit status), `anchoredCommand` (a real command must sit at column 0 or after a `$`/`>` prompt), `pastedSource`/`statusInCode` (a numbered, tab-indented or code-shaped line supplies no status and lends none to a command above it), `cellExitCode`, `declaredVerdict`, `stripFences`/`unclaimedStatus` |
 | `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), the bounded loop (`decideOnce`, `evidenceFingerprint`, `recordEvidence`, `MAX_LOOP_BATCHES`), report render |
 | `goal-driver.ts` | The confirmed-goal driver: finish / fix / stop, round bookkeeping |
+| `goal-phase.ts` | The lap plan: `declarePlan`/`appendPhases`/`completeLap`, `lapLabel`, `allLapsDone`, and `verifyGate` (verify is refused while a lap is open) |
+| `phase-tool.ts` | `finisher_phase` — declare the plan, close one lap at a time, read the plan |
+| `evidence-record.ts` | The harness recording: `recordCall` (bash calls as they finish, with their real status), `finalStatus`/`recordedFailures`, `judgeRecording` (verdict × recording), `recordingLine` |
+| `verdict-file.ts` | The verifier verdict record: `verdictPath`/`appendVerdict`/`parseVerdicts`/`lastVerdict`, the `FINISHER_VERDICT_FILE` and `FINISHER_ROLE` env contract |
+| `lap-journal.ts` | The global extra-lap journal: `journalPath` (`~/.pi/finisher/laps.jsonl`), `gapRecord`/`doneRecord`, `parseJournal`/`readJournal`, `themeOf`, `summarizeGaps`/`summaryLines` |
+| `verdict-tool.ts` | Child-side `finisher_verdict` tool, and `registerReadonlyGuard` (a verifier cannot write into the repo) |
+| `race-state.ts` | Pure race read: `raceState` (phase/lap/lights/lap clock/total clock/pit time), `raceLoaderFrames`, `raceSegment`, `raceIdleLine`, `clockLabel` |
 | `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys |
 | `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, `goalConfirmLines` with no case cap, the one-shot confirm prompt, the declined/no-UI/too-many-cases/unconfirmed-verify notes) |
 | `goal-dialog.ts` | The confirm dialog the human actually sees: an inline overlay (no scrolling, so every case stays visible) with the goal + every case (y/enter confirms, n/esc declines), `ctx.ui.confirm` in non-TUI sessions, `unavailable` when a session has no dialog at all; `createGoalPicker` hands `askGoalConfirm` to the context |
@@ -68,7 +75,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `viewers.ts` | The sub-agent session page: one page per run (task input + steers + live output), ←/→ paging, 1-9 jumps, ↑↓ scroll, tab strip of every agent, `openAgentSession`/`openAgentsViewer`, non-TUI text fallback |
 | `agent-session.ts` | Pure paging + page text: `orderedSessionRuns`, `stepSessionIndex`, `sessionLabel`/`sessionTitle`/`sessionTabs`, `sessionBody`, `recordSteerOnRun`, `sessionSummaryLine` |
 | `tools.ts` | `finisher_goal`, `finisher_swarm`, `finisher_steer` registration (every tool wrapped in a timeout bound) |
-| `commands.ts` | `/finisher models` — the priority-ladder editor (`setSlot`), the `ctrl+_` live-tail shortcut, `ladderRows`, `ladderSummaryLine` |
+| `commands.ts` | `/finisher models` (ladder editor, `setSlot`, `ladderRows`, `ladderSummaryLine`), `/finisher gaps` (the extra-lap digest), and the `ctrl+_` live-tail shortcut |
 | `worktree.ts` | Bounded `gitOk`, `excludeFromGitStatus`, `linkDeps` (slice deps), `excludeInWorktree` |
 | `pending-apply.ts` | Cycle bookkeeping: `changePathsSince`, `discardSinceBaseline`, `commitWorkingTree` |
 | `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |

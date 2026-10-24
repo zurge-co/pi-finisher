@@ -22,7 +22,7 @@ export interface State {
 	trajectoryFlags: string[];
 	subagentRuns: SubagentRun[];
 	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
-	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetGoalAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted" }; humanAt?: number; toolOutputExpanded?: boolean; hygieneViolations?: HygieneViolationRef[]; }
+	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetGoalAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[] }; humanAt?: number; toolOutputExpanded?: boolean; hygieneViolations?: HygieneViolationRef[]; }
 
 export interface HygieneViolationRef {
 	path: string;
@@ -37,7 +37,7 @@ export interface SubagentRun {
 	at: number;
 	startedAt?: number;
 	logPath?: string;            	model?: string;              	status?: "running" | "done" | "failed";
-	retried?: boolean;           	autoIncluded?: boolean;      	streamTail?: string;         	slotId?: string;             	handoffItems?: number;       	decisions?: number;          	prompt?: string;             	steers?: { at: number; mode: "steer" | "followUp"; message: string }[]; }
+	retried?: boolean;           	autoIncluded?: boolean;      	streamTail?: string;         	slotId?: string;             	handoffItems?: number;       	decisions?: number;          	prompt?: string;             	steers?: { at: number; mode: "steer" | "followUp"; message: string }[]; 	calls?: { command: string; ok: boolean; at?: number }[]; }
 export interface Worktree {
 	root: string;               	branch: string;             	dir: string;                	baseline?: string;          }
 export interface PendingApply {

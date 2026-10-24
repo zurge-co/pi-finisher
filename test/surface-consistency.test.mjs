@@ -25,7 +25,7 @@ test("the description and completions are generated from the same list, so they 
 	const desc = src.slice(at, src.indexOf("getArgumentCompletions"));
 	assert.match(desc, /SURFACE_COMMANDS/, "the description is rendered from the one list, so a name cannot be advertised without a branch");
 	for (const dead of ["approve", "gate", "memory", "ext-config", "discard", "surface"]) assert.ok(!desc.includes(dead), `the description still advertises the removed "${dead}"`);
-	assert.deepEqual([...SURFACE_COMMANDS], ["models"], "only one command is left");
+	assert.deepEqual([...SURFACE_COMMANDS], ["models", "gaps"], "the model ladder and the extra-lap journal are the only commands");
 });
 
 test("the removed surfaces cannot come back: no memory, no gate, no ext-config machinery", () => {

@@ -218,28 +218,40 @@ export const SWARM_ROUTING_GUIDELINE = [
 	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call finisher_swarm instead of serialising the work through yourself.",
 	"A fan-out report IS the evidence: act on its findings instead of re-reading what a worker already read or re-running what it already ran, and open a file yourself only when the report names a gap.",
 	"The swarm runs the configured model ladder (priority1..priority5 in .finisher/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
-	"A goal is only done when finisher_swarm verify returns VERDICT: PASS for it; on FAIL keep fixing the real cause and verify again, reporting only at the end.",
+	"A goal is only done when finisher_swarm verify returns VERDICT: PASS for it; on FAIL work the fix laps the harness appends, then verify again, reporting only at the end.",
+	"The workflow is fixed: finisher_goal confirms once, finisher_phase declares the plan, one finisher_phase done per lap in order, then finisher_swarm mode=verify exactly once — verify is gated on every lap being closed.",
 ].join("\n");
 
 export interface FanOutArgs {
 	mode: "explore" | "verify";
 	subtasks: { id: string; instruction: string }[];
 	goal?: string;
+	boundHint?: string;
 }
 
 export const buildFanOutPrompt = (args: FanOutArgs, subtask: { id: string; instruction: string }, attempt: number): string => {
 	const retry = attempt > 1 ? `\n(retry ${attempt}: your previous answer was unusable — be concrete and complete)` : "";
 	if (args.mode === "verify")
 		return [
-			`You are swarm verifier ${subtask.id}. GOAL: ${args.goal ?? "(goal supplied by the main agent)"}`,
-			"This runs ONCE, at the end. Read the change once with git diff, then run the smallest command that exercises the changed behaviour — do not re-read whole modules the diff already shows.",
-			"do not run the test suite and do not run a build as your evidence: a green suite is not proof, it is a claim you can borrow from someone else.",
-			"Judge the PROPERTY, not the example: does the bound hold for every input, is the ordering total, is the boundary exact, does the invariant survive?",
-			"If you cannot exercise the changed code directly, run NOTHING else and answer exactly: VERDICT: UNVERIFIED — then one line naming what a human must test by hand.",
-			"Never edit files; never fake a pass. For each command you ran, give the command and its exit status on its own line, then end with one line: VERDICT: PASS, VERDICT: FAIL, or VERDICT: UNVERIFIED plus the reason.",
-			retry,
+			`You are swarm verifier ${subtask.id}. This runs ONCE, at the end.`,
 			"",
-			`Your slice (${subtask.id}): ${subtask.instruction}`,
+			`GOAL (the point of the whole run): ${args.goal ?? "(goal supplied by the main agent)"}`,
+			`CASE (the one result you judge): ${subtask.instruction}`,
+			"DESIRED RESULT: the case is true only if the change makes it observably true for a human reading your output. Not plausible, not plausible-looking — observable.",
+			"",
+			"DO THIS, IN THIS ORDER, AND NOTHING ELSE:",
+			"  1. Read the change once: `git diff --stat` then the diff of the files your case names. Do not open modules the diff already shows.",
+			`  2. Write the smallest command that makes the desired result visible, and run it — a temp script, a node -e, a single file run.${args.boundHint ? ` If it can hang, ${args.boundHint}.` : ""}`,
+			"  3. Make that command pass. If your own probe was wrong, fix the probe and run it again.",
+			"  4. Put your commands in an evidence block: a line reading exactly `EVIDENCE:`, then one command per line STARTING AT COLUMN 0 with its own exit status (`$ node probe.mjs \u2192 exit 0`); indent its output under it. Nothing outside that block is read as evidence; inside it only a column-0 command line counts, and an indented line is read as its output.",
+			"",
+			"Then call finisher_verdict with your judgement — that record, plus the commands the harness itself watched you run, is the whole decision. PASS needs a command that succeeded and none that failed. If the desired result does not hold, record FAIL and name the single thing that is missing. If it cannot be exercised from a command, record UNVERIFIED.",
+			"Rules: never edit files; never fake a pass; a green suite is not proof — do not run the test suite or a build as your evidence.",
+			"If the case genuinely cannot be exercised from a command, run NOTHING else and answer exactly: VERDICT: UNVERIFIED — then one line naming what a human must test by hand.",
+			"Evidence: you no longer report exit statuses — the harness records every command you run and its real status, and judges your verdict against that recording. So make the command you rely on actually exit 0 before you record PASS; a re-run of the same command is fine, its last status is what counts.",
+			"Never write into the repo: the harness refuses file edits from a verifier and treats a changed working tree as a wasted run. Put scratch files outside the repo.",
+			"Last line, exactly one of: VERDICT: PASS | VERDICT: FAIL | VERDICT: UNVERIFIED, then the reason on the same or the next line.",
+			retry,
 		].join("\n");
 	return [
 		`You are swarm explorer ${subtask.id}. GOAL: ${args.goal ?? "(goal supplied by the main agent)"}`,

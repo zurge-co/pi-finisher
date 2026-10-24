@@ -3,12 +3,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { HUD_MARK, hudActive, hudIdleLine, hudLines } from "../extensions/finisher/index.ts";
+import { HUD_MARK, RACE_LIGHT_OFF, hudActive, hudIdleLine, hudLines } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 
 const run = (role, extra = {}) => ({ role, status: "running", startedAt: 1_000, at: 1_000, ...extra });
-const goal = (extra = {}) => ({ goal: "ship the new HUD", round: 2, ...extra });
+const phases = [
+	{ id: "p-one", text: "read the parser", round: 0, addedAt: 1_000 },
+	{ id: "p-two", text: "rewrite the retry policy", round: 0, addedAt: 1_000 },
+	{ id: "p-three", text: "prove it with a command", round: 0, addedAt: 1_000 },
+];
+const goal = (extra = {}) => ({ goal: "ship the new HUD", confirmedAt: 1_000, phases, lap: 2, lapAt: 2_000, lapMs: [1_000], ...extra });
 
 test("no HUD line ever exceeds the terminal width, for any width and any tail", () => {
 	const runs = [run("swarm", { slotId: "slot1", model: "provider/a-very-long-model-name", streamTail: "x".repeat(400) }), run("verifier")];
@@ -25,11 +30,15 @@ test("the box is drawn only while the run is live, and idle is exactly one line"
 	assert.equal(hudActive({ runs: [], width: 80, goal: goal({ doneAt: 5, outcome: "verified" }) }), false, "a finished goal is not live work");
 	assert.equal(hudActive({ runs: [], width: 80, goal: goal() }), true, "an open goal keeps the HUD up");
 	assert.equal(hudActive({ runs: [run("swarm")], width: 80 }), true);
-	const idle = hudLines({ runs: [], width: 80, turns: 3, tokens: 12_000 });
+	const idle = hudLines({ runs: [], width: 80 });
 	assert.equal(idle.length, 1, "an idle session costs one line, not a panel");
-	assert.match(idle[0], new RegExp(`^${HUD_MARK} finisher · idle`));
-	assert.match(idle[0], /turns 3/);
-	assert.match(idle[0], /tok 12k/);
+	assert.match(idle[0], new RegExp(`^${HUD_MARK} finisher · ${RACE_LIGHT_OFF}{5} READY`));
+	assert.ok(!/turns|tok/.test(idle[0]), "the cost counters moved to the footer, never the HUD");
+	const won = hudLines({ runs: [], width: 80, goal: goal({ doneAt: 62_000, outcome: "verified" }) });
+	assert.equal(won.length, 1, "a finished goal closes back to one line");
+	assert.match(won[0], /P1 · 1:01 · 3 laps · pit /, "the total race time survives the win");
+	const lost = hudLines({ runs: [], width: 80, goal: goal({ doneAt: 62_000, outcome: "halted" }) });
+	assert.match(lost[0], /✕{5} DNF · halted · 1:01 · 1\/3 laps/);
 	assert.equal(hudIdleLine({ runs: [], width: 20 }).length > 0, true);
 });
 
@@ -40,7 +49,7 @@ test("the frame is closed and carries one row per live agent, never the old spec
 	assert.match(lines[lines.length - 1], /^╰─+╯$/);
 	assert.equal(lines.filter((l) => /^│ /.test(l)).length, 1 + 3, "one goal line plus one row per live agent");
 	assert.match(lines.join("\n"), /3 live/);
-	assert.match(lines.join("\n"), /round 2/);
+	assert.match(lines[0], /LAP 2\/3/, "the lap is on the border, not a second body row");
 	const oldStatus = readFileSync(join(here, "extensions/finisher/src/panel-widget.ts"), "utf8");
 	assert.ok(!/state\.phase|state\.spec|unapproved/.test(oldStatus), "the old spec/phase status bar is gone");
 	assert.match(oldStatus, /hudRender|styledHudLines|hudLines/, "the widget must render through the HUD module instead of building its own line");
@@ -58,7 +67,8 @@ test("the widget pi actually calls renders at the width pi gives it, collapses t
 	const box = createStateBox({ phase: "requirements", turnsUsed: 3, tokensUsed: 12_000, escalations: [], trajectoryFlags: [], subagentRuns: [] });
 	const sent = [];
 	const theme = { fg: (_token, text) => text };
-	const ctx = { hasUI: true, ui: { setWidget: (key, factory, opts) => sent.push({ key, factory, opts }) } };
+	const statuses = [];
+	const ctx = { hasUI: true, ui: { setWidget: (key, factory, opts) => sent.push({ key, factory, opts }), setStatus: (key, text) => statuses.push({ key, text }) } };
 	const widget = createPanelWidget({ pi: {}, get state() { return box.get(); }, persist: () => {} });
 
 	widget.updateWidget(ctx);
@@ -134,7 +144,8 @@ test("clicking an agent's row opens that agent's page, and clicking the frame do
 			return null;
 		},
 	});
-	const ctx = { hasUI: true, ui: { setWidget: (key, factory, opts) => sent.push({ key, factory, opts }) } };
+	const statuses = [];
+	const ctx = { hasUI: true, ui: { setWidget: (key, factory, opts) => sent.push({ key, factory, opts }), setStatus: (key, text) => statuses.push({ key, text }) } };
 	box.get().subagentRuns.push({ role: "swarm", ok: false, summary: "", at: 11, startedAt: 1_000, status: "running", slotId: "s1" });
 	box.get().subagentRuns.push({ role: "verifier", ok: false, summary: "", at: 22, startedAt: 1_000, status: "running", slotId: "v1" });
 	widget.updateWidget(ctx);

@@ -5,19 +5,25 @@ import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
 import { GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, goalCases, tooManyCasesNote, unconfirmedGoalNote } from "./goal-confirm.ts";
 import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
-import { buildReport, freshAttempts, judgeCase, renderVerifyReport } from "./verify-loop.ts";
+import { buildReport, freshAttempts, judgeCase, repairNote, renderVerifyReport, unusableCases } from "./verify-loop.ts";
+import { judgeRecording, type RecordedCall, type RecordedVerdict } from "./evidence-record.ts";
+import { type CaseEvidence } from "./verify-loop.ts";
+import { appendRecord, doneRecord, gapRecord, journalEnabled, journalPath } from "./lap-journal.ts";
+import { gitOk } from "./worktree.ts";
 import { type State } from "./types.ts";
 import { headOf } from "./pending-apply.ts";
 import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
 import { clearOtherGoals } from "./handoff-stack.ts";
 import { handoffOff } from "./handoff-gate.ts";
-import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
+import { boundWrapper, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
 import { budgetNote, capNeededFor, effortFor, SWARM_TOOL, wavesFor } from "./budget.ts";
 import { subagentTimeout } from "./subagent-config.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
 import { liveByRole, steerLive, followUpLive } from "./subagent-rpc.ts";
 import { recordSteerOnRun } from "./agent-session.ts";
+import { planOf, verifyGate } from "./goal-phase.ts";
+import { registerPhaseTool } from "./phase-tool.ts";
 
 export const roleForMode = (mode: "explore" | "verify" | "code"): "swarm" | "verifier" => (mode === "verify" ? "verifier" : "swarm");
 
@@ -30,6 +36,37 @@ export const registerTools = (ctx: HarnessContext) => {
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const armGoalRound = ctx.armGoalRound;
 	const askGoalConfirm = ctx.askGoalConfirm;
+
+	registerPhaseTool(ctx);
+
+	const repairReports = async <T,>(
+		results: { id: string; ok: boolean; output: string }[],
+		tasks: SwarmTask<T>[],
+		fan: FanOutArgs,
+		slots: SwarmSlot[],
+		concurrency: number,
+		judged: (id: string, output: string, ok: boolean) => CaseEvidence,
+		runOne: (promptFor: (task: SwarmTask<T>, attempt: number) => string) => (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => Promise<{ ok: boolean; output: string }>,
+	): Promise<void> => {
+		const judgeAll = () => buildReport(results.map((r) => judged(r.id, r.output, r.ok)));
+		const unusable = unusableCases(judgeAll());
+		if (!unusable.length) return;
+		const ids = new Set(unusable.map((c) => c.caseId));
+		const retryTasks = tasks.filter((t) => ids.has(t.id));
+		if (!retryTasks.length) return;
+		const note = repairNote(unusable, boundWrapper());
+		const again = await runSwarm(retryTasks, {
+			slots,
+			concurrency,
+			maxAttempts: 1,
+			stopOnDeclaredAnswer: true,
+			run: runOne((task) => `${buildFanOutPrompt(fan, task.payload as { id: string; instruction: string }, 2)}\n\n${note}`),
+		});
+		for (const r of again) {
+			const at = results.findIndex((x) => x.id === r.id);
+			if (at >= 0) results[at] = { ...results[at], ok: r.ok, output: r.output };
+		}
+	};
 
 	const capFor = (name: string, configured: number, cwd: string, params: unknown): number => {
 		if (name !== SWARM_TOOL) return configured;
@@ -60,6 +97,8 @@ export const registerTools = (ctx: HarnessContext) => {
 			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands; mode=code gives every slice its OWN git worktree + branch so coders write in parallel without touching each other, then merges back in deterministic slice-id order and refuses to merge silently when two slices touched the same path. No token/cost ceiling.",
 		promptSnippet: "Fan out parallel sub-agents across the model priority ladder (explore / verify / code in isolated worktrees)",
 		promptGuidelines: [
+			"The workflow is: finisher_goal (confirm once) → finisher_phase plan=[...] → finisher_phase done for each lap in order → finisher_swarm mode=verify exactly once.",
+			"Never call finisher_swarm mode=verify while a lap is still open — it is refused, because verification is one shot at the end of the plan, not per lap.",
 			"Use finisher_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
 			"Use finisher_swarm verify to prove the result against reality: each verifier must RUN commands and end with VERDICT: PASS/FAIL. A claim with no executed command is UNVERIFIED, never PASS. The loop is bounded — fix the real cause and call verify again; identical evidence stops it.",
 			"Treat a worker's report as the evidence: do not re-read the files it read, do not re-run the commands it ran, and for verify never re-check a case a verifier already judged — its verdict and its commands are final for that case.",
@@ -81,6 +120,10 @@ export const registerTools = (ctx: HarnessContext) => {
 		}),
 		async execute(_id, p, sig, _on, ctx) {
 			if (!p.subtasks.length) return { content: [{ type: "text", text: "finisher_swarm: subtasks must contain at least one slice" }], details: {}, isError: true };
+			if (p.mode === "verify") {
+				const gate = verifyGate(planOf(state.goalDriver as { phases?: never; lap?: number } | undefined));
+				if (!gate.allowed) return { content: [{ type: "text", text: gate.note }], details: { gated: true }, isError: true };
+			}
 			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `finisher_swarm: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
 			const ids = new Set<string>();
 			for (const s of p.subtasks) {
@@ -106,17 +149,39 @@ export const registerTools = (ctx: HarnessContext) => {
 				waves: wavesFor(p.subtasks.length, concurrency),
 			});
 			const notes = costCeilingKeysPresent(ctx.cwd).length ? ` ⚠ ignored ceiling key(s): ${costCeilingKeysPresent(ctx.cwd).join(", ")}` : "";
+			const recorded = new Map<string, { calls: RecordedCall[]; verdict?: RecordedVerdict }>();
 			const runOne = <T,>(promptFor: (task: SwarmTask<T>, attempt: number) => string) => async (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => {
 				if (sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
 				const before = state.subagentRuns.length;
-				const pending = launchSubagent(ctx, roleForMode(p.mode), promptFor(task, attempt), undefined, sig, slot.model);
+				const pending = launchSubagent(ctx, roleForMode(p.mode), promptFor(task, attempt), undefined, sig, slot.model, { caseId: task.id });
 				const started = state.subagentRuns[before];
 				if (started) started.slotId = slot.id;
 				const r = await pending;
+				recorded.set(task.id, { calls: r.calls ?? [], ...(r.verdict ? { verdict: r.verdict } : {}) });
 				return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
 			};
+			const treeState = (): string =>
+				gitOk(["status", "--porcelain"], ctx.cwd)
+					.out.split("\n")
+					.map((line) => line.trim())
+					.filter((line) => line && !line.includes(".finisher/"))
+					.join("\n");
+			const treeBefore = p.mode === "verify" ? treeState() : "";
+			const judgedCase = (id: string, output: string, ok: boolean) => {
+				if (p.mode !== "verify") return judgeCase(id, output, ok ? {} : { exitCode: 1 });
+				const rec = recorded.get(id);
+				if (!rec)
+					return ok
+						? { caseId: id, verdict: "UNVERIFIED" as const, commands: [], reason: "the harness recorded nothing for this case — a verdict without a recording proves nothing" }
+						: { caseId: id, verdict: "BLOCKED" as const, commands: [], reason: "the verifier run did not finish — nothing was exercised" };
+				const treeAfter = treeState();
+				if (treeAfter !== treeBefore)
+					return { caseId: id, verdict: "BLOCKED" as const, commands: [], reason: "the verifier changed the working tree — a verifier must not write into the repo, so its run is not evidence. Run the same check again from a clean tree." };
+				const verdict = judgeRecording(rec.calls, rec.verdict);
+				return { caseId: id, verdict: verdict.verdict, commands: [], ...(verdict.reason ? { reason: verdict.reason } : {}) };
+			};
 			if (p.mode === "code") return await runCodeSwarm(ctx, p.subtasks, { slots, concurrency, maxAttempts: effort, goal: p.goal, sig, ladder, source, notes });
-			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s: { id: string; instruction: string }) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}) };
+			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s: { id: string; instruction: string }) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}), boundHint: boundWrapper() };
 			const tasks = fan.subtasks.map((s) => ({ id: s.id, payload: s }));
 			const results = await runSwarm(tasks, {
 				slots,
@@ -125,12 +190,13 @@ export const registerTools = (ctx: HarnessContext) => {
 				stopOnDeclaredAnswer: p.mode === "verify",
 				run: runOne((task, attempt) => buildFanOutPrompt(fan, task.payload!, attempt)),
 			});
+			if (p.mode === "verify") await repairReports(results, tasks, fan, slots, concurrency, judgedCase, runOne);
 			const failed = results.filter((r) => !r.ok);
 			const body = results
 				.map((r) => `## ${r.id} ${r.ok ? "✓" : "✗"}${r.model ? ` [${r.model}]` : ""}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ""}\n${r.output.trim() || "(no output)"}`)
 				.join("\n\n");
 			if (p.mode === "verify") {
-				const report = buildReport(results.map((r) => judgeCase(r.id, r.output, r.ok ? {} : { exitCode: 1 })));
+				const report = buildReport(results.map((r) => judgedCase(r.id, r.output, r.ok)));
 				const active = state.goalDriver as GoalRunState | undefined;
 				const openGoal = !!active && !goalDriverDone(active);
 				const verified = `${NON_GOAL_PREFIX}${report.cases.map((c) => c.caseId).join(", ") || "run"}`;
@@ -148,9 +214,40 @@ export const registerTools = (ctx: HarnessContext) => {
 				}
 				const finalText = reportWithDecisions(step.text, state.decisions ?? []);
 				if (step.action === "finish" || step.action === "human" || step.action === "halt") writeDecisionsFile(ctx.cwd, driver.goal, state.decisions ?? []);
+				const before = state.goalDriver as GoalRunState;
 				state.goalDriver = step.state;
 				persist();
 				updateWidget(ctx);
+				if (journalEnabled()) {
+					const journal = journalPath();
+					const plan = (state.goalDriver as GoalRunState).phases ?? [];
+					if (step.action === "replan")
+						appendRecord(
+							journal,
+							gapRecord({
+								repo: ctx.cwd,
+								goal: driver.goal,
+								round: step.round,
+								lap: Math.min(plan.length, Math.max(1, state.goalDriver.lap ?? 1)),
+								laps: plan.length,
+								added: plan.slice((before.phases ?? []).length).map((p) => p.text),
+								cases: report.cases.map((c) => ({ id: c.caseId, verdict: c.verdict, ...(c.reason ? { reason: c.reason } : {}) })),
+								models: results.map((r) => r.model),
+								outcome: step.action,
+							}),
+						);
+					if (step.action === "finish" || step.action === "human" || step.action === "halt")
+						appendRecord(
+							journal,
+							doneRecord({
+								repo: ctx.cwd,
+								goal: driver.goal,
+								rounds: step.round,
+								laps: plan.length,
+								outcome: step.state.outcome ?? "halted",
+							}),
+						);
+				}
 				if (step.action === "replan") armGoalRound(step.text);
 				return {
 					content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), ...(budget ? ["", budget] : []), "", body].join("\n") }],

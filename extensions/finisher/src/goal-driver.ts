@@ -1,6 +1,5 @@
 import {
 	buildHumanTestNote,
-	buildReplanPrompt,
 	decideOnce,
 	freshAttempts,
 	MAX_LOOP_BATCHES,
@@ -10,6 +9,7 @@ import {
 	type VerifyAttempts,
 	type VerifyReport,
 } from "./verify-loop.ts";
+import { appendPhases, currentLap, fixPhases, phaseListLines, planGrewBy, planOf, totalPhases, type GoalPhase } from "./goal-phase.ts";
 
 export interface GoalRunState {
 	goal: string;
@@ -17,6 +17,10 @@ export interface GoalRunState {
 	attempts: VerifyAttempts;
 	doneAt?: number;
 	outcome?: "verified" | "needs-human" | "halted";
+	phases?: GoalPhase[];
+	lap?: number;
+	lapAt?: number;
+	lapMs?: number[];
 }
 
 export interface GoalStep {
@@ -27,7 +31,7 @@ export interface GoalStep {
 	state: GoalRunState;
 }
 
-export const freshGoalRun = (goal: string, at = Date.now()): GoalRunState => ({ goal: goal.trim(), confirmedAt: at, attempts: freshAttempts() });
+export const freshGoalRun = (goal: string, at = Date.now()): GoalRunState => ({ goal: goal.trim(), confirmedAt: at, attempts: freshAttempts(), phases: [], lap: 0, lapAt: 0, lapMs: [] });
 
 export const goalKey = (goal: string): string => goal.replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -52,18 +56,25 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 		};
 	if (decision.kind === "replan") {
 		const human = needsHuman(report);
+		const before = planOf(state);
+		const grown = appendPhases(before, fixPhases(report), round, at);
+		const added = planGrewBy(before, grown);
 		return {
 			action: "replan",
 			round,
-			state: advanced,
+			state: { ...advanced, phases: grown.phases, lap: grown.lap, lapAt: grown.lapAt, lapMs: grown.lapMs },
 			report,
 			text: [
 				renderVerifyReport(report),
 				"",
-				buildReplanPrompt(report, state.goal),
+				`verification failed for: ${state.goal}`,
+				`${added} fix lap(s) were added to the plan — work them one lap at a time, then verify once when every lap is closed:`,
+				...phaseListLines(grown),
+				"",
+				`next: LAP ${Math.min(grown.lap, totalPhases(grown))}/${totalPhases(grown)} — ${currentLap(grown)?.text ?? "no lap"}`,
 				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — if it cannot be exercised from a command, say so and hand it to the human instead of forcing it.`] : []),
 				"",
-				`this is attempt ${round} of ${maxBatches} — plan the next loop yourself, then verify once at the end again`,
+				`this is verify round ${round} of ${maxBatches} — close every lap with finisher_phase done, then call finisher_swarm mode=verify once`,
 			].join("\n"),
 		};
 	}

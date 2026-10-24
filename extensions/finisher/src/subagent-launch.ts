@@ -8,6 +8,9 @@ import { resolveSubagentModel } from "./models.ts";
 import { type Persist, type RescheduleTicker, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { handoffInjectionFor, handoffStackFor } from "./handoff-gate.ts";
 import { type State, type SubagentRun } from "./types.ts";
+import { recordCall, type RecordedCall } from "./evidence-record.ts";
+import { lastVerdict, resetVerdict, verdictPath } from "./verdict-file.ts";
+import { type RecordedVerdict } from "./evidence-record.ts";
 
 export const createSubagentLaunch = (ctx: HarnessContext) => {
 	const state = ctx.state;
@@ -23,8 +26,13 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 		onChunk?: (chunk: string) => void,
 		signal?: AbortSignal,
 		modelOverride?: string,
-	): Promise<{ ok: boolean; output: string; logPath: string }> => {
+		opts: { caseId?: string } = {},
+	): Promise<{ ok: boolean; output: string; logPath: string; calls: RecordedCall[]; verdict?: RecordedVerdict }> => {
 		const logPath = subagentLogPath(ctx.cwd, role);
+		const calls: RecordedCall[] = [];
+		const argsById = new Map<string, { name?: string; args?: unknown }>();
+		const verdictFile = role === "verifier" && opts.caseId ? verdictPath(ctx.cwd, opts.caseId) : undefined;
+		if (verdictFile) resetVerdict(verdictFile);
 		const mainModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 		const modelPattern = resolveSubagentModel(ctx.cwd, { slotModel: modelOverride, mainModel }).pattern;
 		const run: SubagentRun = { role, ok: false, summary: "", at: Date.now(), startedAt: Date.now(), logPath, status: "running" };
@@ -51,6 +59,20 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 				model: modelPattern,
 				onChunk: runChunk,
 				signal,
+				...(verdictFile ? { verdictFile } : {}),
+				onTool: (tool) => {
+					if (tool.phase === "start") {
+						argsById.set(tool.id, { name: tool.name, args: tool.args });
+						return;
+					}
+					const started = argsById.get(tool.id);
+					argsById.delete(tool.id);
+					const next = recordCall(calls, { name: tool.name ?? started?.name, args: started?.args, isError: tool.isError });
+					if (next !== calls) {
+						calls.length = 0;
+						calls.push(...next);
+					}
+				},
 			});
 			const diagnosis = diagnoseProviderMissing(modelPattern, r0);
 			const r = diagnosis && !r0.ok ? { ...r0, output: `${buildProviderMissingGuidance(role, diagnosis.patternProvider)}\n---\n${r0.output}` } : r0;
@@ -70,7 +92,9 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 				}
 				run.handoffItems = handoffStackFor<never>(undefined).length;
 			}
-			return r;
+			run.calls = calls;
+			const verdict = verdictFile ? lastVerdict(verdictFile) : undefined;
+			return { ...r, calls, ...(verdict ? { verdict } : {}) };
 		} finally {
 			rescheduleTicker(ctx);
 			persist();

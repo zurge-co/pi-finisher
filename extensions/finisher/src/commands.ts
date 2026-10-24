@@ -7,6 +7,7 @@ import { availableModelChoices, ignoredModelKeys, modelsPath, readLadderSlots, w
 import { ladderLabel } from "./ladder-model.ts";
 import { readModelLadder } from "./swarm.ts";
 import { type HarnessContext } from "./kit.ts";
+import { journalPath, readJournal, summarizeGaps, summaryLines } from "./lap-journal.ts";
 
 export const ladderRows = (cwd: string): { key: string; pattern?: string }[] => readLadderSlots(cwd);
 
@@ -59,7 +60,14 @@ export const registerCommands = (ctx: HarnessContext) => {
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
 			const [sub] = args.trim().split(/\s+/);
-			if (sub !== "models") return ctx.ui.notify("usage: /finisher models", "info");
+			if (sub === "gaps") {
+				const records = readJournal();
+				const summary = summarizeGaps(records);
+				const path = journalPath();
+				ctx.ui.notify([`▚ extra-lap journal — ${path}`, ...summaryLines(summary), summary.lastAt ? `last recorded: ${new Date(summary.lastAt).toISOString()}` : "", "every replan is appended as one JSON line there: goal, round, lap n/n, the added fix laps, and each case verdict with its reason."].filter(Boolean).join("\n"), "info");
+				return;
+			}
+			if (sub !== "models") return ctx.ui.notify("usage: /finisher models | /finisher gaps", "info");
 			if (sub === "models") {
 				const rows = ladderRows(ctx.cwd);
 				const ladder = readModelLadder(ctx.cwd);

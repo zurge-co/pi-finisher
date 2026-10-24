@@ -45,12 +45,12 @@ test("sub-agents boot without MCP servers and without skills — both roles", ()
 test("the verifier prompt is a fixed short scaffold: every line it adds is bounded, for any goal and any instruction", () => {
 	const scaffold = (goal, instruction, attempt = 1) => buildFanOutPrompt({ mode: "verify", subtasks: [], goal }, { id: "v1", instruction }, attempt);
 	const fixed = scaffold("", "").length;
-	assert.ok(fixed <= 950, `the fixed scaffold alone is ${fixed} chars — it must stay short`);
+	assert.ok(fixed <= 2_400, `the fixed scaffold alone is ${fixed} chars — it must stay short`);
 	for (const goal of ["g", "prove the bound holds for every input", "x".repeat(400)]) {
 		for (const attempt of [1, 2, 9]) {
 			const p = scaffold(goal, "exercise the bound", attempt);
 			assert.ok(p.length <= fixed + goal.length + 40 + (attempt > 1 ? 90 : 0), `prompt grew by more than the goal it echoes: ${p.length} vs ${fixed}+${goal.length}`);
-			for (const phrase of ["do not run the test suite", "git diff", "VERDICT: UNVERIFIED", "run NOTHING else", "a green suite is not proof", "smallest command"])
+			for (const phrase of ["do not run the test suite", "git diff", "VERDICT: UNVERIFIED", "run NOTHING else", "a green suite is not proof", "smallest command", "finisher_verdict", "DESIRED RESULT", "Never write into the repo", "harness records every command", "DO THIS, IN THIS ORDER"])
 				assert.match(p, new RegExp(phrase), `${phrase} must be unconditional, not trading off against length`);
 		}
 	}
