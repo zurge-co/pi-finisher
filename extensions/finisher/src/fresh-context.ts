@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { finisherDir } from "./types.ts";
 import { stackSummary, type HandoffItem } from "./handoff-stack.ts";
+import { allLapsDone, planOf, totalPhases } from "./goal-phase.ts";
+import { renderLapTracker, type LapTracker } from "./lap-tracker.ts";
 
 export const FRESH_KEY = "freshContext";
 export const FRESH_DEFAULT = true;
@@ -71,6 +73,45 @@ export const shouldReset = (opts: FreshResetInput): boolean =>
 
 export const FRESH_DEBOUNCE_MS = 2_000;
 
+export const LAP_DIRECTIVE =
+	"[finisher fresh context] a lap just closed; the work that produced it was summarized on purpose so the next lap starts clean. The lap tracker below is the state that matters — re-read the repo and the tracker on disk instead of trusting memory.";
+
+export const LAP_TRACKER_BUDGET = FRESH_SUMMARY_MAX - LAP_DIRECTIVE.length - 4;
+
+export const lapCompactionSummary = (tracker: LapTracker): string => clipSummary([LAP_DIRECTIVE, renderLapTracker(tracker, LAP_TRACKER_BUDGET)].join("\n\n"));
+
+export interface FreshLapState {
+	enabled: boolean;
+	hasWork: boolean;
+	aborted?: boolean;
+	lastResetAt?: number;
+	goal?: { doneAt?: number; phases?: { id: string; text: string; round: number; addedAt: number }[]; lap?: number; lapAt?: number; lapMs?: number[] };
+	consumedLapAt?: number;
+	reportUnread?: boolean;
+	now?: number;
+}
+
+export const lapBoundaryOpen = (goal: FreshLapState["goal"]): boolean => {
+	if (!goal || goal.doneAt) return false;
+	const plan = planOf(goal);
+	if (!totalPhases(plan) || allLapsDone(plan)) return false;
+	return plan.lap > 1;
+};
+
+export const freshLapDecision = (o: FreshLapState): { reset: boolean; lapAt?: number; lap?: number } => {
+	const now = o.now ?? Date.now();
+	const plan = planOf(o.goal);
+	const reset =
+		o.enabled &&
+		o.hasWork &&
+		!o.aborted &&
+		o.reportUnread !== true &&
+		lapBoundaryOpen(o.goal) &&
+		plan.lapAt !== o.consumedLapAt &&
+		!((o.lastResetAt ?? 0) > now - FRESH_DEBOUNCE_MS);
+	return reset ? { reset: true, lapAt: plan.lapAt, lap: plan.lap } : { reset: false };
+};
+
 export interface FreshResetState {
 	enabled: boolean;
 	hasWork: boolean;
@@ -97,6 +138,8 @@ export const freshResetDecision = (o: FreshResetState): { reset: boolean; goalAt
 	return reset ? { reset: true, goalAt } : { reset: false };
 };
 
+export const isTrackerEntry = (entry: { type?: string; customType?: string } | undefined): boolean => entry?.type === "custom" && entry.customType === "finisher-tracker";
+
 export interface EntryRef {
 	sourceEntry?: { id?: string; type?: string; message?: { role?: string } };
 }
@@ -113,6 +156,13 @@ export const freshCompactionEntry = (summary: string, firstKeptEntryId: string |
 	type: "compaction",
 	summary: clipSummary(summary),
 	firstKeptEntryId,
+});
+
+export const trackerEntryDraft = (summary: string): { type: "custom_message"; customType: string; content: string; display: boolean } => ({
+	type: "custom_message",
+	customType: "finisher-tracker",
+	content: summary,
+	display: false,
 });
 
 export const freshStatusLine = (cfg: FreshContextConfig, items: HandoffItem[]): string =>

@@ -20,7 +20,8 @@ import { createGoalPicker } from "./src/goal-dialog.ts";
 import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
-import { buildFreshSummary, freshCompactionEntry, freshDirective, freshResetDecision, lastUserEntryId, readFreshContextConfig } from "./src/fresh-context.ts";
+import { buildFreshSummary, freshCompactionEntry, freshDirective, freshLapDecision, freshResetDecision, isTrackerEntry, lapCompactionSummary, lastUserEntryId, readFreshContextConfig, trackerEntryDraft } from "./src/fresh-context.ts";
+import { buildLapTracker, clearLapTracker, readLapTracker, renderLapTracker, writeLapTracker } from "./src/lap-tracker.ts";
 import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
 import { readHandoff } from "./src/handoff-stack.ts";
 import { handoffStackFor } from "./src/handoff-gate.ts";
@@ -67,6 +68,7 @@ export * from "./src/goal-run.ts";
 export * from "./src/handoff-stack.ts";
 export * from "./src/handoff-classify.ts";
 export * from "./src/fresh-context.ts";
+export * from "./src/lap-tracker.ts";
 export * from "./src/compaction-guard.ts";
 export * from "./src/fullscreen.ts";
 export * from "./src/handoff-model.ts";
@@ -207,10 +209,18 @@ export default function (pi: ExtensionAPI) {
 		return { cancel: true };
 	});
 
+	const liveTrackerText = (): string => {
+		const goal = box.get().goalDriver;
+		if (!goal || goal.doneAt) return "";
+		const tracker = buildLapTracker(goal, box.get().verifyCalls ?? [], Date.now());
+		return tracker ? renderLapTracker(tracker) : "";
+	};
+
 	pi.on("before_agent_start", async (event) => {
 		const bulletin = takeContextBulletin(box.get());
 		if (bulletin) persist();
-		const sp = harnessSystemPrompt(event.systemPrompt, box.get().humanLang ?? DEFAULT_GOAL_LANG, bulletin);
+		const extra = [bulletin, liveTrackerText()].filter(Boolean).join("\n\n");
+		const sp = harnessSystemPrompt(event.systemPrompt, box.get().humanLang ?? DEFAULT_GOAL_LANG, extra);
 		if (sp === event.systemPrompt) return;
 		return { systemPrompt: sp };
 	});
@@ -226,6 +236,29 @@ export default function (pi: ExtensionAPI) {
 		box.get().tokensUsed += m?.role === "assistant" ? (m.usage?.totalTokens ?? 0) : 0;
 		kit.updateWidget(ctx);
 		persist();
+		const goal = box.get().goalDriver;
+		const tracker = buildLapTracker(goal, box.get().verifyCalls ?? [], Date.now());
+		if (!goal || goal.doneAt || !tracker) {
+			clearLapTracker(ctx.cwd);
+			return;
+		}
+		writeLapTracker(ctx.cwd, goal, box.get().verifyCalls ?? [], Date.now());
+		const decision = freshLapDecision({
+			enabled: readFreshContextConfig(ctx.cwd).enabled,
+			hasWork: ev.context.contextEntries.length > 0,
+			aborted: ev.outcome !== "completed",
+			lastResetAt: box.get().freshResetAt,
+			goal,
+			consumedLapAt: box.get().freshResetLapAt,
+			reportUnread: reportUnread(goal, box.get().humanAt),
+			now: Date.now(),
+		});
+		if (!decision.reset) return;
+		const summary = lapCompactionSummary(tracker);
+		box.get().freshResetAt = Date.now();
+		box.get().freshResetLapAt = decision.lapAt;
+		persist();
+		return { entries: [freshCompactionEntry(summary), trackerEntryDraft(summary)] };
 	});
 
 	pi.on("agent_before_settle", async (ev, ctx) => {
@@ -242,10 +275,14 @@ export default function (pi: ExtensionAPI) {
 		});
 		if (!decision.reset) return;
 		const summary = buildFreshSummary(handoffStackFor(readHandoff(ctx.cwd)));
+		const tracker = buildLapTracker(box.get().goalDriver, box.get().verifyCalls ?? [], Date.now());
+		const carried = tracker && tracker.laps > 0 ? tracker : undefined;
 		box.get().freshResetAt = Date.now();
 		box.get().freshResetGoalAt = decision.goalAt;
+		clearLapTracker(ctx.cwd);
 		persist();
-		return { entries: [freshCompactionEntry(freshDirective(summary), lastUserEntryId(ev.context.contextEntries))] };
+		const entry = freshCompactionEntry(freshDirective(summary), lastUserEntryId(ev.context.contextEntries));
+		return { entries: carried ? [entry, trackerEntryDraft(lapCompactionSummary(carried))] : [entry] };
 	});
 
 	pi.on("agent_end", async (ev, ctx) => {
