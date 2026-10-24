@@ -81,7 +81,6 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		const signature = hudSignature(hudInput());
 		if (signature !== lastSignature) {
 			lastSignature = signature;
-			ctx.ui.setStatus("finisher-cost", `turns ${state.turnsUsed} · tok ${state.tokensUsed}`);
 			ctx.ui.setWidget(
 				"finisher",
 				(_tui, theme) => {

@@ -63,7 +63,7 @@ export const hudRowEntries = (input: HudInput, maxRows = HUD_MAX_ROWS): { text: 
 export const hudRows = (input: HudInput, maxRows = HUD_MAX_ROWS): string[] => hudRowEntries(input, maxRows).map((e) => e.text);
 
 export const hudIdleLine = (input: HudInput): string =>
-	truncateToWidth(raceIdleLine(raceOf({ ...input, width: 0 }), HUD_MARK, HUD_NAME, tallySegment(input)), Math.max(0, input.width), "…");
+	truncateToWidth(raceIdleLine(raceOf({ ...input, width: 0 }), HUD_MARK, HUD_NAME), Math.max(0, input.width), "…");
 export const hudLines = (input: HudInput): string[] => hudFrames(input).map((f) => f.text);
 
 export type HudKind = "border" | "goal" | "row" | "idle";
@@ -114,7 +114,7 @@ export const hudPaint = (frames: HudFrame[], theme: HudTheme, race?: Race): stri
 export const hudFrames = (input: HudInput): HudFrame[] => {
 	const width = Math.max(8, Math.floor(input.width));
 	const race = raceOf({ ...input, width });
-	if (!hudActive(input)) return [{ kind: "idle", text: truncateToWidth(raceIdleLine(race, HUD_MARK, HUD_NAME, tallySegment(input)), width, "…") }];
+	if (!hudActive(input)) return [{ kind: "idle", text: truncateToWidth(raceIdleLine(race, HUD_MARK, HUD_NAME), width, "…") }];
 	const live = liveRuns(input.runs).length;
 	const segments = [`${HUD_MARK} ${HUD_NAME}`, raceSegment(race), live ? `${live} live · click a row · ctrl+_ pages` : "", tallySegment(input)];
 	const body: HudFrame[] = [

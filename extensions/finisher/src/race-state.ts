@@ -169,6 +169,6 @@ export const raceLoaderMessage = (race: Race): string => ` ${raceLoaderCaption(r
 export const raceIdleLine = (race: Race, mark: string, name = "finisher", tally = ""): string => {
 	const tail = tally ? ` · ${tally}` : "";
 	if (race.phase === "win") return `${mark} ${name} · ${raceSegment(race)} · ${race.totalClock} · ${race.laps} laps · pit ${race.pitClock}${tail}`;
-	if (race.phase === "dnf") return `${mark} ${name} · ${raceSegment(race)} · ${race.totalClock} · ${race.done}/${race.laps || "?"} laps · pit ${race.pitClock}${tail}`;
-	return `${mark} ${name} · ${raceSegment(race)}${tail}`;
+	if (race.phase === "dnf") return `${mark} ${name} · ${raceSegment(race)} · ${race.totalClock} · ${race.done}/${race.laps || "?"} laps · pit ${race.pitClock}`;
+	return `${mark} ${name} · ${raceSegment(race)}`;
 };
