@@ -10,7 +10,7 @@ export interface EvidenceCommand {
 	ranAt?: number;
 }
 
-export type CaseVerdict = "PASS" | "FAIL" | "UNVERIFIED" | "BLOCKED";
+export type CaseVerdict = "PASS" | "FAIL" | "UNVERIFIED" | "BLOCKED" | "HUMAN";
 
 export const INFRA_MARKERS: ReadonlyArray<RegExp> = [
 	/sub-agent rpc error/i,

@@ -120,22 +120,11 @@ export const tooManyCasesNote = (n: number): string =>
 
 export const caseKey = (c: string): string => c.replace(/\s+/g, " ").trim().toLowerCase();
 
-export const sameCaseSet = (a: string[], b: string[]): boolean => {
-	const left = new Set(a.map(caseKey).filter(Boolean));
-	const right = new Set(b.map(caseKey).filter(Boolean));
-	if (left.size !== right.size) return false;
-	for (const c of left) if (!right.has(c)) return false;
-	return true;
-};
+export const GOAL_UNCHANGED_NOTE =
+	"the goal is unchanged, so it was NOT asked again: a goal the human already confirmed is never re-confirmed, and changing which cases prove it is the agent's own plan, not the human's decision. Continuing the same goal.";
 
-export const casesOnlyChanged = (previous: string[], next: string[]): string[] =>
-	next.filter((c) => !previous.some((p) => caseKey(p) === caseKey(c)));
-
-export const droppedCases = (previous: string[], next: string[]): string[] =>
-	previous.filter((p) => !next.some((c) => caseKey(c) === caseKey(p)));
-
-export const GOAL_CHANGE_NOTE =
-	"the confirmed goal was left exactly as it was — a goal and its cases can only change when the human confirms the change in the dialog. Call finisher_goal again with the same goal to continue it, or state the new goal and let the human confirm it.";
+export const GOAL_ALREADY_VERIFIED_NOTE =
+	"this exact goal was already confirmed and verified, so it is not re-opened — reopening it would restart work the human never asked for again. Report the result; to continue, state the new goal the human wants and let them confirm that one.";
 
 export const GOAL_TIMEOUT_NOTE = (seconds: number): string =>
 	[
@@ -145,24 +134,57 @@ export const GOAL_TIMEOUT_NOTE = (seconds: number): string =>
 	].join("\n");
 
 export interface GoalConsent {
-	blockedAt: number;
+	humanTurns: number;
 	reason: "declined" | "timeout";
+	sessionId?: string;
 }
 
-export const consentBlocks = (consent: GoalConsent | undefined, humanAt: number | undefined): boolean => !!consent && (humanAt ?? 0) <= consent.blockedAt;
+export interface ConsentView {
+	humanTurns: number;
+	sessionId?: string;
+}
+
+export const UNKNOWN_HUMAN_TURNS = -1;
+export const UNKNOWN_SESSION = "";
+
+export const sessionIdFrom = (sessionManager: { getSessionId?: () => unknown } | undefined): string => {
+	try {
+		const id = sessionManager?.getSessionId?.();
+		return typeof id === "string" && id ? id : UNKNOWN_SESSION;
+	} catch {
+		return UNKNOWN_SESSION;
+	}
+};
+
+export const humanTurnsFrom = (entries: { type?: string; message?: { role?: string } }[]): number => {
+	if (!Array.isArray(entries)) return UNKNOWN_HUMAN_TURNS;
+	return entries.filter((e) => e?.type === "message" && e?.message?.role === "user").length;
+};
+
+export const consentBlocks = (consent: GoalConsent | undefined, view: ConsentView): boolean => {
+	if (!consent) return false;
+	if (!consent.sessionId || consent.sessionId !== view.sessionId) return false;
+	if (view.humanTurns < 0) return false;
+	return view.humanTurns === consent.humanTurns;
+};
+
+export const consentLifts = (state: { goalConsent?: GoalConsent }): boolean => {
+	const had = !!state.goalConsent;
+	state.goalConsent = undefined;
+	return had;
+};
 
 export const humanResumes = (state: { humanAt?: number; goalConsent?: GoalConsent }, at: number): boolean => {
-	const cleared = !!state.goalConsent;
+	const cleared = consentLifts(state);
 	state.humanAt = at;
-	state.goalConsent = undefined;
 	return cleared;
 };
 
 export const GOAL_CONSENT_WAIT_NOTE =
-	"the human has not said anything since the last goal dialog was refused (declined or timed out), so this run stays stopped. Report the refusal once and wait — do not ask again, do not start work, and do not re-word the goal hoping it passes. Only a new message from the human resumes it.";
+	"the human has not said anything since the last goal dialog was refused (declined or timed out), so this run stays stopped. Report the refusal once and wait — do not ask again, do not start work, and do not re-word the goal hoping it passes. A new message from the human resumes it, and only a new message does.";
 
 export const GOAL_DECLINED_NOTE =
-	"goal NOT confirmed — the human declined the goal or its cases, so nothing was started. Re-state the goal, or the cases that were wrong, and call finisher_goal again. Do not begin the work on your own.";
+	"goal NOT confirmed — the human declined the goal, so nothing was started. Report it once and wait for the human; do not re-word the same goal hoping it passes, and do not begin the work on your own.";
 
 export const unconfirmedGoalNote = (allPass: boolean): string =>
 	[

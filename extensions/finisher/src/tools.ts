@@ -1,8 +1,8 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildGoalToolText, goalDriverDone, goalKey, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
+import { buildGoalToolText, casesForGate, goalGateAsks, goalGateFor, reopenGoal, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, readConfirmTimeout, surfaceLine } from "./goal-run.ts";
-import { GOAL_CHANGE_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, casesOnlyChanged, cleanChrome, consentBlocks, droppedCases, goalCases, sameCaseSet, tooManyCasesNote, type GoalAskOutcome, type GoalChromeOverrides, type GoalConsent } from "./goal-confirm.ts";
+import { GOAL_ALREADY_VERIFIED_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, GOAL_UNCHANGED_NOTE, cleanChrome, consentBlocks, goalCases, humanTurnsFrom, sessionIdFrom, tooManyCasesNote, UNKNOWN_HUMAN_TURNS, type GoalAskOutcome, type GoalChromeOverrides } from "./goal-confirm.ts";
 import { DEFAULT_GOAL_LANG, goalLanguageNote, languageTag, readableIn, resolveGoalLang } from "./human-language.ts";
 import { type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots } from "./swarm.ts";
@@ -23,6 +23,17 @@ export const SWARM_MODES = ["code"] as const;
 export const RETIRED_MODES = ["explore", "verify"] as const;
 export const retiredModeNote = (mode: string): string =>
 	`finisher_swarm mode=${mode} is gone: explore and plan are yours alone (read the files yourself), and verification is ${"finisher_verify"} — the harness records what you actually run, so no sub-agent judges your work. This tool now spawns coders in worktrees and nothing else.`;
+
+const humanTurnsNow = (ctx: ExtensionContext): number => {
+	try {
+		const entries = ctx.sessionManager?.getEntries();
+		return Array.isArray(entries) ? humanTurnsFrom(entries as never) : UNKNOWN_HUMAN_TURNS;
+	} catch {
+		return UNKNOWN_HUMAN_TURNS;
+	}
+};
+
+const sessionIdNow = (ctx: ExtensionContext): string => sessionIdFrom(ctx.sessionManager as never);
 
 export const registerTools = (ctx: HarnessContext) => {
 	const persist = ctx.persist;
@@ -131,13 +142,14 @@ export const registerTools = (ctx: HarnessContext) => {
 		name: "finisher_goal",
 		label: "finisher · goal",
 		description:
-			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with finisher_verify, the harness judges each case from the commands it watched you run, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
+			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with finisher_verify, the harness judges each case from the commands it watched you run, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. The goal is the human's decision and the cases are yours: an unchanged goal is never re-confirmed, and only a changed goal opens the dialog again. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
 		promptGuidelines: [
 			"Call finisher_goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
+			"The same goal is never confirmed twice: calling it again with an unchanged goal resumes the run without a dialog, even if the cases changed or the goal was closed by a verify round.",
 			"Write the goal and every case in the language the human writes in, and pass that language as lang: the dialog they confirm is in their language, never yours. Paths, identifiers and commands stay verbatim.",
 			"After a 'fix' step, fix the real cause and call finisher_goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
-			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or report honestly that it cannot be proven here.",
+			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or declare it { human: true } in finisher_verify when only the human can check it.",
 		],
 		parameters: Type.Object({
 			goal: Type.String({ description: "the outcome, in the human's words — one goal per run" }),
@@ -166,30 +178,32 @@ export const registerTools = (ctx: HarnessContext) => {
 					details: { goal, confirmed: false, outcome: "unreadable-goal", lang },
 					isError: true,
 				};
-			const consent = state.goalConsent;
-			if (consent && (state.humanAt ?? 0) <= consent.blockedAt)
-				return {
-					content: [{ type: "text", text: `${GOAL_CONSENT_WAIT_NOTE}\n(last refusal: ${consent.reason})` }],
-					details: { goal, confirmed: false, outcome: "blocked-until-human", reason: consent.reason },
-					isError: true,
-				};
 			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
 			const previous = state.goalDriver as GoalRunState | undefined;
-			const openGoal = !!previous && !goalDriverDone(previous);
-			const sameOpenGoal = openGoal && goalKey(previous.goal) === goalKey(goal);
-			const confirmedBefore = previous?.cases ?? state.spec?.crossCheck ?? [];
-			const casesChanged = sameOpenGoal && cases.length > 0 && confirmedBefore.length > 0 && !sameCaseSet(cases, confirmedBefore);
+			const before = previous?.cases ?? state.spec?.crossCheck ?? [];
+			const gate = goalGateFor(previous, goal);
+			if (gate === "verified")
+				return {
+					content: [{ type: "text", text: GOAL_ALREADY_VERIFIED_NOTE }],
+					details: { goal, confirmed: true, outcome: "already-verified", cases: before },
+				};
+			const asks = goalGateAsks(gate);
+			const humanTurns = humanTurnsNow(ctx);
+			const sessionId = sessionIdNow(ctx);
+			const consent = state.goalConsent;
+			if (asks && consentBlocks(consent, { humanTurns, sessionId }))
+				return {
+					content: [{ type: "text", text: `${GOAL_CONSENT_WAIT_NOTE}\n(last refusal: ${consent?.reason})` }],
+					details: { goal, confirmed: false, outcome: "blocked-until-human", reason: consent?.reason },
+					isError: true,
+				};
+			const confirmed = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 
 			const askSeconds = Math.round(readConfirmTimeout(ctx.cwd) / 1000);
-			const refusal = (outcome: GoalAskOutcome, what: string, extra = "") => {
-				const note =
-					outcome === "timeout"
-						? `${GOAL_TIMEOUT_NOTE(askSeconds)}${extra}`
-						: outcome === "declined"
-							? `${what === "goal" ? GOAL_DECLINED_NOTE : GOAL_CHANGE_NOTE}${extra}`
-							: `${GOAL_NO_UI_NOTE}${extra}`;
+			const refusal = (outcome: GoalAskOutcome, extra = "") => {
+				const note = outcome === "timeout" ? `${GOAL_TIMEOUT_NOTE(askSeconds)}${extra}` : outcome === "declined" ? `${GOAL_DECLINED_NOTE}${extra}` : `${GOAL_NO_UI_NOTE}${extra}`;
 				if (outcome === "timeout" || outcome === "declined") {
-					state.goalConsent = { blockedAt: Date.now(), reason: outcome };
+					state.goalConsent = { humanTurns, reason: outcome, sessionId };
 					const line =
 						outcome === "timeout"
 							? `⏱ finisher: nobody answered the goal dialog in ${askSeconds}s — nothing was started; the run is stopped until you ask again`
@@ -205,46 +219,51 @@ export const registerTools = (ctx: HarnessContext) => {
 					persist();
 					updateWidget(ctx);
 				}
-				return { content: [{ type: "text" as const, text: note }], details: { goal, confirmed: false, outcome, casesChanged: what !== "goal" }, isError: true };
+				return { content: [{ type: "text" as const, text: note }], details: { goal, confirmed: false, outcome }, isError: true };
 			};
 
-			const started = resumeOrStart(previous, goal, Date.now(), casesChanged ? [] : confirmedBefore);
-			if (casesChanged) {
-				const added = casesOnlyChanged(confirmedBefore, cases);
-				const gone = droppedCases(confirmedBefore, cases);
-				const confirmedNow = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
-				if (confirmedNow.length > GOAL_TOO_MANY_CASES)
-					return { content: [{ type: "text", text: tooManyCasesNote(confirmedNow.length) }], details: { goal, confirmed: false, cases: confirmedNow.length }, isError: true };
-				const change = await askGoalConfirm(ctx, goal, confirmedNow);
-				const diff = `${added.length ? ` · added: ${added.join("; ")}` : ""}${gone.length ? ` · removed: ${gone.join("; ")}` : ""}`;
-				if (change !== "confirmed") return refusal(change, "cases", diff);
-				state.decisions = [];
-			}
-			if (!sameOpenGoal) {
-				const confirmed = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
+			if (asks) {
 				if (confirmed.length > GOAL_TOO_MANY_CASES)
 					return { content: [{ type: "text", text: tooManyCasesNote(confirmed.length) }], details: { goal, confirmed: false, cases: confirmed.length }, isError: true };
 				const outcome = await askGoalConfirm(ctx, goal, confirmed);
-				if (outcome !== "confirmed") return refusal(outcome, "goal");
+				if (outcome !== "confirmed") return refusal(outcome);
 				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
 			}
-			state.goalDriver = cases.length || confirmedBefore.length ? { ...started, cases: cases.length ? cases : confirmedBefore } : started;
+			const started = gate === "reopen" ? reopenGoal(previous as GoalRunState, cases, state.humanAt ?? 0) : resumeOrStart(previous, goal, Date.now(), cases);
+			const adopted = casesForGate(gate, cases, confirmed, started.cases ?? before);
+			state.goalDriver = adopted.length ? { ...started, cases: adopted } : started;
 			state.goalConsent = undefined;
-			if (cases.length && !state.spec) {
-				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
+			if (adopted.length && !state.spec) {
+				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: adopted, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
 				state.phase = "implementation";
 			}
-			if (cases.length && state.spec) state.spec.crossCheck = cases;
+			if (adopted.length && state.spec) state.spec.crossCheck = adopted;
 			persist();
 			updateWidget(ctx);
-			const next = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
+			const next = adopted.length ? adopted : confirmed;
 			return {
-				content: [{ type: "text", text: buildGoalToolText(started, { action: "finish", round: 0, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then call finisher_verify ONCE at the end:
-${next.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}
-
-verification runs once, reading the change and exercising the changed code directly (never the test suite as proof). If a case cannot be exercised, it comes back as UNVERIFIED for a human to test.` }) }],
-				details: { goal, cases: next, round: 0 },
+				content: [
+					{
+						type: "text",
+						text: buildGoalToolText(started, {
+							action: "finish",
+							round: 0,
+							report: { cases: [], allPass: false, unverified: [], failed: [] },
+							state: started,
+							text: [
+								...(gate === "reopen" ? [GOAL_UNCHANGED_NOTE, ""] : []),
+								"the goal is confirmed — work until every case holds, then call finisher_verify ONCE at the end:",
+								...next.map((c, i) => `  ${i + 1}. ${c}`),
+								"",
+								"verification runs once, reading the change and exercising the changed code directly (never the test suite as proof).",
+								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",
+								"a case only a human can check is separated, never failed: declare it in finisher_verify as { id, human: true, note } and it is listed for them in the final report.",
+							].join("\n"),
+						}),
+					},
+				],
+				details: { goal, cases: next, round: 0, resumed: gate === "reopen" ? "goal-unchanged" : gate },
 			};
 		},
 	}));

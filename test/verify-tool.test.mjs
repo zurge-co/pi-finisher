@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLine, detectChecks, failingChecks, judgeDeterministic, runCheck, runChecks, runCommand, verifySummaryLines, caseCommandsFrom, buildReport } from "../extensions/finisher/index.ts";
+import { checkLine, detectChecks, failingChecks, judgeDeterministic, runCheck, runChecks, runCommand, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
 
 const repo = (scripts) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-checks-"));
@@ -55,10 +55,11 @@ test("a case is never proven by a command it did not name, and an unnamed case s
 	assert.match(evidence[1].reason ?? "", /no command was named/);
 });
 
-test("the case map is read defensively: junk ids or commands are dropped instead of proving something", () => {
-	assert.deepEqual([...caseCommandsFrom(undefined)], []);
-	assert.deepEqual([...caseCommandsFrom([{ id: "", command: "x" }, { id: "c1", command: "" }, { case: "c2", command: " npm test " }])], [["c2", "npm test"]]);
-	assert.deepEqual([...caseCommandsFrom([{ id: "c1", command: "a" }, { id: "c1", command: "b" }])], [["c1", "b"]], "the last named command wins");
+test("the case claims are read defensively: junk ids and empty claims are dropped instead of proving something", () => {
+	assert.deepEqual(caseClaims(undefined), []);
+	assert.deepEqual(caseClaims([{ id: "", command: "x" }, { id: "c1", command: "" }, { case: "c2", command: " npm test " }]), [{ id: "c2", human: false, command: "npm test" }]);
+	const twice = bindClaims(["c1"], caseClaims([{ id: "c1", command: "a" }, { id: "c1", command: "b" }]));
+	assert.equal(twice.commands.get("c1"), "b", "the last named command wins");
 });
 
 test("the summary says what the deterministic stage did and what each case came to", () => {
@@ -142,7 +143,9 @@ test("a case with no named command stays UNVERIFIED even on a green suite — a 
 	assert.match(out.content[0].text, /UNVERIFIED/);
 	assert.match(out.content[0].text, /no command was named/);
 	assert.notEqual(s.box.get().goalDriver.outcome, "verified", "an unproven case can never be recorded as a verified goal");
-	assert.equal(s.box.get().goalDriver.outcome, "needs-human", "it hands the unprovable case to the human instead of pretending");
+	assert.equal(s.box.get().goalDriver.outcome, undefined, "an unproven case is a repair lap, not the end of the goal — the goal is never closed and never re-confirmed for it");
+	assert.equal(s.box.get().goalDriver.phases.length, 2, "the closed plan gains exactly one fix lap — the goal is not closed and not re-confirmed for it");
+	assert.match(s.box.get().goalDriver.phases[1].text, /the probe passes/, "and that lap names the case in the human's own words");
 });
 
 test("a named command the harness has not recorded yet is RUN by the harness — the exit code is the evidence, never a claim", () => {

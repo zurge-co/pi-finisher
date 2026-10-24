@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Type, type TSchema } from "typebox";
 import { type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { buildGoalToolText, goalDriverDone, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
-import { NON_GOAL_PREFIX, unconfirmedGoalNote } from "./goal-confirm.ts";
+import { caseKey, NON_GOAL_PREFIX, unconfirmedGoalNote } from "./goal-confirm.ts";
 import { buildReport, freshAttempts, renderVerifyReport, type CaseEvidence, type VerifyReport } from "./verify-loop.ts";
 import { judgeChecks } from "./evidence-record.ts";
 import { appendRecord, doneRecord, gapRecord, journalEnabled, journalPath } from "./lap-journal.ts";
@@ -94,17 +94,84 @@ export interface CaseCommand {
 	command: string;
 }
 
-export const caseCommandsFrom = (input: unknown): Map<string, string> => {
-	const map = new Map<string, string>();
-	if (!Array.isArray(input)) return map;
+export interface CaseClaim {
+	id: string;
+	command?: string;
+	human: boolean;
+	note?: string;
+}
+
+export const caseClaims = (input: unknown): CaseClaim[] => {
+	const out: CaseClaim[] = [];
+	if (!Array.isArray(input)) return out;
 	for (const raw of input) {
-		const entry = raw as { id?: unknown; case?: unknown; command?: unknown };
+		const entry = raw as { id?: unknown; case?: unknown; command?: unknown; human?: unknown; note?: unknown };
 		const id = typeof entry.id === "string" ? entry.id.trim() : typeof entry.case === "string" ? entry.case.trim() : "";
 		const command = typeof entry.command === "string" ? entry.command.trim() : "";
-		if (id && command) map.set(id, command);
+		const human = entry.human === true;
+		const note = typeof entry.note === "string" ? entry.note.trim().slice(0, 160) : "";
+		if (!id || (!command && !human)) continue;
+		out.push({ id, human, ...(command ? { command } : {}), ...(note ? { note } : {}) });
 	}
-	return map;
+	return out;
 };
+
+export interface BoundClaims {
+	commands: Map<string, string>;
+	human: Map<string, string>;
+	bound: Map<string, string>;
+	unbound: { id: string; candidates: string[] }[];
+}
+
+const BARE_MIN = 8;
+const INSIDE_MIN = 12;
+
+const withoutTruncation = (id: string): string => id.replace(/[…]+|\s*\.{2,}\s*$/g, "").trim();
+
+const candidatesFor = (cases: string[], id: string): string[] => {
+	const key = caseKey(id);
+	if (!key) return [];
+	const exact = cases.filter((c) => c === id || caseKey(c) === key);
+	if (exact.length) return exact;
+	const bare = caseKey(withoutTruncation(id));
+	const prefix = bare.length >= BARE_MIN ? cases.filter((c) => caseKey(c).startsWith(bare)) : [];
+	if (prefix.length === 1) return prefix;
+	const inside = bare.length >= INSIDE_MIN ? cases.filter((c) => caseKey(c).includes(bare)) : [];
+	if (inside.length === 1) return inside;
+	return [...new Set([...prefix, ...inside])];
+};
+
+export const bindClaims = (cases: string[], claims: CaseClaim[]): BoundClaims => {
+	const commands = new Map<string, string>();
+	const human = new Map<string, string>();
+	const bound = new Map<string, string>();
+	const unbound: { id: string; candidates: string[] }[] = [];
+	for (const claim of claims) {
+		const hits = candidatesFor(cases, claim.id);
+		if (hits.length !== 1) {
+			unbound.push({ id: claim.id, candidates: hits });
+			continue;
+		}
+		const target = hits[0];
+		bound.set(claim.id, target);
+		if (claim.human) {
+			human.set(target, claim.note ?? "");
+			commands.delete(target);
+		} else if (claim.command) {
+			commands.set(target, claim.command);
+			human.delete(target);
+		}
+	}
+	return { commands, human, bound, unbound };
+};
+
+export const unboundNote = (unbound: { id: string; candidates: string[] }[]): string =>
+	unbound.length
+		? [
+				`⚠ ${unbound.length} named case id(s) matched no single case, so their commands prove nothing — name the case's exact text instead:`,
+				...unbound.map((u) => `  ${u.id}${u.candidates.length ? ` (matches ${u.candidates.length} cases)` : " (matches no case)"}`),
+			].join("\n")
+		: "";
 
 export const judgeDeterministic = (
 	cases: string[],
@@ -112,6 +179,7 @@ export const judgeDeterministic = (
 	calls: { command: string; ok: boolean }[],
 	checks: CheckResult[],
 	run?: (command: string) => CheckResult,
+	human?: Map<string, string>,
 ): CaseEvidence[] => {
 	const broke = failingChecks(checks);
 	return cases.map((caseId) => {
@@ -121,6 +189,13 @@ export const judgeDeterministic = (
 				verdict: "FAIL" as const,
 				commands: [],
 				reason: `the deterministic check \`${broke[0].command}\` exited ${broke[0].exitCode} — a repo that does not pass its own checks cannot satisfy a case`,
+			};
+		if (human?.has(caseId))
+			return {
+				caseId,
+				verdict: "HUMAN" as const,
+				commands: [],
+				reason: `${human.get(caseId) || "this one is the human's to check"} — reported at the end, never counted as a failure`,
 			};
 		const command = commands.get(caseId);
 		if (!command)
@@ -158,6 +233,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 		promptGuidelines: [
 			`Call ${VERIFY_TOOL} once after every lap is closed with finisher_phase done — it is refused while a lap is still open.`,
 			"Name one command per case (cases: [{ id, command }]) that actually exercises it. A case with no recorded command is UNVERIFIED — never claim PASS for it.",
+			"A case only the human can check is separated, not failed: pass { id, human: true, note } and it is listed in the report for them at the end.",
 			"If the deterministic stage fails, fix the cause and call it again: the failing check is quoted back to you.",
 			"A not-passing verdict hands the next loop back to you: fix it, use finisher_swarm to get coders working in parallel, then verify again.",
 			"Do not spawn a sub-agent to verify — you are the verifier, and the harness records what you actually ran.",
@@ -166,10 +242,12 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			cases: Type.Optional(
 				Type.Array(
 					Type.Object({
-						id: Type.String({ description: "the case id (or its exact text) this command proves" }),
-						command: Type.String({ description: "the command you ran that exercises this case" }),
+						id: Type.String({ description: "the case id (or its exact text — a truncated id binds when it matches exactly one case) this claim is about" }),
+						command: Type.Optional(Type.String({ description: "the command you ran that exercises this case — required unless human is true" })),
+						human: Type.Optional(Type.Boolean({ description: "true when only the human can check this case: it is reported to them at the end and never counted as a failure" })),
+						note: Type.Optional(Type.String({ description: "what the human should look at, when human is true" })),
 					}),
-					{ description: "one command per case — a case left out stays UNVERIFIED" },
+					{ description: "one claim per case — a command, or human: true for what only a human can check. A case left out stays UNVERIFIED" },
 				),
 			),
 			goal: Type.Optional(Type.String({ description: "the goal being verified (only needed when no goal is open)" })),
@@ -186,18 +264,18 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 
 			const openGoal = !!active && !goalDriverDone(active);
 			const cases = openGoal ? (active.cases ?? []) : (p.goal ? [p.goal] : []);
-			const named = caseCommandsFrom(p.cases);
+			const named = bindClaims(cases, caseClaims(p.cases));
 			const calls = (state.verifyCalls ?? []) as { command: string; ok: boolean }[];
-			const evidence = judgeDeterministic(cases, named, calls, checks, (command) => {
+			const evidence = judgeDeterministic(cases, named.commands, calls, checks, (command) => {
 				const result = runCommand(command, cwd, timeoutMs);
 				state.verifyCalls = appendCommand(state.verifyCalls ?? [], { toolName: "bash", input: { command }, isError: result.exitCode !== 0 });
 				return result;
-			});
+			}, named.human);
 			const report = buildReport(evidence);
 			const verified = `${NON_GOAL_PREFIX}${evidence.map((c) => c.caseId).join(", ") || "run"}`;
 			const driver = openGoal ? active : { ...resumeOrStart(undefined, p.goal?.trim() || verified, Date.now(), cases), attempts: freshAttempts() };
 			const step = nextGoalDriverStep(driver, report);
-			const summary = verifySummaryLines(checks, report).join("\n");
+			const summary = [verifySummaryLines(checks, report).join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
 
 			if (!openGoal) {
 				persist();

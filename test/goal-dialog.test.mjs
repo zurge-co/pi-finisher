@@ -73,6 +73,19 @@ test("the overlay is what the human reads: it renders the goal, the cases and th
 	assert.match(text, /enter = confirm/);
 });
 
+const humanCtx = (dir, extra = {}) => {
+	const humanLog = { turns: 0 };
+	const ctx = {
+		cwd: dir,
+		hasUI: true,
+		mode: "tui",
+		ui: { notify: () => {} },
+		sessionManager: { getEntries: () => Array.from({ length: humanLog.turns }, () => ({ type: "message", message: { role: "user" } })), getSessionId: () => "session-1" },
+		...extra,
+	};
+	return { ctx, humanLog };
+};
+
 const goalSession = (outcome, asked = []) => {
 	const defs = [];
 	const box = createStateBox({ phase: "requirements", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
@@ -90,9 +103,9 @@ const goalSession = (outcome, asked = []) => {
 			return outcome;
 		},
 	});
-	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-goal-")), hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const { ctx, humanLog } = humanCtx(mkdtempSync(join(tmpdir(), "finisher-goal-")));
 	const def = defs.find((d) => d.name === "finisher_goal");
-	return { box, run: (params) => def.execute("c1", params, undefined, undefined, ctx) };
+	return { box, humanLog, run: (params) => def.execute("c1", params, undefined, undefined, ctx) };
 };
 
 const goalRun = async (outcome, params, asked = []) => {
@@ -128,7 +141,7 @@ test("a picked goal is still shown to the human in full, so the details can neve
 	assert.match(seen[0].message, /case two/);
 });
 
-test("the dialog is asked whenever no goal is open: once per open goal, again after it closes", async () => {
+test("the dialog is asked once per goal, and an unchanged goal is never asked again", async () => {
 	const asked = [];
 	const session = goalSession("confirmed", asked);
 	const params = { goal: "goal one", cases: ["a"] };
@@ -137,9 +150,23 @@ test("the dialog is asked whenever no goal is open: once per open goal, again af
 	assert.deepEqual(asked.map((a) => a.goal), ["goal one"], "an open goal is not re-asked on every round");
 	assert.deepEqual(asked[0].cases, ["a"], "the human confirms the cases the agent proposed, not a rewritten list");
 
-	session.box.get().goalDriver = { goal: "goal one", confirmedAt: 1, attempts: { rounds: 1 }, doneAt: 5, outcome: "verified" };
-	await session.run(params);
-	assert.deepEqual(asked.map((a) => a.goal), ["goal one", "goal one"], "a CLOSED goal is finished — reusing its confirmation would start new work on an old yes");
+	await session.run({ goal: "  GOAL   one ", cases: ["a", "b"] });
+	assert.deepEqual(asked.map((a) => a.goal), ["goal one"], "a changed case list is the agent's own plan: it never reopens the dialog");
+	assert.deepEqual(session.box.get().goalDriver.cases, ["a", "b"], "and the new list does become the run's proof plan");
+
+	session.box.get().goalDriver = { goal: "goal one", confirmedAt: 1, attempts: { rounds: 1 }, cases: ["a"], doneAt: 5, outcome: "needs-human" };
+	const reopened = await session.run(params);
+	assert.deepEqual(asked.map((a) => a.goal), ["goal one"], "a goal closed by a verify round is the SAME goal: it resumes instead of asking the human again");
+	assert.equal(reopened.isError, undefined);
+	assert.equal(session.box.get().goalDriver.doneAt, undefined, "reopened, not restarted");
+	assert.equal(session.box.get().goalDriver.confirmedAt, 1, "the human's confirmation is kept, not re-stamped");
+	assert.match(reopened.content[0].text, /unchanged/, "and the agent is told the goal was not re-confirmed");
+
+	session.box.get().goalDriver = { goal: "goal one", confirmedAt: 1, attempts: { rounds: 1 }, cases: ["a"], doneAt: 5, outcome: "verified" };
+	const verified = await session.run(params);
+	assert.deepEqual(asked.map((a) => a.goal), ["goal one"], "a verified goal is never reopened behind the human's back");
+	assert.equal(verified.details.outcome, "already-verified");
+	assert.equal(session.box.get().goalDriver.doneAt, 5, "it stays closed");
 });
 
 test("an unreadably long case list is refused before anyone is asked, instead of a dialog nobody can weigh", async () => {
@@ -224,7 +251,7 @@ test("the verify gate keys on an OPEN goal, not on a cold session: a live goal k
 	assert.deepEqual(closed.asked, [], "the dialog is not the issue — nothing may be armed at all");
 });
 
-test("the goal and its cases can only change through the dialog: the agent cannot rewrite what the human confirmed", async () => {
+test("the goal can only change through the dialog, while its cases are the agent's own plan", async () => {
 	const asked = [];
 	const defs = [];
 	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
@@ -239,7 +266,7 @@ test("the goal and its cases can only change through the dialog: the agent canno
 		armGoalRound: () => {},
 		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
 	});
-	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-goal-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const { ctx, humanLog } = humanCtx(mkdtempSync(join(tmpdir(), "finisher-goal-")), { model: { provider: "p", id: "m" } });
 	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
 
 	await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "the pit split is exact"] });
@@ -249,24 +276,28 @@ test("the goal and its cases can only change through the dialog: the agent canno
 	await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "the pit split is exact"] });
 	assert.equal(asked.length, 1, "the same goal with the same cases resumes without bothering the human");
 
+	await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "and it looks nice"] });
+	assert.equal(asked.length, 1, "a changed case list is the agent's proof plan, not the human's decision — no dialog");
+	assert.deepEqual(box.get().goalDriver.cases, ["the lap clock ticks", "and it looks nice"], "and it becomes the run's proof plan");
+
 	const before = JSON.stringify(box.get().goalDriver);
 	answer = "declined";
-	const changed = await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "the pit split is exact", "and it looks nice"] });
-	assert.equal(asked.length, 2, "a new case list puts the dialog in front of the human");
-	assert.equal(changed.isError, true, "a declined change is refused");
-	assert.match(changed.content[0].text, /and it looks nice/, "and says exactly what would have been added");
-	assert.equal(JSON.stringify(box.get().goalDriver), before, "a declined change leaves the confirmed goal byte-identical");
+	const changedGoal = await run("finisher_goal", { goal: "ship something else entirely", cases: ["c1"] });
+	assert.equal(asked.length, 2, "a DIFFERENT goal still goes to the human");
+	assert.equal(changedGoal.isError, true, "a declined goal is refused");
+	assert.equal(changedGoal.details.outcome, "declined");
+	assert.equal(JSON.stringify(box.get().goalDriver), before, "a declined goal leaves the confirmed one byte-identical");
 
-	box.get().humanAt = Date.now() + 1;
+	humanLog.turns += 1;
 	answer = "unavailable";
-	const noUi = await run("finisher_goal", { goal: "ship the race HUD", cases: ["only one case now"] });
+	const noUi = await run("finisher_goal", { goal: "ship something else entirely", cases: ["c1"] });
 	assert.equal(noUi.isError, true, "no dialog means no change — never a silent rewrite");
 	assert.equal(JSON.stringify(box.get().goalDriver), before, "and the goal is untouched");
 
-	box.get().humanAt = Date.now() + 2;
+	humanLog.turns += 1;
 	answer = "confirmed";
-	await run("finisher_goal", { goal: "ship the race HUD", cases: ["only one case now"] });
-	assert.deepEqual(box.get().goalDriver.cases, ["only one case now"], "a confirmed change does apply");
+	await run("finisher_goal", { goal: "ship something else entirely", cases: ["c1"] });
+	assert.equal(box.get().goalDriver.goal, "ship something else entirely", "a confirmed new goal replaces the old one");
 });
 
 test("a verify run can never name, rename or re-case the goal it verifies", async () => {
@@ -333,7 +364,7 @@ test("a dialog nobody answers times out into a refusal, never into a started goa
 		armGoalRound: () => {},
 		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
 	});
-	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-timeout-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: (text) => notes.push(text) } };
+	const { ctx, humanLog } = humanCtx(mkdtempSync(join(tmpdir(), "finisher-timeout-")), { model: { provider: "p", id: "m" }, ui: { notify: (text) => notes.push(text) } });
 	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
 
 	const first = await run("finisher_goal", { goal: "a goal nobody answered", cases: ["c1"] });
@@ -352,17 +383,16 @@ test("a dialog nobody answers times out into a refusal, never into a started goa
 	assert.equal(retry.details.outcome, "blocked-until-human");
 	assert.equal(notes.length, 1, "and no second dialog is opened");
 
-	box.get().humanAt = Date.now() + 1;
+	humanLog.turns += 1;
 	const afterHuman = await run("finisher_goal", { goal: "a goal the human now wants", cases: ["c1"] });
 	assert.equal(afterHuman.details.outcome, "timeout", "once the human speaks again the dialog is offered again (and here times out a second time)");
 
 	box.get().goalDriver = { goal: "the human's goal", confirmedAt: 1_000, attempts: { rounds: 0 }, cases: ["c1"] };
-	box.get().humanAt = Date.now() + 10;
+	humanLog.turns += 1;
 	const before = JSON.stringify(box.get().goalDriver);
-	const changed = await run("finisher_goal", { goal: "the human's goal", cases: ["c1", "c2"] });
-	assert.equal(changed.isError, true, "a timed-out case change is refused too");
+	const changedGoal = await run("finisher_goal", { goal: "a goal the human never confirmed", cases: ["c1", "c2"] });
+	assert.equal(changedGoal.isError, true, "a timed-out new goal is refused too");
 	assert.equal(JSON.stringify(box.get().goalDriver), before, "and leaves the confirmed goal byte-identical");
-	assert.match(changed.content[0].text, /added: c2/, "naming what would have changed");
 });
 
 test("the timeout is configurable, and 0 means wait forever", async () => {
@@ -385,7 +415,7 @@ test("the timeout is configurable, and 0 means wait forever", async () => {
 
 test("a refusal never outlives its own goal: a confirmed goal and a fresh cycle both clear it", async () => {
 	const defs = [];
-	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [], goalConsent: { blockedAt: 1_000_000, reason: "timeout" } });
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [], goalConsent: { humanTurns: 0, reason: "timeout", sessionId: "session-1" } });
 	registerTools({
 		pi: { registerTool: (def) => defs.push(def) },
 		get state() { return box.get(); },
@@ -397,17 +427,42 @@ test("a refusal never outlives its own goal: a confirmed goal and a fresh cycle 
 		armGoalRound: () => {},
 		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
 	});
-	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-consent-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const { ctx, humanLog } = humanCtx(mkdtempSync(join(tmpdir(), "finisher-consent-")), { model: { provider: "p", id: "m" } });
 	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
 
 	const blocked = await run("finisher_goal", { goal: "g", cases: ["c1"] });
-	assert.equal(blocked.details.outcome, "blocked-until-human", "a stale refusal stops the run while the human is silent");
+	assert.equal(blocked.details.outcome, "blocked-until-human", "a refusal stops the run while the human is silent");
 
-	box.get().humanAt = Date.now() + 1;
+	humanLog.turns += 1;
 	await run("finisher_goal", { goal: "g", cases: ["c1"] });
 	assert.equal(box.get().goalConsent, undefined, "a confirmed goal clears the old refusal, so the next goal is not blocked by it");
 	resetCycleState(box.get());
 	assert.equal(box.get().goalConsent, undefined, "and a cycle reset cannot inherit one either");
+});
+
+test("a refusal blocks only the dialog it refused: a confirmed goal resumes, another session asks again", async () => {
+	const asked = [];
+	const session = goalSession("confirmed", asked);
+	const refusal = (sessionId) => ({ humanTurns: 0, reason: "declined", sessionId });
+	session.box.get().goalDriver = { goal: "goal one", confirmedAt: 1, attempts: { rounds: 1 }, cases: ["case a"] };
+	session.box.get().goalConsent = refusal("session-1");
+
+	const resumed = await session.run({ goal: "goal one" });
+	assert.equal(resumed.isError, undefined, "declining some other goal must never stop the goal the human already confirmed");
+	assert.equal(asked.length, 0, "and that resume asks nothing at all");
+	assert.deepEqual(session.box.get().goalDriver.cases, ["case a"], "the run keeps the cases the human confirmed");
+	assert.match(resumed.content[0].text, /1\. case a/, "the agent is shown the run's own cases, never a rewritten list");
+
+	session.box.get().goalConsent = refusal("session-1");
+	const other = await session.run({ goal: "goal two" });
+	assert.equal(other.details.outcome, "blocked-until-human", "a NEW goal is a new dialog, so a refusal just before still stops it");
+	assert.equal(asked.length, 0, "and the human is not nagged with it");
+
+	const later = goalSession("confirmed", asked);
+	later.box.get().goalConsent = refusal("session-0");
+	const reopened = await later.run({ goal: "goal three" });
+	assert.equal(reopened.isError, undefined, "a refusal recorded in another session can never lock the dialog shut");
+	assert.equal(asked.length, 1, "the human is asked in the session they are actually in");
 });
 
 test("a goal the human cannot read is refused before the dialog, never shown to them", async () => {

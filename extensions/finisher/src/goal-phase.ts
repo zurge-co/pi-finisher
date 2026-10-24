@@ -69,6 +69,7 @@ export const appendPhases = (plan: PhasePlan, texts: string[], round: number, at
 	const added = makePhases(texts, round, at, plan.phases);
 	if (!added.length) return plan;
 	if (!totalPhases(plan)) return { phases: added, lap: 1, lapAt: at, lapMs: [] };
+	if (allLapsDone(plan)) return { phases: [...plan.phases, ...added], lap: plan.phases.length + 1, lapAt: at, lapMs: plan.lapMs };
 	return { phases: [...plan.phases, ...added], lap: plan.lap, lapAt: plan.lapAt, lapMs: plan.lapMs };
 };
 

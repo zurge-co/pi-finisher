@@ -2,8 +2,9 @@ import {
 	buildHumanTestNote,
 	decideOnce,
 	freshAttempts,
+	humanCheckNote,
+	humanOnly,
 	MAX_LOOP_BATCHES,
-	needsHuman,
 	recordEvidence,
 	renderVerifyReport,
 	type VerifyAttempts,
@@ -52,6 +53,31 @@ export const resumeOrStart = (prev: GoalRunState | undefined, goal: string, at =
 
 export const goalDriverDone = (g: GoalRunState | undefined): boolean => !!g?.doneAt;
 
+export type GoalGateKind = "fresh" | "resume" | "reopen" | "verified" | "changed";
+
+export const goalGateFor = (prev: GoalRunState | undefined, goal: string): GoalGateKind => {
+	if (!prev) return "fresh";
+	if (goalKey(prev.goal) !== goalKey(goal)) return "changed";
+	if (!goalDriverDone(prev)) return "resume";
+	return prev.outcome === "verified" ? "verified" : "reopen";
+};
+
+export const goalGateAsks = (gate: GoalGateKind): boolean => gate === "fresh" || gate === "changed";
+
+export const casesForGate = (gate: GoalGateKind, cases: string[], confirmed: string[], prior: string[]): string[] =>
+	cases.length ? cases : goalGateAsks(gate) ? confirmed : prior;
+
+export const reopenGoal = (prev: GoalRunState, cases: string[] = [], humanAt = 0): GoalRunState => {
+	const humanSpokeAfterClose = (humanAt ?? 0) > (prev.doneAt ?? 0);
+	return {
+		...prev,
+		cases: cases.length ? cases : (prev.cases ?? []),
+		doneAt: undefined,
+		outcome: undefined,
+		attempts: humanSpokeAfterClose ? freshAttempts() : prev.attempts,
+	};
+};
+
 export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, maxBatches = MAX_LOOP_BATCHES, at = Date.now()): GoalStep => {
 	const decision = decideOnce(report, state.attempts, maxBatches);
 	const round = state.attempts.rounds + 1;
@@ -62,10 +88,10 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 			round,
 			state: { ...advanced, doneAt: at, outcome: "verified" },
 			report,
-			text: [renderVerifyReport(report), "", `goal reached: ${state.goal}`, "every case is backed by code that was actually run — report this once and stop"].join("\n"),
+			text: [renderVerifyReport(report), "", `goal reached: ${state.goal}`, "every machine-checkable case is backed by code that was actually run — report this once and stop", ...(humanCheckNote(report) ? ["", humanCheckNote(report)] : [])].join("\n"),
 		};
 	if (decision.kind === "replan") {
-		const human = needsHuman(report);
+		const human = humanOnly(report).map((c) => c.caseId);
 		const before = planOf(state);
 		const grown = appendPhases(before, fixPhases(report), round, at);
 		const added = planGrewBy(before, grown);
@@ -82,7 +108,7 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 				...phaseListLines(grown),
 				"",
 				`next: LAP ${Math.min(grown.lap, totalPhases(grown))}/${totalPhases(grown)} — ${currentLap(grown)?.text ?? "no lap"}`,
-				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — if it cannot be exercised from a command, say so and hand it to the human instead of forcing it.`] : []),
+				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — declare it { id, human: true } in finisher_verify and it is reported to the human at the end instead of failing the run.`] : []),
 				"",
 				`this is verify round ${round} of ${maxBatches} — close every lap with finisher_phase done, then call finisher_verify once`,
 			].join("\n"),

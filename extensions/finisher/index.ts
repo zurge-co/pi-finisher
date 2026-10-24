@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
-import { humanResumes } from "./src/goal-confirm.ts";
+import { consentLifts, humanResumes } from "./src/goal-confirm.ts";
 import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
 import { harnessSystemPrompt } from "./src/system-prompt.ts";
 import { appendCommand } from "./src/command-record.ts";
@@ -176,7 +176,13 @@ export default function (pi: ExtensionAPI) {
 		for (const e of ctx.sessionManager.getEntries())
 			if (e.type === "custom" && e.customType === "finisher-state")
 				box.set({ ...freshState(), ...(e.data as State) });
+		consentLifts(box.get());
 		kit.updateWidget(ctx);
+	});
+
+	pi.on("agent_settled", async () => {
+		if (!consentLifts(box.get())) return;
+		persist();
 	});
 
 	pi.on("tool_call", async (ev, ctx) => {
