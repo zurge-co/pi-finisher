@@ -225,3 +225,94 @@ test("the verify gate keys on an OPEN goal, not on a cold session: a live goal k
 	assert.equal(closed.box.get().goalDriver.doneAt, 5, "and it must leave the closed goal closed");
 	assert.deepEqual(closed.asked, [], "the dialog is not the issue — nothing may be armed at all");
 });
+
+test("the goal and its cases can only change through the dialog: the agent cannot rewrite what the human confirmed", async () => {
+	const asked = [];
+	const defs = [];
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	let answer = "confirmed";
+	registerTools({
+		pi: { registerTool: (def) => defs.push(def) },
+		get state() { return box.get(); },
+		persist: () => {},
+		updateWidget: () => {},
+		askGoalConfirm: async (_ctx, goal, cases) => (asked.push({ goal, cases }), answer),
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		armGoalRound: () => {},
+		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
+	});
+	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-goal-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
+
+	await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "the pit split is exact"] });
+	assert.equal(asked.length, 1, "the first goal is confirmed by the human");
+	assert.deepEqual(box.get().goalDriver.cases, ["the lap clock ticks", "the pit split is exact"], "the confirmed cases are kept on the driver");
+
+	await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "the pit split is exact"] });
+	assert.equal(asked.length, 1, "the same goal with the same cases resumes without bothering the human");
+
+	const before = JSON.stringify(box.get().goalDriver);
+	answer = "declined";
+	const changed = await run("finisher_goal", { goal: "ship the race HUD", cases: ["the lap clock ticks", "the pit split is exact", "and it looks nice"] });
+	assert.equal(asked.length, 2, "a new case list puts the dialog in front of the human");
+	assert.equal(changed.isError, true, "a declined change is refused");
+	assert.match(changed.content[0].text, /and it looks nice/, "and says exactly what would have been added");
+	assert.equal(JSON.stringify(box.get().goalDriver), before, "a declined change leaves the confirmed goal byte-identical");
+
+	answer = "unavailable";
+	const noUi = await run("finisher_goal", { goal: "ship the race HUD", cases: ["only one case now"] });
+	assert.equal(noUi.isError, true, "no dialog means no change — never a silent rewrite");
+	assert.equal(JSON.stringify(box.get().goalDriver), before, "and the goal is untouched");
+
+	answer = "confirmed";
+	await run("finisher_goal", { goal: "ship the race HUD", cases: ["only one case now"] });
+	assert.deepEqual(box.get().goalDriver.cases, ["only one case now"], "a confirmed change does apply");
+});
+
+test("a verify run can never name, rename or re-case the goal it verifies", async () => {
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	const defs = [];
+	registerTools({
+		pi: { registerTool: (def) => defs.push(def) },
+		get state() { return box.get(); },
+		persist: () => {},
+		updateWidget: () => {},
+		askGoalConfirm: async () => "confirmed",
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		armGoalRound: () => {},
+		launchSubagent: async (_ctx, role) => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [{ command: "node x.mjs", ok: true }], ...(role === "verifier" ? { verdict: { verdict: "PASS", why: "it holds" } } : {}) }),
+	});
+	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-verify-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
+	await run("finisher_goal", { goal: "the human's goal", cases: ["case one"] });
+	const before = JSON.stringify(box.get().goalDriver);
+	await run("finisher_swarm", { mode: "verify", goal: "a completely different goal the agent invented", subtasks: [{ id: "case one", instruction: "prove it" }] });
+	const after = box.get().goalDriver;
+	assert.equal(after.goal, "the human's goal", "the goal text is never taken from the verify call");
+	assert.deepEqual(after.cases, ["case one"], "nor its case list");
+	assert.equal(after.confirmedAt, JSON.parse(before).confirmedAt, "the confirmation is not re-stamped");
+});
+
+test("an open plan is never replaced behind the human's back", async () => {
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	const defs = [];
+	registerTools({
+		pi: { registerTool: (def) => defs.push(def) },
+		get state() { return box.get(); },
+		persist: () => {},
+		updateWidget: () => {},
+		askGoalConfirm: async () => "confirmed",
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		armGoalRound: () => {},
+		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
+	});
+	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-plan-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
+	await run("finisher_goal", { goal: "g", cases: ["c1"] });
+	await run("finisher_phase", { plan: ["read it", "change it"] });
+	await run("finisher_phase", { done: true });
+	const before = JSON.stringify(box.get().goalDriver);
+	const replaced = await run("finisher_phase", { plan: ["something else entirely"] });
+	assert.equal(replaced.details.action, "blocked", "a second plan is refused while laps are open");
+	assert.equal(JSON.stringify(box.get().goalDriver), before, "so the laps and the time already spent are untouched");
+});

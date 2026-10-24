@@ -134,7 +134,12 @@ const commandsOnLine = (line: string, strict = false): Candidate[] => {
 	const piped = body.includes("|") ? withoutStatus.split("|").slice(1).join(" ").trim() : "";
 	const whole = anchoredCommand(body) ? commandName(piped || withoutStatus) : undefined;
 	if (whole) found.push({ command: whole, at: 0, explicit: false });
-	if (strict) return found;
+	if (strict) {
+		const leading = body.match(/^`([^`\n]+)`/);
+		const first = leading ? commandName(leading[1]) : undefined;
+		if (first && !found.some((f) => f.command === first)) found.push({ command: first, at: 0, explicit: true });
+		return found;
+	}
 	for (const m of body.matchAll(/`([^`\n]+)`/g)) {
 		const inner = commandName(m[1]);
 		if (inner && !found.some((f) => f.command === inner)) found.push({ command: inner, at: m.index ?? 0, explicit: true });
@@ -187,11 +192,11 @@ export const extractCommands = (output: string): EvidenceCommand[] => {
 	const named = new Map<string, EvidenceCommand>();
 	const region = evidenceRegion(output);
 	const declared = region !== output;
+	if (!declared && declaredVerdict(output)) return [];
 	const lines = region.split("\n");
 	for (let i = 0; i < lines.length; i++) {
 		if (OUTPUT_INDENT.test(lines[i])) continue;
-		const unowned = !declared && !pastedSource(lines[i]) && unclaimedStatus(lines[i]);
-		for (const cand of [...commandsOnLine(lines[i], declared), ...(unowned ? [{ command: `${UNOWNED_PREFIX}${stripFences(lines[i]).trim().slice(0, 120)}`, at: 0, explicit: true, unowned: true }] : [])]) {
+		for (const cand of commandsOnLine(lines[i], declared)) {
 			const exitCode = exitFor(lines, i, cand);
 			const key = cand.unowned === true ? `${cand.command}=?` : cand.command;
 			const prior = named.get(key);

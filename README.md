@@ -25,6 +25,10 @@ missing most often, so the plan can be made better instead of guessed.
 - **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
   click between the goal and the result.
 - **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
+- **The goal is the human's.** A goal and its case list can only change through the confirm dialog:
+  the same goal with the same cases resumes silently, a new case list re-opens the dialog, and a
+  declined or unavailable dialog leaves the confirmed goal byte-identical. A verify run can never
+  name or re-case a goal, and an open plan is never replaced behind your back.
 - **Evidence or it did not happen.** A case with no executed command is `UNVERIFIED`, never `PASS`.
   The loop is bounded: identical evidence stops it, rounds are counted.
 - **Five models in parallel.** `priority1..priority5` in `.finisher/models.json` are the slots; the

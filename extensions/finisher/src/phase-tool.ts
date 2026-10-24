@@ -18,6 +18,16 @@ export const applyPhaseCall = (state: { goalDriver?: GoalRunState }, call: Phase
 	if (!driver || goalDriverDone(driver)) return { text: "finisher_phase: no goal is open — call finisher_goal first.", action: "none", plan: planOf(undefined) };
 	const plan = planOf(driver);
 	const wanted = (call.plan ?? []).map((p) => p.trim()).filter(Boolean);
+	if (wanted.length && plan.phases.length && !allLapsDone(plan))
+		return {
+			text: [
+				`the plan is already declared (${lapLabel(plan)}) — it is not replaced while laps are open, because that would throw away the laps and the time already spent.`,
+				...phaseListLines(plan),
+				"close the current lap with finisher_phase done, keep working the plan, or let a failing verify append the fix laps for you.",
+			].join("\n"),
+			action: "blocked",
+			plan,
+		};
 	if (wanted.length) {
 		const declared = declarePlan(wanted, at);
 		if (!declared.phases.length) return { text: "finisher_phase: plan needs at least one non-empty phase.", action: "none", plan };

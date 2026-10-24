@@ -63,6 +63,25 @@ export const goalConfirmLines = (goal: string, cases: string[]): GoalConfirmLine
 export const tooManyCasesNote = (n: number): string =>
 	`finisher_goal: ${n} cases is too many for one confirmation to be honest — the human cannot weigh that list. Group them into at most ${GOAL_TOO_MANY_CASES} cases the human can read, then ask once. Nothing was started.`;
 
+export const caseKey = (c: string): string => c.replace(/\s+/g, " ").trim().toLowerCase();
+
+export const sameCaseSet = (a: string[], b: string[]): boolean => {
+	const left = new Set(a.map(caseKey).filter(Boolean));
+	const right = new Set(b.map(caseKey).filter(Boolean));
+	if (left.size !== right.size) return false;
+	for (const c of left) if (!right.has(c)) return false;
+	return true;
+};
+
+export const casesOnlyChanged = (previous: string[], next: string[]): string[] =>
+	next.filter((c) => !previous.some((p) => caseKey(p) === caseKey(c)));
+
+export const droppedCases = (previous: string[], next: string[]): string[] =>
+	previous.filter((p) => !next.some((c) => caseKey(c) === caseKey(p)));
+
+export const GOAL_CHANGE_NOTE =
+	"the confirmed goal was left exactly as it was — a goal and its cases can only change when the human confirms the change in the dialog. Call finisher_goal again with the same goal to continue it, or state the new goal and let the human confirm it.";
+
 export const GOAL_DECLINED_NOTE =
 	"goal NOT confirmed — the human declined the goal or its cases, so nothing was started. Re-state the goal, or the cases that were wrong, and call finisher_goal again. Do not begin the work on your own.";
 

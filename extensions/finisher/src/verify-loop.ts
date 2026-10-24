@@ -25,6 +25,7 @@ export const judgeCase = (caseId: string, output: string, opts: { exitCode?: num
 		return { caseId, verdict: "BLOCKED", commands, reason: `the verifier never produced a verdict — ${infraFailure(output) ?? "it returned nothing"}. This is not a failing case: nothing was exercised.` };
 	if (declared === "UNVERIFIED")
 		return { caseId, verdict: "UNVERIFIED", commands, reason: "the verifier could not exercise the change directly — a human must test this" };
+	if (declared === "FAIL") return { caseId, verdict: "FAIL", commands, reason: "the verifier declared FAIL" };
 	if (!commands.length)
 		return { caseId, verdict: "UNVERIFIED", commands, reason: "no command was run — a claim without executed evidence proves nothing" };
 	const ran = commands.filter((c) => !c.command.startsWith(UNOWNED_PREFIX));
@@ -42,7 +43,6 @@ export const judgeCase = (caseId: string, output: string, opts: { exitCode?: num
 					: `\`${failedCommand.command}\` exited ${failedCommand.exitCode}`,
 		};
 	if (opts.exitCode !== undefined && opts.exitCode !== 0) return { caseId, verdict: "FAIL", commands, reason: `the verifier process exited ${opts.exitCode}` };
-	if (declared === "FAIL") return { caseId, verdict: "FAIL", commands, reason: "the verifier declared FAIL" };
 	if (declared === "PASS")
 		return commands.some((c) => c.exitCode === 0)
 			? { caseId, verdict: "PASS", commands }

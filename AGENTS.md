@@ -65,7 +65,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `verdict-tool.ts` | Child-side `finisher_verdict` tool, and `registerReadonlyGuard` (a verifier cannot write into the repo) |
 | `race-state.ts` | Pure race read: `raceState` (phase/lap/lights/lap clock/total clock/pit time), `raceLoaderFrames`, `raceSegment`, `raceIdleLine`, `clockLabel` |
 | `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys |
-| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, `goalConfirmLines` with no case cap, the one-shot confirm prompt, the declined/no-UI/too-many-cases/unconfirmed-verify notes) |
+| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, `goalConfirmLines`, the one-shot confirm prompt, the declined/no-UI/too-many-cases/unconfirmed-verify notes) plus the change gate: `caseKey`/`sameCaseSet`/`casesOnlyChanged`/`droppedCases`/`GOAL_CHANGE_NOTE` — a confirmed goal and its cases can only change through the dialog |
 | `goal-dialog.ts` | The confirm dialog the human actually sees: an inline overlay (no scrolling, so every case stays visible) with the goal + every case (y/enter confirms, n/esc declines), `ctx.ui.confirm` in non-TUI sessions, `unavailable` when a session has no dialog at all; `createGoalPicker` hands `askGoalConfirm` to the context |
 | `code-hygiene.ts` | Comment/length scanner (string- and regex-aware) + the rule text given to agents |
 | `test-quality.ts` | Filler-test detector (`no-assertion` / `tautology` / `shape-only`) used by the hygiene gate |

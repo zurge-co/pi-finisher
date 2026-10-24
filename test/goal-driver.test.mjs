@@ -1,10 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+
+const evidence = (body) => (String(body).trim() ? `EVIDENCE:\n${body}` : "");
 import { buildGoalToolText, buildReport, freshGoalRun, goalKey, judgeCase, nextGoalDriverStep, resumeOrStart } from "../extensions/finisher/index.ts";
 
-const pass = (id) => judgeCase(id, `$ node -e "run()"\nexit code 0\nVERDICT: PASS`);
-const fail = (id) => judgeCase(id, `$ node -e "run()"\nexit code 1\nVERDICT: FAIL`);
-const unproven = (id) => judgeCase(id, "VERDICT: UNVERIFIED — needs a human");
+const pass = (id) => judgeCase(id, evidence(`$ node -e "run()"\nexit code 0\nVERDICT: PASS`));
+const fail = (id) => judgeCase(id, evidence(`$ node -e "run()"\nexit code 1\nVERDICT: FAIL`));
+const unproven = (id) => judgeCase(id, evidence("VERDICT: UNVERIFIED — needs a human"));
 
 test("all cases proven → finish, and the state records the verified outcome", () => {
 	const step = nextGoalDriverStep(freshGoalRun("ship it"), buildReport([pass("c1")]));

@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildGoalToolText, goalDriverDone, goalKey, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
-import { GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, goalCases, tooManyCasesNote, unconfirmedGoalNote } from "./goal-confirm.ts";
+import { GOAL_CHANGE_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, casesOnlyChanged, droppedCases, goalCases, sameCaseSet, tooManyCasesNote, unconfirmedGoalNote } from "./goal-confirm.ts";
 import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
 import { buildReport, freshAttempts, judgeCase, repairNote, renderVerifyReport, unusableCases } from "./verify-loop.ts";
@@ -285,7 +285,26 @@ export const registerTools = (ctx: HarnessContext) => {
 			const previous = state.goalDriver as GoalRunState | undefined;
 			const openGoal = !!previous && !goalDriverDone(previous);
 			const sameOpenGoal = openGoal && goalKey(previous.goal) === goalKey(goal);
-			const started = resumeOrStart(previous, goal);
+			const confirmedBefore = previous?.cases ?? state.spec?.crossCheck ?? [];
+			const casesChanged = sameOpenGoal && cases.length > 0 && confirmedBefore.length > 0 && !sameCaseSet(cases, confirmedBefore);
+			const started = resumeOrStart(previous, goal, Date.now(), casesChanged ? [] : confirmedBefore);
+			if (casesChanged) {
+				const added = casesOnlyChanged(confirmedBefore, cases);
+				const gone = droppedCases(confirmedBefore, cases);
+				const confirmedNow = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
+				if (confirmedNow.length > GOAL_TOO_MANY_CASES)
+					return { content: [{ type: "text", text: tooManyCasesNote(confirmedNow.length) }], details: { goal, confirmed: false, cases: confirmedNow.length }, isError: true };
+				const change = await askGoalConfirm(ctx, goal, confirmedNow);
+				if (change !== "confirmed") {
+					const why = change === "declined" ? "the human declined the new case list" : "no dialog was available to confirm the change";
+					return {
+						content: [{ type: "text", text: `${GOAL_CHANGE_NOTE}\n(${why}${added.length ? ` · added: ${added.join("; ")}` : ""}${gone.length ? ` · removed: ${gone.join("; ")}` : ""})` }],
+						details: { goal, confirmed: false, outcome: change, casesChanged: true },
+						isError: true,
+					};
+				}
+				state.decisions = [];
+			}
 			if (!sameOpenGoal) {
 				const confirmed = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 				if (confirmed.length > GOAL_TOO_MANY_CASES)
@@ -298,7 +317,7 @@ export const registerTools = (ctx: HarnessContext) => {
 				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
 			}
-			state.goalDriver = started;
+			state.goalDriver = cases.length || confirmedBefore.length ? { ...started, cases: cases.length ? cases : confirmedBefore } : started;
 			if (cases.length && !state.spec) {
 				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
 				state.phase = "implementation";

@@ -21,6 +21,7 @@ export interface GoalRunState {
 	lap?: number;
 	lapAt?: number;
 	lapMs?: number[];
+	cases?: string[];
 }
 
 export interface GoalStep {
@@ -31,13 +32,22 @@ export interface GoalStep {
 	state: GoalRunState;
 }
 
-export const freshGoalRun = (goal: string, at = Date.now()): GoalRunState => ({ goal: goal.trim(), confirmedAt: at, attempts: freshAttempts(), phases: [], lap: 0, lapAt: 0, lapMs: [] });
+export const freshGoalRun = (goal: string, at = Date.now(), cases: string[] = []): GoalRunState => ({
+	goal: goal.trim(),
+	confirmedAt: at,
+	attempts: freshAttempts(),
+	phases: [],
+	lap: 0,
+	lapAt: 0,
+	lapMs: [],
+	cases,
+});
 
 export const goalKey = (goal: string): string => goal.replace(/\s+/g, " ").trim().toLowerCase();
 
-export const resumeOrStart = (prev: GoalRunState | undefined, goal: string, at = Date.now()): GoalRunState => {
-	if (prev && !prev.doneAt && goalKey(prev.goal) === goalKey(goal)) return prev;
-	return freshGoalRun(goal, at);
+export const resumeOrStart = (prev: GoalRunState | undefined, goal: string, at = Date.now(), cases: string[] = []): GoalRunState => {
+	if (prev && !prev.doneAt && goalKey(prev.goal) === goalKey(goal)) return cases.length ? { ...prev, cases } : prev;
+	return freshGoalRun(goal, at, cases);
 };
 
 export const goalDriverDone = (g: GoalRunState | undefined): boolean => !!g?.doneAt;

@@ -2,10 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { anchoredCommand, extractCommands, judgeCase, pastedSource, statusInCode, unclaimedStatus } from "../extensions/finisher/index.ts";
+import { anchoredCommand, extractCommands as extractRaw, judgeCase as judgeRaw, pastedSource, statusInCode } from "../extensions/finisher/index.ts";
 
 const SRC = "extensions/finisher/src";
 const files = [...readdirSync(SRC).filter((f) => f.endsWith(".ts")).map((f) => join(SRC, f)), "extensions/finisher/index.ts"];
+
+const block = (body, verdict = "VERDICT: PASS") => `EVIDENCE:\n${body}${verdict ? `\n${verdict}` : ""}`;
+const extractCommands = (body) => extractRaw(block(body, ""));
+const judgeCase = (id, body) => judgeRaw(id, block(body));
 
 const catN = (text) => text.split("\n").map((line, i) => `${String(i + 1).padStart(6)}\t${line}`).join("\n");
 
@@ -14,7 +18,7 @@ test("no line of the real tree can become a status line while also being pasted 
 	for (const file of files) {
 		for (const line of readFileSync(file, "utf8").split("\n")) {
 			checked += 1;
-			assert.equal(unclaimedStatus(line) && !pastedSource(line), false, `${file}: ${line}`);
+			assert.equal(/\bexit(?:ed)?(?:\s*(?:code|status))?\s*[:=]?\s*-?\d{1,3}\b/i.test(line) && !pastedSource(line) && !/VERDICT/.test(line), false, `${file}: ${line}`);
 		}
 	}
 	assert.ok(checked > 1000, `the property must hold over the whole tree, not a sample (checked ${checked})`);
@@ -25,7 +29,7 @@ test("a command in front of a pasted status report still counts as a command, so
 		const commands = extractCommands(text);
 		assert.equal(commands.length, 1, text);
 		assert.equal(commands[0].exitCode, 0, text);
-		assert.equal(judgeCase("c1", `${text}\nVERDICT: PASS`).verdict, "PASS", text);
+		assert.equal(judgeRaw("c1", block(text)).verdict, "PASS", text);
 	}
 });
 
@@ -34,13 +38,13 @@ test("a dump line is inert even when it opens with a command name and carries it
 		assert.equal(pastedSource(dump), true, dump);
 		assert.equal(anchoredCommand(dump), false, dump);
 		assert.deepEqual(extractCommands(dump), [], dump);
-		assert.equal(judgeCase("c1", `${dump}\nVERDICT: PASS`).verdict, "UNVERIFIED", dump);
+		assert.equal(judgeRaw("c1", block(dump)).verdict, "UNVERIFIED", dump);
 	}
 });
 
 test("an indented status still belongs to the command above it, so the guard does not block real evidence", () => {
 	for (const status of ["\texit code: 6", "    exit 6", "  exit status: 6"]) {
-		const commands = extractCommands(`npm test\n${status}`);
+		const commands = extractRaw(block(`npm test\n${status}`, ""));
 		assert.equal(commands.length, 1, status);
 		assert.equal(commands[0].exitCode, 6, status);
 		assert.equal(statusInCode(status), false, status);
@@ -52,7 +56,7 @@ test("no line of the real tree can make a verifier verdict fail", () => {
 	for (const file of files) {
 		for (const line of readFileSync(file, "utf8").split("\n")) {
 			checked += 1;
-			assert.notEqual(judgeCase("c1", `${line}\nVERDICT: PASS`).verdict, "FAIL", `${file}: ${line}`);
+			assert.notEqual(judgeRaw("c1", block(line)).verdict, "FAIL", `${file}: ${line}`);
 		}
 	}
 	assert.ok(checked > 1000, `the property must hold over the whole tree, not a sample (checked ${checked})`);
@@ -97,9 +101,9 @@ test("a command never borrows the status printed inside a pasted dump a few line
 
 test("a status on a line of its own still belongs to the command above it, indented or not", () => {
 	for (const status of ["exit 1", "  exit 1", "\texit code: 6", "      exit status: 6", "exit 6"]) {
-		const commands = extractCommands(`npm test\n${status}`);
+		const commands = extractRaw(block(`npm test\n${status}`, ""));
 		assert.equal(commands.length, 1, status);
 		assert.notEqual(commands[0].exitCode, undefined, status);
-		assert.notEqual(judgeCase("c1", `npm test\n${status}\nVERDICT: PASS`).verdict, "UNVERIFIED", status);
+		assert.notEqual(judgeRaw("c1", block(`npm test\n${status}`)).verdict, "UNVERIFIED", status);
 	}
 });

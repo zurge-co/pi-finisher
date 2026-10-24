@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+
+const evidence = (body) => (String(body).trim() ? `EVIDENCE:\n${body}` : "");
 import {
 	allLapsDone,
 	appendPhases,
@@ -105,7 +107,7 @@ test("the phase tool refuses to close a lap that is not current, and says which 
 
 test("a plan that grows from a first-round failure is never left without a current lap", () => {
 	const opened = { goalDriver: freshGoalRun("ship it", 1_000) };
-	const failing = buildReport([judgeCase("c1", '$ node -e "run()"\nexit code 1\nVERDICT: FAIL')]);
+	const failing = buildReport([judgeCase("c1", evidence('$ node -e "run()"\nexit code 1\nVERDICT: FAIL'))]);
 	const step = nextGoalDriverStep(opened.goalDriver, failing, 3, 5_000);
 	assert.equal(step.action, "replan");
 	opened.goalDriver = step.state;
