@@ -10,6 +10,7 @@ import {
 	isSubagentRole,
 	buildRpcSubagentArgs,
 	FINISHER_TOOL_GLOB,
+	HARNESS_TOOLS,
 	ignoredModelKeys,
 	readLadderSlots,
 	resolveSubagentModel,
@@ -27,8 +28,8 @@ const repo = (cfg) => {
 
 const here = new URL("..", import.meta.url).pathname;
 
-test("there are exactly two roles, and every table agrees on them", () => {
-	assert.deepEqual([...SUBAGENT_ROLES], ["swarm", "verifier"], "only the workflow roles exist");
+test("there is exactly one role left — coders — and every table agrees on it", () => {
+	assert.deepEqual([...SUBAGENT_ROLES], ["swarm"], "explore and verify are main's own work, so only coders are spawned");
 	for (const role of SUBAGENT_ROLES) {
 		assert.ok(role in SUBAGENT_EXCLUDE_TOOLS, `${role} must declare its tool exclusions`);
 		assert.ok(role in SUBAGENT_STRIP_FLAGS, `${role} must declare its boot flags`);
@@ -39,16 +40,17 @@ test("there are exactly two roles, and every table agrees on them", () => {
 	assert.equal(isSubagentRole("grader"), false, "the merged role is gone");
 	assert.equal(isSubagentRole("reviewer"), false);
 	assert.equal(isSubagentRole("distiller"), false);
-	assert.equal(isSubagentRole("verifier"), true);
+	assert.equal(isSubagentRole("verifier"), false, "the verifier role is gone: main verifies, no child is spawned to judge");
+	assert.equal(isSubagentRole("swarm"), true, "coders are the only role left");
 });
 
-test("the verifier can run commands to prove things but can never write a file", () => {
-	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.verifier, "verifier");
+test("a coder cannot re-enter the harness — every finisher tool is excluded by name, and no verifier exception is left", () => {
+	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
 	const excluded = args[args.indexOf("--exclude-tools") + 1].split(",");
-	assert.ok(excluded.includes("write"), "a verifier must not write");
-	assert.ok(excluded.includes("edit"), "a verifier must not edit");
-	assert.ok(!excluded.includes("bash"), "a verifier MUST be able to run commands — evidence is the whole point");
-	assert.equal(excluded[0], FINISHER_TOOL_GLOB, "it also cannot re-enter the harness");
+	for (const harness of HARNESS_TOOLS) assert.ok(excluded.includes(harness), `${harness} must be excluded, or a coder could spawn coders or verify itself`);
+	assert.ok(!excluded.includes("bash"), "a coder must run commands — that is how it works");
+	assert.ok(!excluded.includes("write") && !excluded.includes("edit"), "a coder writes, or it cannot do its job");
+	assert.equal(excluded.includes("finisher_verdict"), false, "there is no verdict tool any more: verification is main's job");
 });
 
 test("the coder CAN write, because code mode works by editing files in its own worktree", () => {
@@ -56,14 +58,14 @@ test("the coder CAN write, because code mode works by editing files in its own w
 	assert.ok(!excluded.includes("write"), "a coder that cannot write cannot do its job");
 	assert.ok(!excluded.includes("edit"));
 	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
-	assert.equal(args[args.indexOf("--exclude-tools") + 1], FINISHER_TOOL_GLOB, "the harness glob is still the only exclusion");
+	const list = args[args.indexOf("--exclude-tools") + 1].split(",");
+	assert.deepEqual(list.slice(0, HARNESS_TOOLS.length), [...HARNESS_TOOLS], "the harness tools are the exclusions, and nothing else");
+	assert.equal(list.length, HARNESS_TOOLS.length, "a coder gets exactly the harness tools as its exclusions, and nothing else");
 });
 
-test("both roles keep their provider extension — a bare boot made the verifier unable to reach any extension-provided model", () => {
-	assert.ok(!SUBAGENT_STRIP_FLAGS.verifier.includes("--no-extensions"), "a verifier must still reach its model (verified: bare boot gave 'Unknown provider')");
+test("a coder keeps its provider extension — a bare boot made the child unable to reach any extension-provided model", () => {
 	assert.ok(!SUBAGENT_STRIP_FLAGS.swarm.includes("--no-extensions"), "a coder needs the provider extension to reach its model");
-	assert.deepEqual(SUBAGENT_STRIP_FLAGS.verifier, SUBAGENT_STRIP_FLAGS.swarm, "the two roles boot the same way; they differ only in tool rights");
-	assert.ok(SUBAGENT_TIMEOUT_MS.verifier >= 300_000, "a verifier runs real commands, so it needs real time");
+	assert.ok(SUBAGENT_TIMEOUT_MS.swarm >= 300_000, "a coder runs real work, so it needs real time");
 });
 
 test("every role boots with the harness env guard, so a sub-agent never loads this extension again", () => {
@@ -84,7 +86,7 @@ test("a per-role key can never pick a model any more: the ladder is the only sou
 	const dir = repo({ swarm: "b/two", verifier: "e/five", grader: "c/three", distiller: "d/four" });
 	assert.equal(resolveSubagentModel(dir).pattern, undefined, "a leftover role key must not become a sub-agent model");
 	assert.equal(resolveSubagentModel(dir, { mainModel: "main/one" }).source, "main");
-	assert.deepEqual(ignoredModelKeys(dir).sort(), ["distiller", "grader", "swarm", "verifier"], "every leftover role key is reported as ignored");
+	assert.deepEqual(ignoredModelKeys(dir).sort(), ["distiller", "grader", "swarm", "verifier"], "every leftover role key is reported as ignored, including the verifier one that no longer exists");
 });
 
 test("the ladder is a priority order: the first set rung wins, later rungs only exist for failover", () => {
@@ -142,7 +144,7 @@ test("no role's boot flags can strip extensions — that is what broke provider 
 	}
 });
 
-test("a verify fan-out runs as the verifier role — it cannot write, its log is separate, and its page says VERIFIER", async () => {
+test("finisher_swarm refuses explore and verify, naming where each of those jobs went", async () => {
 	const { registerTools } = await import("../extensions/finisher/src/tools.ts");
 	const { createStateBox } = await import("../extensions/finisher/index.ts");
 	const cwd = repo({ priority1: "stub/one" });
@@ -156,21 +158,23 @@ test("a verify fan-out runs as the verifier role — it cannot write, its log is
 		},
 		persist: () => {},
 		updateWidget: () => {},
-		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "ran coders" }], details: {} }),
 		armGoalRound: () => {},
 		launchSubagent: async (_ctx, role, task) => {
 			launched.push({ role, task });
-			state.get().subagentRuns.push({ role, ok: true, summary: "", at: Date.now(), status: "done", logPath: `/tmp/${role}.log` });
-			return { ok: true, output: "$ node -e run()\nexit code 0\nVERDICT: PASS", logPath: `/tmp/${role}.log` };
+			return { ok: true, output: "done", logPath: `/tmp/${role}.log` };
 		},
 	});
 	const swarm = defs.find((d) => d.name === "finisher_swarm");
 	const ctx = { cwd, model: { provider: "p", id: "m" }, hasUI: false, ui: { notify: () => {} } };
-	await swarm.execute("call-verify", { mode: "verify", goal: "prove it", subtasks: [{ id: "c1", instruction: "prove c1" }] }, undefined, undefined, ctx);
-	assert.deepEqual(launched.map((l) => l.role), ["verifier"], "verification work must not run under the coding role");
-	assert.match(launched[0].task, /c1/, "the verifier still gets its own case");
-	assert.equal(state.get().subagentRuns.at(-1).role, "verifier", "the session page is labelled VERIFIER, not SWARM");
-	launched.length = 0;
-	await swarm.execute("call-explore", { mode: "explore", goal: "look", subtasks: [{ id: "s1", instruction: "read the repo" }] }, undefined, undefined, ctx);
-	assert.deepEqual(launched.map((l) => l.role), ["swarm"], "research work still runs as a swarm");
+	for (const mode of ["explore", "verify"]) {
+		const out = await swarm.execute(`call-${mode}`, { mode, goal: "g", subtasks: [{ id: "s1", instruction: "x" }] }, undefined, undefined, ctx);
+		assert.equal(out.isError, true, `mode=${mode} must be refused`);
+		assert.match(out.content[0].text, /finisher_verify/, `mode=${mode} must point at the tool that does that job now`);
+		assert.match(out.content[0].text, new RegExp(mode), "it must name the mode it refused");
+	}
+	assert.deepEqual(launched, [], "a refused mode spawns nothing — no verifier, no reader");
+	const code = await swarm.execute("call-code", { subtasks: [{ id: "s1", instruction: "write it", files: ["src/a.ts"] }] }, undefined, undefined, ctx);
+	assert.equal(code.isError, undefined, "code is still accepted without naming the mode");
+	assert.match(code.content[0].text, /ran coders/);
 });

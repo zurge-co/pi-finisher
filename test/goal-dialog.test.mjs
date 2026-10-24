@@ -157,12 +157,7 @@ test("an unreadably long case list is refused before anyone is asked, instead of
 	assert.equal(atLimit.isError, undefined);
 });
 
-const recordedFor = (output) =>
-	/(?:exit code|exited) [1-9]/.test(output)
-		? { calls: [{ command: "node -e run()", ok: false }], verdict: { verdict: "FAIL", why: "the command exited non-zero" } }
-		: { calls: [{ command: "node -e run()", ok: true }], verdict: { verdict: "PASS", why: "the command exited 0" } };
-
-const swarmSession = (verifyOutput = "$ node -e run()\nexit code 0\nVERDICT: PASS") => {
+const swarmSession = () => {
 	const defs = [];
 	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
 	const asked = [];
@@ -173,7 +168,7 @@ const swarmSession = (verifyOutput = "$ node -e run()\nexit code 0\nVERDICT: PAS
 		},
 		persist: () => {},
 		updateWidget: () => {},
-		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "coders ran" }], details: {} }),
 		armGoalRound: () => {},
 		askGoalConfirm: async (_ctx, goal) => {
 			asked.push(goal);
@@ -181,16 +176,16 @@ const swarmSession = (verifyOutput = "$ node -e run()\nexit code 0\nVERDICT: PAS
 		},
 		launchSubagent: async (_ctx, role) => {
 			box.get().subagentRuns.push({ role, ok: true, summary: "", at: Date.now(), status: "done", logPath: "/tmp/x.log" });
-			return { ok: true, output: verifyOutput, logPath: "/tmp/x.log", ...recordedFor(verifyOutput) };
+			return { ok: true, output: "done", logPath: "/tmp/x.log", calls: [] };
 		},
 	});
 	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-swarm-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
 	return { asked, box, ctx, run: (name, params) => defs.find((d) => d.name === name).execute("c1", params, undefined, undefined, ctx) };
 };
 
-test("a verify fan-out NEVER manufactures a confirmed goal, so the dialog cannot be bypassed by verifying first", async () => {
+test("verify NEVER manufactures a confirmed goal, so the dialog cannot be bypassed by verifying first", async () => {
 	const s = swarmSession();
-	const verify = await s.run("finisher_swarm", { mode: "verify", goal: "a goal the human never confirmed", subtasks: [{ id: "v1", instruction: "prove v1" }] });
+	const verify = await s.run("finisher_verify", { goal: "a goal the human never confirmed", skipDeterministic: true, cases: [{ id: "a goal the human never confirmed", command: "npm test" }] });
 	assert.match(verify.content[0].text, /no goal was confirmed/, "an unconfirmed verify must say so instead of claiming a goal");
 	assert.equal(s.box.get().goalDriver, undefined, "no goal driver may be armed by a verify run");
 
@@ -200,19 +195,22 @@ test("a verify fan-out NEVER manufactures a confirmed goal, so the dialog cannot
 	assert.equal(s.box.get().goalDriver.goal, "a goal the human never confirmed");
 });
 
-test("an unconfirmed verify still reports its evidence honestly: passes are not failures, and no round is booked", async () => {
-	const pass = await swarmSession().run("finisher_swarm", { mode: "verify", goal: "g", subtasks: [{ id: "v1", instruction: "p" }] });
-	assert.equal(pass.isError, undefined, "a passing verify is not an error just because no goal was confirmed");
-	const fail = await swarmSession("$ false\nexit code 1\nVERDICT: FAIL").run("finisher_swarm", { mode: "verify", goal: "g", subtasks: [{ id: "v1", instruction: "p" }] });
-	assert.equal(fail.isError, true, "a failing verify is still reported as a failure");
-	assert.match(fail.content[0].text, /Fix the real cause/);
+test("an unconfirmed verify reports its evidence honestly: a proven case is not an error, an unproven one is", async () => {
+	const proven = swarmSession();
+	proven.box.get().verifyCalls = [{ command: "npm test", ok: true }];
+	const pass = await proven.run("finisher_verify", { goal: "g", skipDeterministic: true, cases: [{ id: "g", command: "npm test" }] });
+	assert.equal(pass.isError, undefined, "a proven case is not an error just because no goal was confirmed");
+	const unproven = swarmSession();
+	const fail = await unproven.run("finisher_verify", { goal: "g", skipDeterministic: true, cases: [] });
+	assert.equal(fail.isError, true, "a case with no named command is not proven, and that is not a pass");
+	assert.match(fail.content[0].text, /UNVERIFIED/);
 });
 
 test("the verify gate keys on an OPEN goal, not on a cold session: a live goal keeps its rounds, and a closed one never arms a new goal", async () => {
 	const live = swarmSession();
 	await live.run("finisher_goal", { goal: "the live goal", cases: ["v1 holds"] });
 	const before = live.box.get().goalDriver;
-	for (let i = 0; i < 3; i++) await live.run("finisher_swarm", { mode: "verify", goal: "the live goal", subtasks: [{ id: "v1", instruction: "p" }] });
+	for (let i = 0; i < 3; i++) await live.run("finisher_verify", { skipDeterministic: true, cases: [{ id: "v1 holds", command: "npm test" }] });
 	const after = live.box.get().goalDriver;
 	assert.ok(after.attempts.rounds > before.attempts.rounds || after.doneAt, "a verify of a confirmed live goal must book its evidence, not be shrugged off as unconfirmed");
 	assert.equal(after.goal, "the live goal", "the live goal's text is never replaced by the agent's verify wording");
@@ -220,7 +218,7 @@ test("the verify gate keys on an OPEN goal, not on a cold session: a live goal k
 
 	const closed = swarmSession();
 	closed.box.get().goalDriver = { goal: "already done", confirmedAt: 1, attempts: { rounds: 1 }, doneAt: 5, outcome: "verified" };
-	await closed.run("finisher_swarm", { mode: "verify", goal: "a goal nobody confirmed", subtasks: [{ id: "v1", instruction: "p" }] });
+	await closed.run("finisher_verify", { goal: "a goal nobody confirmed", skipDeterministic: true, cases: [{ id: "v1", command: "npm test" }] });
 	assert.equal(closed.box.get().goalDriver.goal, "already done", "a verify after a closed goal must never arm a new goal from its own wording");
 	assert.equal(closed.box.get().goalDriver.doneAt, 5, "and it must leave the closed goal closed");
 	assert.deepEqual(closed.asked, [], "the dialog is not the issue — nothing may be armed at all");
@@ -288,7 +286,8 @@ test("a verify run can never name, rename or re-case the goal it verifies", asyn
 	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
 	await run("finisher_goal", { goal: "the human's goal", cases: ["case one"] });
 	const before = JSON.stringify(box.get().goalDriver);
-	await run("finisher_swarm", { mode: "verify", goal: "a completely different goal the agent invented", subtasks: [{ id: "case one", instruction: "prove it" }] });
+	box.get().verifyCalls = [{ command: "npm test", ok: true }];
+	await run("finisher_verify", { goal: "a completely different goal the agent invented", skipDeterministic: true, cases: [{ id: "case one", command: "npm test" }] });
 	const after = box.get().goalDriver;
 	assert.equal(after.goal, "the human's goal", "the goal text is never taken from the verify call");
 	assert.deepEqual(after.cases, ["case one"], "nor its case list");
@@ -409,4 +408,36 @@ test("a refusal never outlives its own goal: a confirmed goal and a fresh cycle 
 	assert.equal(box.get().goalConsent, undefined, "a confirmed goal clears the old refusal, so the next goal is not blocked by it");
 	resetCycleState(box.get());
 	assert.equal(box.get().goalConsent, undefined, "and a cycle reset cannot inherit one either");
+});
+
+test("a goal the human cannot read is refused before the dialog, never shown to them", async () => {
+	const asked = [];
+	const session = goalSession("confirmed", asked);
+	session.box.get().humanLang = "th";
+	const blocked = await session.run({ goal: "ship the dialog in the human's language", cases: ["it asks once"] });
+	assert.equal(blocked.isError, true, "an English goal for a Thai human is not confirmable");
+	assert.equal(asked.length, 0, "the human is never asked to confirm a goal they cannot read");
+	assert.equal(session.box.get().goalDriver, undefined, "nothing is armed by a refused goal");
+	assert.match(blocked.content[0].text, /Thai/, "the refusal names the language the goal must be written in");
+
+	const ok = await session.run({ goal: "ทำให้กล่องยืนยันเป็นภาษาไทย", cases: ["ถามครั้งเดียว"] });
+	assert.equal(ok.isError, undefined, "the same goal written in Thai is confirmable");
+	assert.equal(asked.length, 1);
+	assert.equal(session.box.get().goalLang, "th", "the run remembers the language the human reads");
+});
+
+test("the declared language is what the dialog speaks, and the chrome it brings is validated", async () => {
+	const asked = [];
+	const session = goalSession("confirmed", asked);
+	const params = { goal: "fazer o dialog falar a língua do humano", cases: ["pergunta uma vez"], lang: "PT-br", chrome: { header: "A meta está cumprida quando:", title: "▚ confirme uma vez" } };
+	const result = await session.run(params);
+	assert.equal(result.isError, undefined);
+	assert.equal(session.box.get().goalLang, "pt-br", "the tag is normalised, and a Latin goal needs no script evidence to pass");
+	assert.equal(session.box.get().goalChrome.header, "A meta está cumprida quando:", "the human's own words reach the dialog");
+	assert.equal(session.box.get().goalChrome.keys, undefined, "nothing the agent did not supply is invented");
+
+	const junk = goalSession("confirmed", []);
+	await junk.run({ goal: "un altro goal latino", lang: "it", chrome: { header: "due\nrighe", note: "   " } });
+	assert.equal(junk.box.get().goalLang, "it");
+	assert.equal(junk.box.get().goalChrome, undefined, "a chrome that is not one readable line is dropped, not shown");
 });

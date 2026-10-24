@@ -7,7 +7,8 @@ import { analyzeTestFile, formatTestFindings, isTestFile } from "./test-quality.
 import { costCeilingKeysPresent } from "./goal-run.ts";
 import { type LaunchSubagent, type HarnessContext } from "./kit.ts";
 import { buildCodeWorkerPrompt, detectTestCommand, mergeReport, parseWorkerFiles, parseWorkerTests, planMerge, planSlices, sliceViolations, type SliceOutcome, type SlicePlan } from "./swarm-code.ts";
-import { buildFanOutPrompt, runSwarm, type FanOutArgs, type SwarmSlot, type SwarmTask } from "./swarm.ts";
+import { attemptDeadlineMs, metricsLine, runSwarm, swarmMetrics, type SwarmSlot, type SwarmTask } from "./swarm.ts";
+import { subagentTimeout } from "./subagent-config.ts";
 import { type State } from "./types.ts";
 import { excludeFromGitStatus, gitOk, linkDeps } from "./worktree.ts";
 import { finisherDir } from "./types.ts";
@@ -64,8 +65,8 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 
 	const runCodeSwarm = async (
 		ctx: ExtensionContext,
-		slices: { id: string; instruction: string; scope?: string[] }[],
-		opts: { slots: SwarmSlot[]; concurrency: number; maxAttempts: number; goal?: string; sig?: AbortSignal; ladder: string[]; source: string; notes: string },
+		slices: { id: string; instruction: string; scope?: string[]; acceptance?: string[]; dependsOn?: string[]; sharedContract?: string }[],
+		opts: { slots: SwarmSlot[]; concurrency: number; maxAttempts: number; goal?: string; sig?: AbortSignal; ladder: string[]; source: string; notes: string; budget?: string | null },
 	): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown>; isError?: boolean }> => {
 		let plans: SlicePlan[];
 		try {
@@ -75,10 +76,12 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		}
 		const outcomes: SliceOutcome[] = [];
 		const byPlan = new Map(plans.map((pl) => [pl.id, pl]));
-		const tasks = slices.map((sl) => ({ id: sl.id, payload: sl }));
+		const swarmStart = Date.now();
+		const tasks = slices.map((sl) => ({ id: sl.id, payload: sl, ...(sl.dependsOn?.length ? { dependsOn: sl.dependsOn } : {}) }));
 		const results = await runSwarm(tasks, {
 			slots: opts.slots,
 			concurrency: opts.concurrency,
+			attemptMs: attemptDeadlineMs(subagentTimeout("swarm", ctx.cwd)),
 			maxAttempts: opts.maxAttempts,
 			run: async (task, slot, attempt) => {
 				const plan = byPlan.get(task.id)!;
@@ -91,7 +94,15 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 						return undefined;
 					}
 				});
-				const prompt = buildCodeWorkerPrompt(task.payload!, { worktreeDir: plan.worktreeDir, scopes: plan.scopes, ...(opts.goal ? { goal: opts.goal } : {}), ...(testCommand ? { testCommand } : {}) });
+				const slice = task.payload!;
+				const prompt = buildCodeWorkerPrompt(slice, {
+					worktreeDir: plan.worktreeDir,
+					scopes: plan.scopes,
+					...(opts.goal ? { goal: opts.goal } : {}),
+					...(testCommand ? { testCommand } : {}),
+					...(slice.sharedContract ? { sharedContract: slice.sharedContract } : {}),
+					...(slice.acceptance?.length ? { acceptance: slice.acceptance } : {}),
+				});
 				const before = state.subagentRuns.length;
 				const pending = launchSubagent(ctx, "swarm", prompt, undefined, opts.sig, slot.model);
 				const started = state.subagentRuns[before];
@@ -101,6 +112,9 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 					if (!r.ok) return { ok: false, output: `${r.output}\n(log: ${r.logPath})` };
 					const reported = parseWorkerFiles(r.output);
 					const changed = reported.length ? reported : gitIn(plan.worktreeDir, ["diff", "--name-only", "HEAD"]).out.split("\n").filter(Boolean);
+					const outside = changed.filter((rel) => plan.scopes.length > 0 && !plan.scopes.some((scope) => rel === scope || rel.startsWith(`${scope}/`)));
+					if (outside.length)
+						return { ok: false, output: `your slice wrote outside the files it owns: ${outside.join(", ")} — only ${plan.scopes.join(", ")} belong to slice ${plan.id}. Move the change, or ask the main agent for a wider slice.` };
 					const violations = sliceViolations(changed, (rel) => {
 						const abs = join(plan.worktreeDir, rel);
 						try {
@@ -127,7 +141,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 					if (tests?.verdict === "FAIL")
 						return { ok: false, output: `your slice reports ${tests.verdict}: ${tests.detail || "(no reason given)"} — fix the failure in your checkout, re-run the tests, then report TESTS: and FILES: again` };
 					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
-					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output, ...(tests ? { tests: tests.verdict } : {}) });
+					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output, ...(tests ? { tests: tests.verdict } : {}), ...(task.payload?.dependsOn?.length ? { dependsOn: task.payload.dependsOn } : {}) });
 					return { ok: true, output: r.output };
 				} finally {
 					dropWorkerWorktree(ctx.cwd, plan.worktreeDir, plan.branch);
@@ -145,6 +159,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 			else failedApplies.push(`${o.id}: ${res.msg}`);
 		}
 		const failed = results.filter((r) => !r.ok);
+		const metrics = swarmMetrics(results, Date.now() - swarmStart);
 		const lines = [
 			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ code swarm finished with issues" : "✅ code swarm merged"}: ${applied.length}/${results.length} slice(s) applied`,
 			mergeReport(mergePlan, outcomes),
@@ -152,10 +167,11 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		if (failed.length) lines.push(`failed coder(s): ${failed.map((f) => f.id).join(", ")}`);
 		if (failedApplies.length) lines.push(`apply failed (resolve by hand): ${failedApplies.join(" · ")}`);
 		if (mergePlan.overlaps.length) lines.push("overlapping slices were NOT merged — split the work so each file has one owner, or merge those by hand");
+		lines.push(metricsLine(metrics));
 		lines.push("leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under .finisher/worktree/swarm/");
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
-			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, results },
+			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, metrics, results },
 			...(failed.length || mergePlan.blocked.length || failedApplies.length ? { isError: true } : {}),
 		};
 	};

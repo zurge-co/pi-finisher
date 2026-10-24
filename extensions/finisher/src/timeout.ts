@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { finisherDir } from "./types.ts";
+import { MAX_TIMER_MS } from "./goal-run.ts";
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 900_000;
-export const MAX_BASH_TIMEOUT_SECONDS = 2_147_483;
+export const MAX_BASH_TIMEOUT_SECONDS = 3_600;
 export const MIN_TIMEOUT_MS = 1_000;
 
 export interface TimedOut {
@@ -45,7 +46,7 @@ export const readToolTimeout = (cwd: string, tool = "default"): number => {
 export const withTimeout = async <T>(run: Promise<T>, ms: number, label: string): Promise<TimeoutResult<T>> => {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const stopper = new Promise<typeof TIMED_OUT>((res) => {
-		timer = setTimeout(() => res(TIMED_OUT), Math.max(MIN_TIMEOUT_MS, ms));
+		timer = setTimeout(() => res(TIMED_OUT), Math.min(MAX_TIMER_MS, Math.max(MIN_TIMEOUT_MS, ms)));
 	});
 	try {
 		const winner = await Promise.race([run, stopper]);
@@ -62,7 +63,7 @@ export const settleWithTimeout = async <T>(run: Promise<T>, ms: number, label: s
 
 export const timeoutSeconds = (ms: number): number => Math.max(1, Math.min(MAX_BASH_TIMEOUT_SECONDS, Math.ceil(ms / 1000)));
 
-export const isValidBashTimeout = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= MAX_BASH_TIMEOUT_SECONDS;
+export const isValidBashTimeout = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0 && v <= MAX_BASH_TIMEOUT_SECONDS;
 
 export const ensureBashTimeout = (input: unknown, ms: number): { changed: boolean; timeout: number } => {
 	const box = input as { timeout?: unknown } | undefined;
@@ -75,7 +76,7 @@ export const ensureBashTimeout = (input: unknown, ms: number): { changed: boolea
 
 export const TOOL_TIMEOUT_LABEL = (name: string): string => `tool ${name}`;
 
-export const timeoutNote = (t: TimedOut): string => `⏱ ${t.label} exceeded its ${Math.round(t.ms / 1000)}s limit and was cut off — nothing was left running`;
+export const timeoutNote = (t: TimedOut): string => `⏱ ${t.label} exceeded its ${Math.round(t.ms / 1000)}s limit — the harness stopped waiting for it`;
 
 export const applyBashTimeout = (toolName: string, input: unknown, cwd: string): boolean => {
 	if (toolName !== "bash") return false;

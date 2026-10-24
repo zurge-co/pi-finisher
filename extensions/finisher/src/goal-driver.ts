@@ -84,7 +84,7 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 				`next: LAP ${Math.min(grown.lap, totalPhases(grown))}/${totalPhases(grown)} — ${currentLap(grown)?.text ?? "no lap"}`,
 				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — if it cannot be exercised from a command, say so and hand it to the human instead of forcing it.`] : []),
 				"",
-				`this is verify round ${round} of ${maxBatches} — close every lap with finisher_phase done, then call finisher_swarm mode=verify once`,
+				`this is verify round ${round} of ${maxBatches} — close every lap with finisher_phase done, then call finisher_verify once`,
 			].join("\n"),
 		};
 	}

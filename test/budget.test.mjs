@@ -2,38 +2,38 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { budgetFits, budgetNote, effortFor, swarmWallMs, wavesFor } from "../extensions/finisher/index.ts";
+import { budgetFits, budgetNote, effortFor, MAX_EFFORT, swarmWallMs, wavesFor } from "../extensions/finisher/index.ts";
 import { capNeededFor, DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const sub = (o, w) => ({ subagentMs: o, attempts: 1, waves: w });
 const cap = (c, o, w, a = 1) => ({ toolCapMs: c, subagentMs: o, attempts: a, waves: w });
 
-test("verify costs exactly one sub-agent run no matter how many attempts were asked for", () => {
-	for (const requested of [undefined, 0, 1, 2, 3, 8, -4]) assert.equal(effortFor("verify", requested), 1, `requested=${requested}`);
-	assert.equal(effortFor("explore", undefined), 2, "explore keeps its failover budget");
-	assert.equal(effortFor("code", 5), 5, "code honours what the caller asked");
-	for (const bad of [0, -3, 0.5]) assert.equal(effortFor("explore", bad) >= 1, true, `a nonsense bound still runs at least once: ${bad}`);
+test("coder attempts are clamped to a real bound, whatever the caller asks for", () => {
+	assert.equal(effortFor(undefined), 2, "the default is a failover budget of two");
+	assert.equal(effortFor(5), 5, "it honours what the caller asked, up to the ceiling");
+	for (const requested of [0, -4, 0.5]) assert.equal(effortFor(requested) >= 1, true, `a nonsense bound still runs at least once: ${requested}`);
+	for (const requested of [99, Number.MAX_SAFE_INTEGER]) assert.equal(effortFor(requested) <= MAX_EFFORT, true, `${requested} must not become an unbounded retry loop`);
 });
 
-test("one attempt is what makes verify fit: a single wave always fits the default cap, and only a second attempt is what breaks it", () => {
+test("one wave of coders fits the default cap, and both a second attempt and a serialised ladder are what break it", () => {
 	for (let cases = 1; cases <= 8; cases++) {
 		const waves = wavesFor(cases, Math.max(cases, 1));
-		assert.equal(budgetFits(cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.verifier, waves, effortFor("verify"))), true, `cases=${cases} at full concurrency must fit`);
+		assert.equal(budgetFits(cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, waves, 1)), true, `cases=${cases} at full concurrency must fit`);
 	}
-	const twoAttempts = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.verifier, 1, 2);
-	assert.equal(budgetFits(twoAttempts), false, "the old 2-attempt budget is exactly what could not fit");
+	const twoAttempts = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 1, 2);
+	assert.equal(budgetFits(twoAttempts), false, "a failover attempt is exactly what cannot fit for a long run");
 	assert.match(budgetNote(twoAttempts), /1200s/);
-	const serialised = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.verifier, 4, 1);
+	const serialised = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 4, 1);
 	assert.equal(budgetFits(serialised), false, "many waves at low concurrency still do not fit, and the note must say so");
 	assert.match(budgetNote(serialised), /2400s/);
 });
 
 test("the budget note fires exactly when the worst case exceeds the cap, and never for a fitting fan-out", () => {
-	const fits = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.verifier, 1);
+	const fits = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 1);
 	assert.equal(budgetFits(fits), true);
 	assert.equal(budgetNote(fits), undefined);
-	const blown = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.verifier, 2, 2);
+	const blown = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 2, 2);
 	assert.equal(budgetFits(blown), false);
 	const note = budgetNote(blown);
 	assert.match(note, /budget:/);
@@ -60,7 +60,7 @@ test("the worst case is attempts × per-run × waves, and waves round up (never 
 
 test("the tool actually asks for effort, not the raw client bound", () => {
 	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
-	assert.match(tools, /const effort = effortFor\(p\.mode, p\.maxAttempts\)/);
+	assert.match(tools, /const effort = effortFor\(p\.maxAttempts\)/, "the tool asks for effort, not for the raw client bound");
 	assert.match(tools, /maxAttempts: effort,/);
 	assert.doesNotMatch(tools, /maxAttempts: p\.maxAttempts \?\? 2/, "the raw bound must not reach the scheduler on the verify path");
 	assert.match(tools, /budgetNote\(/, "a fan-out that cannot fit must say so before it starts");
@@ -96,9 +96,9 @@ test("the outer cap is widened to what the fan-out needs, never narrowed below t
 	for (let cases = 1; cases <= 8; cases++) {
 		for (const concurrency of [1, 2, 5, 8]) {
 			const waves = wavesFor(cases, concurrency);
-			const needed = capNeededFor({ subagentMs: SUBAGENT_TIMEOUT_MS.verifier, attempts: 1, waves });
-			assert.equal(budgetFits({ toolCapMs: needed, subagentMs: SUBAGENT_TIMEOUT_MS.verifier, attempts: 1, waves }), true, `the widened cap must cover ${cases} cases at concurrency ${concurrency}`);
-			assert.ok(needed >= waves * SUBAGENT_TIMEOUT_MS.verifier, "the widened cap covers the worst case, not a fraction of it");
+			const needed = capNeededFor({ subagentMs: SUBAGENT_TIMEOUT_MS.swarm, attempts: 1, waves });
+			assert.equal(budgetFits({ toolCapMs: needed, subagentMs: SUBAGENT_TIMEOUT_MS.swarm, attempts: 1, waves }), true, `the widened cap must cover ${cases} slices at concurrency ${concurrency}`);
+			assert.ok(needed >= waves * SUBAGENT_TIMEOUT_MS.swarm, "the widened cap covers the worst case, not a fraction of it");
 		}
 	}
 });

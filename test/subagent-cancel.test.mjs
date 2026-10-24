@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { raceTimeout, buildRpcSubagentArgs, withFinisherToolGlob, SUBAGENT_EXCLUDE_TOOLS } from "../extensions/finisher/index.ts";
+import { raceTimeout, buildRpcSubagentArgs, withFinisherToolGlob, SUBAGENT_EXCLUDE_TOOLS, HARNESS_TOOLS } from "../extensions/finisher/index.ts";
 
 const dir = () => mkdtempSync(join(tmpdir(), "finisher-cancel-"));
 
@@ -22,13 +22,11 @@ test("a pre-aborted signal is already done — the caller gates on signal.aborte
 	assert.equal(ctrl.signal.aborted, true, "the runner checks this before RpcClient.start(), so no process is created");
 });
 
-test("cancelling one role never touches another role's boot arguments", () => {
+test("a cancelled coder keeps its own boot arguments: no session is dropped and writing stays allowed", () => {
 	const swarm = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
-	const verifier = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.verifier, "verifier");
-	assert.ok(!swarm.includes("--no-session") && !verifier.includes("--no-session"), "both roles keep their own session");
-	const list = (args) => args[args.indexOf("--exclude-tools") + 1];
-	assert.equal(list(swarm).split(",")[0], list(verifier).split(",")[0], "the harness glob leads for every role");
-	assert.ok(!list(swarm).split(",").includes("write"), "the coder may write");
-	assert.ok(list(verifier).split(",").includes("write"), "the verifier may not");
+	assert.ok(!swarm.includes("--no-session"), "a coder keeps its own session");
+	const list = swarm[swarm.indexOf("--exclude-tools") + 1].split(",");
+	assert.ok(!list.includes("write") && !list.includes("edit"), "the coder may write");
+	for (const harness of HARNESS_TOOLS) assert.ok(list.includes(harness), `${harness} stays excluded so a coder cannot re-enter the harness`);
 	assert.ok(dir().length > 0);
 });

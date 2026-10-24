@@ -5,24 +5,21 @@ import { dirname, join } from "node:path";
 import { DefaultPackageManager, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { finisherDir } from "./types.ts";
 
-export const SUBAGENT_ROLES = ["swarm", "verifier"] as const;
+export const SUBAGENT_ROLES = ["swarm"] as const;
 export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
 
 export const isSubagentRole = (role: string): role is SubagentRole => (SUBAGENT_ROLES as readonly string[]).includes(role);
 
 export const SUBAGENT_EXCLUDE_TOOLS: Record<string, string[]> = {
 	swarm: [],
-	verifier: ["write", "edit"],
 };
 
 export const SUBAGENT_STRIP_FLAGS: Record<string, string[]> = {
 	swarm: ["--no-themes", "--no-prompt-templates", "--no-mcp", "--no-skills"],
-	verifier: ["--no-themes", "--no-prompt-templates", "--no-mcp", "--no-skills"],
 };
 
 export const SUBAGENT_TIMEOUT_MS: Record<string, number> = {
 	swarm: 600_000,
-	verifier: 600_000,
 	default: 300_000,
 };
 export const subagentTimeout = (role: string, cwd?: string, fallbackCwd?: string): number => {
@@ -90,9 +87,13 @@ export const buildProviderMissingGuidance = (role: string, providerId: string): 
 
 export const FINISHER_TOOL_GLOB = "finisher_*";
 
+export const HARNESS_TOOLS = ["finisher_goal", "finisher_phase", "finisher_swarm", "finisher_verify", "finisher_steer"] as const;
+
+export const harnessExclusions = (): string[] => [...HARNESS_TOOLS];
+
 export const withFinisherToolGlob = (excludeTools?: string[]): string[] => {
-	const base = (excludeTools ?? []).filter((t) => t !== FINISHER_TOOL_GLOB);
-	return [FINISHER_TOOL_GLOB, ...base];
+	const base = (excludeTools ?? []).filter((t) => t !== FINISHER_TOOL_GLOB && !(HARNESS_TOOLS as readonly string[]).includes(t));
+	return [...new Set([...harnessExclusions(), ...base])];
 };
 
 export const buildSubagentArgv = (task: string, modelPattern?: string, excludeTools?: string[], role?: string, stripFlags?: string[]): string[] => {

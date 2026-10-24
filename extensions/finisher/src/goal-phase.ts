@@ -113,7 +113,7 @@ export const fixPhases = (report: VerifyReport): string[] => {
 	};
 	for (const caseId of report.failed) out.push(`fix ${reason(caseId)}`);
 	for (const caseId of report.unverified) out.push(`make ${reason(caseId)} provable by a command that exits 0`);
-	for (const caseId of report.blocked ?? []) out.push(`repair the verifier for ${reason(caseId)}`);
+	for (const caseId of report.blocked ?? []) out.push(`make ${reason(caseId)} runnable — a case that never produced output proves nothing`);
 	return out.slice(0, FIX_PHASES_MAX);
 };
 
@@ -137,7 +137,7 @@ export const verifyGate = (plan: PhasePlan): PhaseGate => {
 		allowed: false,
 		note: [
 			`verify is gated: ${lapLabel(plan)} is still open${next ? ` — ${next.text}` : ""}.`,
-			"finish every lap with finisher_phase done=<id> (or bare `done` for the current lap), then call finisher_swarm mode=verify exactly once.",
+			"finish every lap with finisher_phase done=<id> (or bare `done` for the current lap), then call finisher_verify exactly once — you are the verifier, no sub-agent judges your work.",
 			"verification is one shot at the end of the plan, never per lap.",
 		].join("\n"),
 	};

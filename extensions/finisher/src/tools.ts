@@ -1,31 +1,28 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildGoalToolText, goalDriverDone, goalKey, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
+import { buildGoalToolText, goalDriverDone, goalKey, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, readConfirmTimeout, surfaceLine } from "./goal-run.ts";
-import { GOAL_CHANGE_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, casesOnlyChanged, droppedCases, goalCases, sameCaseSet, tooManyCasesNote, unconfirmedGoalNote, type GoalAskOutcome } from "./goal-confirm.ts";
-import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
-import { effectiveLadder, concurrencyFor, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
-import { buildReport, freshAttempts, judgeCase, repairNote, renderVerifyReport, unusableCases } from "./verify-loop.ts";
-import { judgeRecording, type RecordedCall, type RecordedVerdict } from "./evidence-record.ts";
-import { type CaseEvidence } from "./verify-loop.ts";
-import { appendRecord, doneRecord, gapRecord, journalEnabled, journalPath } from "./lap-journal.ts";
-import { gitOk } from "./worktree.ts";
-import { type State } from "./types.ts";
-import { headOf } from "./pending-apply.ts";
-import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
+import { GOAL_CHANGE_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, casesOnlyChanged, cleanChrome, consentBlocks, droppedCases, goalCases, sameCaseSet, tooManyCasesNote, type GoalAskOutcome, type GoalChromeOverrides, type GoalConsent } from "./goal-confirm.ts";
+import { DEFAULT_GOAL_LANG, goalLanguageNote, languageTag, readableIn, resolveGoalLang } from "./human-language.ts";
+import { type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
+import { effectiveLadder, concurrencyFor, swarmSlots } from "./swarm.ts";
+import { planRefusalText, planRefusals, readPlanSlices } from "./swarm-plan.ts";
 import { clearOtherGoals } from "./handoff-stack.ts";
 import { handoffOff } from "./handoff-gate.ts";
-import { boundWrapper, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
+import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
 import { budgetNote, capNeededFor, effortFor, SWARM_TOOL, wavesFor } from "./budget.ts";
 import { subagentTimeout } from "./subagent-config.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
 import { liveByRole, steerLive, followUpLive } from "./subagent-rpc.ts";
 import { recordSteerOnRun } from "./agent-session.ts";
-import { planOf, verifyGate } from "./goal-phase.ts";
 import { registerPhaseTool } from "./phase-tool.ts";
+import { verifyToolDefinition, VERIFY_TOOL } from "./verify-tool.ts";
 
-export const roleForMode = (mode: "explore" | "verify" | "code"): "swarm" | "verifier" => (mode === "verify" ? "verifier" : "swarm");
+export const SWARM_MODES = ["code"] as const;
+export const RETIRED_MODES = ["explore", "verify"] as const;
+export const retiredModeNote = (mode: string): string =>
+	`finisher_swarm mode=${mode} is gone: explore and plan are yours alone (read the files yourself), and verification is ${"finisher_verify"} — the harness records what you actually run, so no sub-agent judges your work. This tool now spawns coders in worktrees and nothing else.`;
 
 export const registerTools = (ctx: HarnessContext) => {
 	const persist = ctx.persist;
@@ -33,50 +30,18 @@ export const registerTools = (ctx: HarnessContext) => {
 	const state = ctx.state;
 	const updateWidget = ctx.updateWidget;
 	const escalate = ctx.escalate;
-	const launchSubagent = ctx.launchSubagent;
 	const runCodeSwarm = ctx.runCodeSwarm;
-	const armGoalRound = ctx.armGoalRound;
 	const askGoalConfirm = ctx.askGoalConfirm;
 
 	registerPhaseTool(ctx);
 
-	const repairReports = async <T,>(
-		results: { id: string; ok: boolean; output: string }[],
-		tasks: SwarmTask<T>[],
-		fan: FanOutArgs,
-		slots: SwarmSlot[],
-		concurrency: number,
-		judged: (id: string, output: string, ok: boolean) => CaseEvidence,
-		runOne: (promptFor: (task: SwarmTask<T>, attempt: number) => string) => (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => Promise<{ ok: boolean; output: string }>,
-	): Promise<void> => {
-		const judgeAll = () => buildReport(results.map((r) => judged(r.id, r.output, r.ok)));
-		const unusable = unusableCases(judgeAll());
-		if (!unusable.length) return;
-		const ids = new Set(unusable.map((c) => c.caseId));
-		const retryTasks = tasks.filter((t) => ids.has(t.id));
-		if (!retryTasks.length) return;
-		const note = repairNote(unusable, boundWrapper());
-		const again = await runSwarm(retryTasks, {
-			slots,
-			concurrency,
-			maxAttempts: 1,
-			stopOnDeclaredAnswer: true,
-			run: runOne((task) => `${buildFanOutPrompt(fan, task.payload as { id: string; instruction: string }, 2)}\n\n${note}`),
-		});
-		for (const r of again) {
-			const at = results.findIndex((x) => x.id === r.id);
-			if (at >= 0) results[at] = { ...results[at], ok: r.ok, output: r.output };
-		}
-	};
-
 	const capFor = (name: string, configured: number, cwd: string, params: unknown): number => {
 		if (name !== SWARM_TOOL) return configured;
-		const p = params as { mode?: "explore" | "verify" | "code"; subtasks?: unknown[]; maxAttempts?: number } | undefined;
-		const mode = p?.mode ?? "explore";
+		const p = params as { subtasks?: unknown[]; maxAttempts?: number } | undefined;
 		const tasks = Array.isArray(p?.subtasks) ? p.subtasks.length : 0;
 		const { ladder } = effectiveLadder(cwd);
 		const spread = concurrencyFor(cwd, swarmSlots(ladder).length, tasks);
-		const needed = capNeededFor({ subagentMs: subagentTimeout(roleForMode(mode), cwd), attempts: effortFor(mode, p?.maxAttempts), waves: wavesFor(tasks, spread.concurrency) });
+		const needed = capNeededFor({ subagentMs: subagentTimeout("swarm", cwd), attempts: effortFor(p?.maxAttempts), waves: wavesFor(tasks, spread.concurrency) });
 		return Math.max(configured, needed);
 	};
 
@@ -91,46 +56,55 @@ export const registerTools = (ctx: HarnessContext) => {
 		},
 	});
 
+	pi.registerTool(boundedTool(verifyToolDefinition(ctx)));
+
 	pi.registerTool(boundedTool({
 		name: "finisher_swarm",
 		label: "finisher · swarm",
 		description:
-			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands; mode=code gives every slice its OWN git worktree + branch so coders write in parallel without touching each other, then merges back in deterministic slice-id order and refuses to merge silently when two slices touched the same path. No token/cost ceiling.",
-		promptSnippet: "Fan out parallel sub-agents across the model priority ladder (explore / verify / code in isolated worktrees)",
+			"Run coder sub-agents in parallel on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then merges the slices back in deterministic order and refuses to merge silently when two slices touched the same path. Explore, plan and verify are NOT this tool — you do those yourself, and verification is finisher_verify.",
+		promptSnippet: "Fan out parallel CODERS across the model priority ladder (one worktree per slice)",
 		promptGuidelines: [
-			"The workflow is: finisher_goal (confirm once) → finisher_phase plan=[...] → finisher_phase done for each lap in order → finisher_swarm mode=verify exactly once.",
-			"Never call finisher_swarm mode=verify while a lap is still open — it is refused, because verification is one shot at the end of the plan, not per lap.",
-			"Use finisher_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
-			"Use finisher_swarm verify to prove the result against reality: each verifier must RUN commands and end with VERDICT: PASS/FAIL. A claim with no executed command is UNVERIFIED, never PASS. The loop is bounded — fix the real cause and call verify again; identical evidence stops it.",
-			"Treat a worker's report as the evidence: do not re-read the files it read, do not re-run the commands it ran, and for verify never re-check a case a verifier already judged — its verdict and its commands are final for that case.",
-			"Use finisher_swarm code when the change splits into independent slices: each coder gets its own worktree, so give every slice its scope and let them all run at once. Slices that need the same file must be one slice — overlapping paths are blocked and reported, never merged silently.",
+			"This tool only codes. Do the exploring and the planning yourself first — decide the slices, the files each one owns and the interface they share — because every slice you add is paid for by a coder reading context you already have.",
+			"Give every slice its scope (repo-relative paths): two slices sharing a path are a conflict, so split differently. Keep slices independent — they run concurrently, so a slice that needs another's interface must have that interface decided in your plan, not discovered by the coder.",
+			"Use as many slices as the work genuinely splits into and no more: fewer coders is faster when the work serialises. Do not spend the whole ladder because it is there.",
+			"Verification is finisher_verify, not this tool: you run the deterministic checks and name the command that proves each case, so no sub-agent grades your work.",
+			"Treat a worker's report as the evidence: do not re-read the files it read or re-run the commands it ran.",
 			"Decide library/layout/approach yourself — do not ask the human.",
 		],
 		parameters: Type.Object({
-			mode: Type.Union([Type.Literal("explore"), Type.Literal("verify"), Type.Literal("code")] as const),
-			goal: Type.Optional(Type.String({ description: "the outcome the whole fan-out serves (verifiers judge against exactly this)" })),
+			mode: Type.Optional(Type.String({ description: "code (the only mode this tool still has; explore/plan/verify are yours alone)" })),
+			goal: Type.Optional(Type.String({ description: "the outcome the whole fan-out serves" })),
+			shared_contract: Type.Optional(Type.String({ description: "the interface every slice must follow (types, signatures, response shapes) — decided by you before any coder starts, so no coder has to guess another's API" })),
 			subtasks: Type.Array(
 				Type.Object({
 					id: Type.String({ description: "short stable id, unique within the call (e.g. s1) — used verbatim in the worker's worktree and branch, so lowercase letters/digits/-/_ only" }),
 					instruction: Type.String({ description: "self-contained slice: that worker sees only this text" }),
-					scope: Type.Optional(Type.Array(Type.String(), { description: "repo-relative paths this slice may touch — two slices sharing a path are a conflict, so split differently" })),
+					files: Type.Array(Type.String(), { description: "repo-relative paths this slice OWNS — required. Two slices sharing a path are refused before anything is spawned, so give each path to exactly one slice" }),
+					acceptance: Type.Optional(Type.Array(Type.String(), { description: "what makes this slice done, checkable by the coder itself" })),
+					depends_on: Type.Optional(Type.Array(Type.String(), { description: "ids of slices that must succeed before this one starts. The interface they share belongs in shared_contract, not in a coder's guesswork" })),
 				}),
-				{ description: "1–8 independent slices — they run concurrently, so none may depend on another" },
+				{ description: "1–8 slices — files must not overlap; depends_on is refused if it names an unknown id or forms a cycle" },
 			),
 			maxAttempts: Type.Optional(Type.Integer({ description: "attempts per slice before it counts as failed (default 2)" })),
 		}),
 		async execute(_id, p, sig, _on, ctx) {
+			const mode = (p.mode ?? "code").trim();
+			if (mode !== "code") return { content: [{ type: "text", text: retiredModeNote(mode) }], details: { refused: true, mode }, isError: true };
 			if (!p.subtasks.length) return { content: [{ type: "text", text: "finisher_swarm: subtasks must contain at least one slice" }], details: {}, isError: true };
-			if (p.mode === "verify") {
-				const gate = verifyGate(planOf(state.goalDriver as { phases?: never; lap?: number } | undefined));
-				if (!gate.allowed) return { content: [{ type: "text", text: gate.note }], details: { gated: true }, isError: true };
-			}
 			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `finisher_swarm: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
-			const ids = new Set<string>();
-			for (const s of p.subtasks) {
-				if (!s.id.trim() || ids.has(s.id)) return { content: [{ type: "text", text: `finisher_swarm: subtask id "${s.id}" is empty or duplicated` }], details: {}, isError: true };
-				ids.add(s.id);
-			}
+			const plan = readPlanSlices(p.subtasks as never[]);
+			const refusals = planRefusals(plan);
+			if (refusals.length) return { content: [{ type: "text", text: planRefusalText(refusals, "no worktree, no coder, no command was run") }], details: { refused: true, refusals }, isError: true };
+			const sharedContract = p.shared_contract?.trim();
+			const slices = plan.map((sl) => ({
+				id: sl.id,
+				instruction: sl.instruction,
+				...(sl.files.length ? { scope: sl.files } : {}),
+				...(sl.acceptance.length ? { acceptance: sl.acceptance } : {}),
+				...(sl.dependsOn.length ? { dependsOn: sl.dependsOn } : {}),
+				...(sharedContract ? { sharedContract } : {}),
+			}));
 			const mainPattern = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 			const { ladder, source } = effectiveLadder(ctx.cwd, mainPattern);
 			const slots = swarmSlots(ladder);
@@ -141,126 +115,15 @@ export const registerTools = (ctx: HarnessContext) => {
 					isError: true,
 				};
 			const spread = concurrencyFor(ctx.cwd, slots.length, p.subtasks.length);
-			const concurrency = spread.concurrency;
-			const effort = effortFor(p.mode, p.maxAttempts);
+			const effort = effortFor(p.maxAttempts);
 			const budget = budgetNote({
 				toolCapMs: readToolTimeout(ctx.cwd, SWARM_TOOL),
-				subagentMs: subagentTimeout(roleForMode(p.mode), ctx.cwd),
+				subagentMs: subagentTimeout("swarm", ctx.cwd),
 				attempts: effort,
-				waves: wavesFor(p.subtasks.length, concurrency),
+				waves: wavesFor(p.subtasks.length, spread.concurrency),
 			});
 			const notes = costCeilingKeysPresent(ctx.cwd).length ? ` ⚠ ignored ceiling key(s): ${costCeilingKeysPresent(ctx.cwd).join(", ")}` : "";
-			const recorded = new Map<string, { calls: RecordedCall[]; verdict?: RecordedVerdict }>();
-			const runOne = <T,>(promptFor: (task: SwarmTask<T>, attempt: number) => string) => async (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => {
-				if (sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
-				const before = state.subagentRuns.length;
-				const pending = launchSubagent(ctx, roleForMode(p.mode), promptFor(task, attempt), undefined, sig, slot.model, { caseId: task.id });
-				const started = state.subagentRuns[before];
-				if (started) started.slotId = slot.id;
-				const r = await pending;
-				recorded.set(task.id, { calls: r.calls ?? [], ...(r.verdict ? { verdict: r.verdict } : {}) });
-				return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
-			};
-			const treeState = (): string =>
-				gitOk(["status", "--porcelain"], ctx.cwd)
-					.out.split("\n")
-					.map((line) => line.trim())
-					.filter((line) => line && !line.includes(".finisher/"))
-					.join("\n");
-			const treeBefore = p.mode === "verify" ? treeState() : "";
-			const judgedCase = (id: string, output: string, ok: boolean) => {
-				if (p.mode !== "verify") return judgeCase(id, output, ok ? {} : { exitCode: 1 });
-				const rec = recorded.get(id);
-				if (!rec)
-					return ok
-						? { caseId: id, verdict: "UNVERIFIED" as const, commands: [], reason: "the harness recorded nothing for this case — a verdict without a recording proves nothing" }
-						: { caseId: id, verdict: "BLOCKED" as const, commands: [], reason: "the verifier run did not finish — nothing was exercised" };
-				const treeAfter = treeState();
-				if (treeAfter !== treeBefore)
-					return { caseId: id, verdict: "BLOCKED" as const, commands: [], reason: "the verifier changed the working tree — a verifier must not write into the repo, so its run is not evidence. Run the same check again from a clean tree." };
-				const verdict = judgeRecording(rec.calls, rec.verdict);
-				return { caseId: id, verdict: verdict.verdict, commands: [], ...(verdict.reason ? { reason: verdict.reason } : {}) };
-			};
-			if (p.mode === "code") return await runCodeSwarm(ctx, p.subtasks, { slots, concurrency, maxAttempts: effort, goal: p.goal, sig, ladder, source, notes });
-			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s: { id: string; instruction: string }) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}), boundHint: boundWrapper() };
-			const tasks = fan.subtasks.map((s) => ({ id: s.id, payload: s }));
-			const results = await runSwarm(tasks, {
-				slots,
-				concurrency,
-				maxAttempts: effort,
-				stopOnDeclaredAnswer: p.mode === "verify",
-				run: runOne((task, attempt) => buildFanOutPrompt(fan, task.payload!, attempt)),
-			});
-			if (p.mode === "verify") await repairReports(results, tasks, fan, slots, concurrency, judgedCase, runOne);
-			const failed = results.filter((r) => !r.ok);
-			const body = results
-				.map((r) => `## ${r.id} ${r.ok ? "✓" : "✗"}${r.model ? ` [${r.model}]` : ""}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ""}\n${r.output.trim() || "(no output)"}`)
-				.join("\n\n");
-			if (p.mode === "verify") {
-				const report = buildReport(results.map((r) => judgedCase(r.id, r.output, r.ok)));
-				const active = state.goalDriver as GoalRunState | undefined;
-				const openGoal = !!active && !goalDriverDone(active);
-				const verified = `${NON_GOAL_PREFIX}${report.cases.map((c) => c.caseId).join(", ") || "run"}`;
-				const driver = active && !active.doneAt ? active : { ...resumeOrStart(undefined, p.goal?.trim() || verified), attempts: freshAttempts() };
-				const step = nextGoalDriverStep(driver, report);
-				if (!openGoal) {
-					persist();
-					updateWidget(ctx);
-					const summary = buildReport(report.cases);
-					return {
-						content: [{ type: "text", text: ["verify-only run: " + driver.goal, "", unconfirmedGoalNote(summary.allPass), "", step.text, "", body].join("\n") }],
-						details: { mode: p.mode, report, verifiedOnly: true, effort, budget: budget ?? null, results },
-						...(summary.allPass ? {} : { isError: true }),
-					};
-				}
-				const finalText = reportWithDecisions(step.text, state.decisions ?? []);
-				if (step.action === "finish" || step.action === "human" || step.action === "halt") writeDecisionsFile(ctx.cwd, driver.goal, state.decisions ?? []);
-				const before = state.goalDriver as GoalRunState;
-				state.goalDriver = step.state;
-				persist();
-				updateWidget(ctx);
-				if (journalEnabled()) {
-					const journal = journalPath();
-					const plan = (state.goalDriver as GoalRunState).phases ?? [];
-					if (step.action === "replan")
-						appendRecord(
-							journal,
-							gapRecord({
-								repo: ctx.cwd,
-								goal: driver.goal,
-								round: step.round,
-								lap: Math.min(plan.length, Math.max(1, state.goalDriver.lap ?? 1)),
-								laps: plan.length,
-								added: plan.slice((before.phases ?? []).length).map((p) => p.text),
-								cases: report.cases.map((c) => ({ id: c.caseId, verdict: c.verdict, ...(c.reason ? { reason: c.reason } : {}) })),
-								models: results.map((r) => r.model),
-								outcome: step.action,
-							}),
-						);
-					if (step.action === "finish" || step.action === "human" || step.action === "halt")
-						appendRecord(
-							journal,
-							doneRecord({
-								repo: ctx.cwd,
-								goal: driver.goal,
-								rounds: step.round,
-								laps: plan.length,
-								outcome: step.state.outcome ?? "halted",
-							}),
-						);
-				}
-				if (step.action === "replan") armGoalRound(step.text);
-				return {
-					content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), ...(budget ? ["", budget] : []), "", body].join("\n") }],
-					details: { mode: p.mode, report, decision: { kind: step.action }, step: step.action, outcome: step.state.outcome, effort, budget: budget ?? null, results },
-					...(report.allPass ? {} : { isError: true }),
-				};
-			}
-			return {
-				content: [{ type: "text", text: `${swarmSummaryLine(results)} (concurrency ${concurrency})\n${budget ? `${budget}\n` : ""}\n${body}${failed.length ? `\n\n⚠ ${failed.length} slice(s) failed — re-run just those slices or do them yourself` : ""}` }],
-				details: { mode: p.mode, concurrency, concurrencySource: spread.source, effort, budget: budget ?? null, results },
-				...(failed.length ? { isError: true } : {}),
-			};
+			return await runCodeSwarm(ctx, slices, { slots, concurrency: spread.concurrency, maxAttempts: effort, goal: p.goal, sig, ladder, source, notes, budget });
 		},
 	}));
 
@@ -268,20 +131,41 @@ export const registerTools = (ctx: HarnessContext) => {
 		name: "finisher_goal",
 		label: "finisher · goal",
 		description:
-			"Confirm a goal ONCE and let the harness drive it: it runs the verify fan-out on your model ladder, judges each case from executed evidence, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
+			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with finisher_verify, the harness judges each case from the commands it watched you run, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
 		promptGuidelines: [
 			"Call finisher_goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
+			"Write the goal and every case in the language the human writes in, and pass that language as lang: the dialog they confirm is in their language, never yours. Paths, identifiers and commands stay verbatim.",
 			"After a 'fix' step, fix the real cause and call finisher_goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
 			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or report honestly that it cannot be proven here.",
 		],
 		parameters: Type.Object({
 			goal: Type.String({ description: "the outcome, in the human's words — one goal per run" }),
 			cases: Type.Optional(Type.Array(Type.String(), { description: "the cases that make the goal true (defaults to the spec's own goal cases)" })),
+			lang: Type.Optional(Type.String({ description: "the language the human writes in (e.g. th, ja, pt-BR) — the confirm dialog uses it" })),
+			chrome: Type.Optional(
+				Type.Object({
+					title: Type.Optional(Type.String()),
+					header: Type.Optional(Type.String()),
+					note: Type.Optional(Type.String()),
+					keys: Type.Optional(Type.String()),
+					keysLine: Type.Optional(Type.String()),
+				}),
+			),
 		}),
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
 			if (!goal) return { content: [{ type: "text", text: "finisher_goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
+			const lang = resolveGoalLang(languageTag(p.lang), state.humanLang);
+			state.goalLang = lang;
+			const chrome = cleanChrome(p.chrome as GoalChromeOverrides | undefined);
+			state.goalChrome = Object.keys(chrome).length ? chrome : undefined;
+			if (!readableIn(lang, goal))
+				return {
+					content: [{ type: "text", text: goalLanguageNote(lang) }],
+					details: { goal, confirmed: false, outcome: "unreadable-goal", lang },
+					isError: true,
+				};
 			const consent = state.goalConsent;
 			if (consent && (state.humanAt ?? 0) <= consent.blockedAt)
 				return {
@@ -356,7 +240,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			updateWidget(ctx);
 			const next = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 			return {
-				content: [{ type: "text", text: buildGoalToolText(started, { action: "finish", round: 0, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then call finisher_swarm mode=verify ONCE at the end:
+				content: [{ type: "text", text: buildGoalToolText(started, { action: "finish", round: 0, report: { cases: [], allPass: false, unverified: [], failed: [] }, state: started, text: `the goal is confirmed — work until every case holds, then call finisher_verify ONCE at the end:
 ${next.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}
 
 verification runs once, reading the change and exercising the changed code directly (never the test suite as proof). If a case cannot be exercised, it comes back as UNVERIFIED for a human to test.` }) }],
@@ -364,7 +248,6 @@ verification runs once, reading the change and exercising the changed code direc
 			};
 		},
 	}));
-
 	pi.registerTool(boundedTool({
 		name: "finisher_steer",
 		label: "finisher · steer",
@@ -378,7 +261,7 @@ verification runs once, reading the change and exercising the changed code direc
 			"Never use it to restart a worker or undo its work — steer only adds information.",
 		],
 		parameters: Type.Object({
-			role: Type.Optional(Type.String({ description: "which live sub-agent to reach: swarm or verifier. Omit to list who is running" })),
+			role: Type.Optional(Type.String({ description: "which live sub-agent to reach: swarm. Omit to list who is running" })),
 			message: Type.Optional(Type.String({ description: "the finding to inject — self-contained, no references to context the sub-agent cannot see" })),
 			mode: Type.Optional(Type.Union([Type.Literal("steer"), Type.Literal("followUp")] as const)),
 		}),

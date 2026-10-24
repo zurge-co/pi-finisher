@@ -178,7 +178,9 @@ test("the timeout rule reaches the model, so an injected deadline is never a sur
 	assert.match(TIMEOUT_RULE, /timeout/);
 	assert.match(TIMEOUT_RULE, /SECONDS/);
 	const index = readFileSync(join(here, "extensions/finisher/index.ts"), "utf8");
-	assert.match(index, /TIMEOUT_RULE/, "the rule is part of the system prompt, not just the hook");
+	const prompt = readFileSync(join(here, "extensions/finisher/src/system-prompt.ts"), "utf8");
+	assert.match(prompt, /TIMEOUT_RULE/, "the rule is part of the system prompt, not just the hook");
+	assert.match(index, /harnessSystemPrompt\(/, "the entry point composes the prompt through the module that owns the rules");
 	assert.match(index, /enforceDeadline\(ev\.toolName/, "the hook enforces it on the real tool call");
 	assert.match(index, /block: true/, "an unbounded call is refused, not silently rewritten and forgotten");
 });

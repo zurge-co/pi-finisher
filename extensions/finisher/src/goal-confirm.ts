@@ -1,4 +1,5 @@
 import { type Spec } from "./types.ts";
+import { baseLang, DEFAULT_GOAL_LANG } from "./human-language.ts";
 
 export type GoalGateState = "unconfirmed" | "confirmed";
 
@@ -40,6 +41,57 @@ export type GoalAskOutcome = "confirmed" | "declined" | "unavailable" | "timeout
 
 export const GOAL_CONFIRM_TITLE = "▚ confirm this goal once";
 export const GOAL_CONFIRM_KEYS = "y / enter = confirm  •  n / esc = decline";
+
+export interface GoalChrome {
+	title: string;
+	keys: string;
+	keysLine: string;
+	header: string;
+	note: string;
+	emptyGoal: string;
+}
+
+const EN_CHROME: GoalChrome = {
+	title: GOAL_CONFIRM_TITLE,
+	keys: GOAL_CONFIRM_KEYS,
+	keysLine: "↑↓ / wheel = scroll  •  space = read the chat without closing",
+	header: "the goal is met when every case below is true of the real result:",
+	note: "after you confirm: no further approval, no token or cost ceiling — every case is verified and the report comes once.",
+	emptyGoal: "(no goal stated)",
+};
+
+const TH_CHROME: GoalChrome = {
+	title: "▚ ยืนยันเป้าหมายครั้งเดียว",
+	keys: "y / enter = ยืนยัน  •  n / esc = ไม่ยืนยัน",
+	keysLine: "↑↓ / wheel = เลื่อน  •  space = อ่านแชทโดยไม่ปิดกล่อง",
+	header: "เป้าหมายนี้สำเร็จเมื่อทุกข้อด้านล่างเป็นจริงกับผลลัพธ์จริง:",
+	note: "หลังยืนยัน: ไม่มีการขออนุมัติอีก ไม่มีเพดานโทเคนหรือค่าใช้จ่าย — ทุกข้อจะถูกพิสูจน์ และรายงานครั้งเดียวตอนจบ",
+	emptyGoal: "(ยังไม่ได้ระบุเป้าหมาย)",
+};
+
+const CHROME: Record<string, GoalChrome> = { en: EN_CHROME, th: TH_CHROME };
+
+export type GoalChromeOverrides = Partial<Record<keyof GoalChrome, string>>;
+
+export const CHROME_TEXT_MAX = 120;
+
+const usable = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.trim().length <= CHROME_TEXT_MAX && !/[\n\r\t]/.test(v) && !/[\u0000-\u001F\u007F]/.test(v);
+
+export const cleanChrome = (overrides: GoalChromeOverrides | undefined): GoalChromeOverrides => {
+	const out: GoalChromeOverrides = {};
+	for (const [key, value] of Object.entries(overrides ?? {})) {
+		if (!usable(value)) continue;
+		out[key as keyof GoalChrome] = value.trim();
+	}
+	return out;
+};
+
+export const goalChrome = (lang?: string, overrides?: GoalChromeOverrides): GoalChrome => {
+	const tag = lang ?? DEFAULT_GOAL_LANG;
+	const base = CHROME[tag] ?? CHROME[baseLang(tag)] ?? EN_CHROME;
+	return { ...base, ...cleanChrome(overrides) };
+};
+
 export const GOAL_TOO_MANY_CASES = 24;
 
 export const NON_GOAL_PREFIX = "verify: ";
@@ -51,14 +103,17 @@ export interface GoalConfirmLine {
 	text: string;
 }
 
-export const goalConfirmLines = (goal: string, cases: string[]): GoalConfirmLine[] => [
-	{ kind: "goal", text: goal.trim() || "(no goal stated)" },
-	{ kind: "blank", text: "" },
-	{ kind: "header", text: "the goal is met when every case below is true of the real result:" },
-	...cases.map((c, i) => ({ kind: "case" as const, text: `${i + 1}. ${c}` })),
-	{ kind: "blank", text: "" },
-	{ kind: "note", text: "after you confirm: no further approval, no token or cost ceiling — every case is verified and the report comes once." },
-];
+export const goalConfirmLines = (goal: string, cases: string[], lang?: string, chrome?: GoalChromeOverrides): GoalConfirmLine[] => {
+	const words = goalChrome(lang, chrome);
+	return [
+		{ kind: "goal", text: goal.trim() || words.emptyGoal },
+		{ kind: "blank", text: "" },
+		{ kind: "header", text: words.header },
+		...cases.map((c, i) => ({ kind: "case" as const, text: `${i + 1}. ${c}` })),
+		{ kind: "blank", text: "" },
+		{ kind: "note", text: words.note },
+	];
+};
 
 export const tooManyCasesNote = (n: number): string =>
 	`finisher_goal: ${n} cases is too many for one confirmation to be honest — the human cannot weigh that list. Group them into at most ${GOAL_TOO_MANY_CASES} cases the human can read, then ask once. Nothing was started.`;
@@ -88,6 +143,20 @@ export const GOAL_TIMEOUT_NOTE = (seconds: number): string =>
 		"STOP here. Do not open the dialog again, do not start the work, do not guess the cases, and do not continue an earlier plan.",
 		"report this timeout to the human once and wait: the work only resumes when the human asks for it again, with the goal they want.",
 	].join("\n");
+
+export interface GoalConsent {
+	blockedAt: number;
+	reason: "declined" | "timeout";
+}
+
+export const consentBlocks = (consent: GoalConsent | undefined, humanAt: number | undefined): boolean => !!consent && (humanAt ?? 0) <= consent.blockedAt;
+
+export const humanResumes = (state: { humanAt?: number; goalConsent?: GoalConsent }, at: number): boolean => {
+	const cleared = !!state.goalConsent;
+	state.humanAt = at;
+	state.goalConsent = undefined;
+	return cleared;
+};
 
 export const GOAL_CONSENT_WAIT_NOTE =
 	"the human has not said anything since the last goal dialog was refused (declined or timed out), so this run stays stopped. Report the refusal once and wait — do not ask again, do not start work, and do not re-word the goal hoping it passes. Only a new message from the human resumes it.";

@@ -25,5 +25,5 @@ test("every kit member a kit or tool destructures off the shared context is actu
 test("a replan cannot crash the driver: the round it arms is a real function", () => {
 	const swarm = src("src/code-swarm.ts");
 	assert.match(swarm, /return \{ runCodeSwarm, armGoalRound \};/, "createCodeSwarm defines armGoalRound, so it must hand it back to the context");
-	assert.match(src("src/tools.ts"), /step\.action === "replan"[\s\S]{0,40}armGoalRound\(/, "the replan path calls it on the real tool path");
+	assert.match(src("src/verify-tool.ts"), /step\.action === "replan"[\s\S]{0,40}armGoalRound\(/, "the replan path calls it on the real tool path");
 });

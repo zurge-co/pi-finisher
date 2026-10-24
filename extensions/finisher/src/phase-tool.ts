@@ -34,7 +34,7 @@ export const applyPhaseCall = (state: { goalDriver?: GoalRunState }, call: Phase
 		const next = { ...driver, phases: declared.phases, lap: declared.lap, lapAt: declared.lapAt, lapMs: declared.lapMs };
 		state.goalDriver = next;
 		return {
-			text: ["plan declared — work one lap at a time, closest first:", ...phaseListLines(declared), "", `now: ${lapLabel(declared)} · ${currentLap(declared)?.text ?? ""}`, "close each lap with finisher_phase done, then verify ONCE at the end with finisher_swarm mode=verify."].join("\n"),
+			text: ["plan declared — work one lap at a time, closest first:", ...phaseListLines(declared), "", `now: ${lapLabel(declared)} · ${currentLap(declared)?.text ?? ""}`, "close each lap with finisher_phase done, then verify ONCE at the end with finisher_verify."].join("\n"),
 			action: "declared",
 			plan: declared,
 		};
@@ -46,7 +46,7 @@ export const applyPhaseCall = (state: { goalDriver?: GoalRunState }, call: Phase
 				plan.phases.length ? `plan (${lapLabel(plan)}):` : "no plan yet — declare one with finisher_phase plan=[...]",
 				...phaseListLines(plan),
 				"",
-				call.done === undefined && gate.allowed ? "every lap is closed — call finisher_swarm mode=verify once." : gate.note,
+				call.done === undefined && gate.allowed ? "every lap is closed — call finisher_verify once." : gate.note,
 			].join("\n"),
 			action: "none",
 			plan,
@@ -58,7 +58,7 @@ export const applyPhaseCall = (state: { goalDriver?: GoalRunState }, call: Phase
 	state.goalDriver = { ...driver, phases: next.phases, lap: next.lap, lapAt: next.lapAt, lapMs: next.lapMs };
 	if (allLapsDone(next))
 		return {
-			text: ["every lap is closed — verification is next.", ...phaseListLines(next), "", "call finisher_swarm mode=verify ONCE. a failing verify appends fix laps; do not add laps you have not been told to add."].join("\n"),
+			text: ["every lap is closed — verification is next.", ...phaseListLines(next), "", "call finisher_verify ONCE. a failing verify appends fix laps; do not add laps you have not been told to add."].join("\n"),
 			action: "done",
 			plan: next,
 		};
@@ -78,7 +78,7 @@ export const registerPhaseTool = (ctx: HarnessContext): void => {
 		promptGuidelines: [
 			"After finisher_goal is confirmed, declare the plan: finisher_phase plan=[\"read the parser\",\"rewrite the retry policy\",\"...\"]. Every entry must be independently workable — one lap, one outcome.",
 			"Work exactly one lap at a time. When it is genuinely done, call finisher_phase done (or done=\"<lap id>\"). Never close a lap you have not finished.",
-			"The order matters: declare the plan, close laps 1..n, then call finisher_swarm mode=verify ONCE. verify is refused while a lap is still open.",
+			"The order matters: declare the plan, close laps 1..n, then call finisher_verify ONCE. verify is refused while a lap is still open.",
 			"If verify fails, the harness appends fix laps to the plan — work those, then verify again. Never invent laps on your own.",
 		],
 		parameters: {

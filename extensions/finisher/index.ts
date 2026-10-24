@@ -2,9 +2,11 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSyn
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CODE_HYGIENE_GUIDELINE } from "./src/code-hygiene.ts";
-import { SWARM_ROUTING_GUIDELINE } from "./src/swarm.ts";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
+import { humanResumes } from "./src/goal-confirm.ts";
+import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
+import { harnessSystemPrompt } from "./src/system-prompt.ts";
+import { appendCommand } from "./src/command-record.ts";
 import { gitOk } from "./src/worktree.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
 import { createStateBox } from "./src/state-box.ts";
@@ -23,9 +25,7 @@ import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
 import { readHandoff } from "./src/handoff-stack.ts";
 import { handoffStackFor } from "./src/handoff-gate.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
-import { enforceDeadline, TIMEOUT_RULE, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
-import { registerReadonlyGuard, registerVerdictTool } from "./src/verdict-tool.ts";
-import { childRole } from "./src/verdict-file.ts";
+import { enforceDeadline, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
 import { registerTools } from "./src/tools.ts";
 import { registerCommands } from "./src/commands.ts";
 export * from "./src/commands.ts";
@@ -45,12 +45,15 @@ export * from "./src/code-hygiene.ts";
 export * from "./src/test-quality.ts";
 export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
+export * from "./src/human-language.ts";
+export * from "./src/system-prompt.ts";
 export * from "./src/goal-dialog.ts";
 export * from "./src/agent-panel.ts";
 export * from "./src/agent-session.ts";
 export * from "./src/viewers.ts";
 export * from "./src/hud.ts";
 export * from "./src/swarm-code.ts";
+export * from "./src/swarm-plan.ts";
 export * from "./src/budget.ts";
 export * from "./src/evidence.ts";
 export * from "./src/verify-loop.ts";
@@ -59,8 +62,6 @@ export * from "./src/goal-phase.ts";
 export * from "./src/phase-tool.ts";
 export * from "./src/race-state.ts";
 export * from "./src/evidence-record.ts";
-export * from "./src/verdict-file.ts";
-export * from "./src/verdict-tool.ts";
 export * from "./src/lap-journal.ts";
 export * from "./src/goal-run.ts";
 export * from "./src/handoff-stack.ts";
@@ -71,6 +72,9 @@ export * from "./src/fullscreen.ts";
 export * from "./src/handoff-model.ts";
 export * from "./src/decisions.ts";
 export * from "./src/subagent-rpc.ts";
+export * from "./src/rpc-events.ts";
+export * from "./src/command-record.ts";
+export * from "./src/verify-tool.ts";
 export * from "./src/tool-log.ts";
 export * from "./src/handoff-gate.ts";
 export * from "./src/ladder-model.ts";
@@ -87,8 +91,6 @@ const registerToolTimeoutHook = (pi: ExtensionAPI): void => {
 export default function (pi: ExtensionAPI) {
 	if (process.env.PI_FINISHER_SUBAGENT === "1") {
 		registerToolTimeoutHook(pi);
-		registerReadonlyGuard(pi, childRole());
-		registerVerdictTool(pi);
 		return;
 	}
 
@@ -118,9 +120,9 @@ export default function (pi: ExtensionAPI) {
 	} as unknown as HarnessContext;
 
 	kit.escGuard = createEscGuard();
-	kit.OVERLAY_LG = { width: "92%", minWidth: 60, maxHeight: "85%" };
-	kit.OVERLAY_MD = { width: "80%", minWidth: 56, maxHeight: "80%" };
-	kit.OVERLAY_XL = { width: "95%", minWidth: 60, maxHeight: "90%" };
+	kit.OVERLAY_LG = { overlay: true, overlayOptions: { width: "92%", minWidth: 60, maxHeight: "85%" } };
+	kit.OVERLAY_MD = { overlay: true, overlayOptions: { width: "80%", minWidth: 56, maxHeight: "80%" } };
+	kit.OVERLAY_XL = { overlay: true, overlayOptions: { width: "95%", minWidth: 60, maxHeight: "90%" } };
 	kit.REJECT_WITH_REASON = "__finisher_reject_reason__";
 
 	const gui = createGui(kit);
@@ -187,7 +189,15 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		if (event.messageType === "user") box.get().humanAt = Date.now();
+		if (event.messageType !== "user") return;
+		const live = box.get();
+		live.humanAt = Date.now();
+		humanResumes(live, live.humanAt);
+		const lang = humanLanguage(live.humanLang, event.prompt);
+		if (lang !== live.humanLang) {
+			live.humanLang = lang;
+			persist();
+		}
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
@@ -197,16 +207,17 @@ export default function (pi: ExtensionAPI) {
 		return { cancel: true };
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		let sp = event.systemPrompt;
-		sp += "\n\n" + CODE_HYGIENE_GUIDELINE + "\n\n" + SWARM_ROUTING_GUIDELINE + "\n\n" + TIMEOUT_RULE;
+	pi.on("before_agent_start", async (event) => {
 		const bulletin = takeContextBulletin(box.get());
-		if (bulletin) {
-			sp += "\n\n" + bulletin;
-			persist();
-		}
+		if (bulletin) persist();
+		const sp = harnessSystemPrompt(event.systemPrompt, box.get().humanLang ?? DEFAULT_GOAL_LANG, bulletin);
 		if (sp === event.systemPrompt) return;
 		return { systemPrompt: sp };
+	});
+
+	pi.on("tool_result", async (ev) => {
+		const live = box.get();
+		live.verifyCalls = appendCommand(live.verifyCalls ?? [], { toolName: ev.toolName, input: ev.input as { command?: unknown }, isError: ev.isError });
 	});
 
 	pi.on("turn_end", async (ev, ctx) => {

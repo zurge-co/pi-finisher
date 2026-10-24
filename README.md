@@ -10,15 +10,16 @@
 goal (confirmed once)
    └─ finisher_goal        confirm the goal + its cases, once
    └─ finisher_phase       declare the plan, then close one lap at a time: LAP 1/n → LAP n/n
-   └─ finisher_swarm       explore / code   (N agents at once, one model per ladder slot)
-   └─ finisher_swarm       verify           (ONE shot, refused while a lap is still open)
+   └─ finisher_swarm       code             (N coders at once, one git worktree each)
+   └─ finisher_verify      verify           (ONE shot, refused while a lap is still open; main verifies)
    └─ a failing verify appends fix laps, never a fresh plan: the work and time already spent stay
    └─► ONE report: every case + its evidence, or an honest "not proven"
 ```
 
-The verifier does not write its evidence — the harness **records** every command it runs and the
-status it really got, and the verdict comes back as a record (`finisher_verdict`), so a report can
-be prose, logs or nonsense without changing the outcome. A verifier cannot write into the repo.
+Nothing verifies itself from prose: the harness **records** every shell command you run and the
+status it really got, and a case is proven only by the command you named for it. Verification is
+deterministic first — your repo's own `typecheck`, `lint` and `test` scripts run before any case is
+judged, and a failing check fails every case immediately.
 Every extra lap is journaled to `~/.pi/finisher/laps.jsonl`; `/finisher gaps` ranks what was
 missing most often, so the plan can be made better instead of guessed.
 
@@ -58,13 +59,28 @@ the agent why; a session with no dialog at all (headless/print mode) is reported
 instead of self-confirming. A goal is asked once while it is open — the fix→verify rounds never
 re-ask — and asked again once it has closed, because a finished goal's yes cannot start new work.
 
+**The dialog speaks the human's language, not the agent's.** The script the human actually typed
+(Thai, Japanese, Chinese, Korean, Arabic, Hebrew, Cyrillic, Devanagari, Greek) is detected on every
+message and remembered; Latin text never overrides it, and a `lang` tag the agent passes only refines
+it within the same script (`pt-BR` vs `es`). Every turn the system prompt names that language, so the
+goal, the cases and the report are written in it — no translation step, no second copy of the goal to
+drift from the evidence. The dialog chrome (title, header, note, key hints) comes from the agent's own
+`chrome` strings in the same language, falling back to English. A goal that carries no letters of the
+human's script is **refused before the dialog opens**, with a note telling the agent to write it again,
+and long lines are wrapped between graphemes so a Thai or Devanagari mark is never orphaned.
+
 ## What you can call
 
 | Tool | What it does |
 |---|---|
-| `finisher_goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. |
+| `finisher_goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` make the dialog the human's language. |
 | `finisher_steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
-| `finisher_swarm` | `explore` (read-only fan-out), `verify` (independent verifiers), `code` (one git worktree + branch per slice, merged back deterministically, overlapping paths never merged silently). |
+| `finisher_swarm` | **coders only**: one git worktree + branch per slice, merged back in dependency order, overlapping declared files never merged silently. Every slice names the `files` it owns and the `depends_on` slices it waits for. |
+| `finisher_verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts, then judges each case from the commands the harness recorded. No sub-agent is spawned to grade your work. |
+
+Explore and planning are yours alone: read the files yourself and decide the slices, the files each
+one owns and the interface they share (`shared_contract`). A plan that overlaps files, names an
+unknown dependency or contains a cycle is refused **before any worktree is created**.
 
 ## Watching it run
 
@@ -165,15 +181,20 @@ reported as ignored, never obeyed.
 
 ## Verification runs once, at the end
 
-`finisher_swarm mode=verify` is not a loop. After the implementation loops are done, it runs **once**:
-the verifier reads the change and exercises the changed code directly — it is explicitly told **not**
-to run the test suite as proof. Three outcomes:
+`finisher_verify` is not a loop. After the implementation loops are done, it runs **once**, in two
+stages:
+
+1. **deterministic** — the repo's own `typecheck`, `lint` and `test` scripts run with a real
+   deadline and a real exit code. A failing check fails every case straight away, so no model is
+   spent re-reading what the exit code already said.
+2. **evidence** — each case must name the command that exercises it. A case whose command the
+   harness never watched succeed is `UNVERIFIED`, never `PASS`. A green suite alone proves nothing.
 
 | outcome | what happens |
 |---|---|
-| every case exercised and holds | one report, done |
-| a case failed | the main agent is told to plan the next loop itself, then verify once at the end again (bounded, then it halts) |
-| nothing could be exercised directly | the verifier runs nothing else and tells you to test by hand |
+| every case holds | one report, done |
+| a case failed | the main agent gets the next loop back: fix it, use `finisher_swarm` to get coders working in parallel, then verify again (bounded, then it halts) |
+| no command can prove a case | it says so and hands that case to you instead of guessing |
 
 A verify run **never creates a goal**. If no confirmed goal is open, it reports its evidence and
 says so — it cannot mark a goal confirmed, so verifying first is never a way around the dialog.

@@ -67,3 +67,19 @@ test("a coder's own files are held to the same code rules before anything merges
 	const big = "src/huge.ts";
 	assert.equal(sliceViolations([big], () => Array.from({ length: 501 }, () => "x").join("\n"))[0].kind, "length");
 });
+
+test("the merge order is topological: a dependency is applied before the slice that builds on it, id breaking ties", () => {
+	const dependent = (id, paths, deps) => ({ ...out(id, paths), dependsOn: deps });
+	const outcomes = [dependent("c", ["c.ts"], ["b"]), dependent("a", ["a.ts"], []), dependent("b", ["b.ts"], ["a"]), dependent("d", ["d.ts"], [])];
+	assert.deepEqual(mergeOrder(outcomes).map((o) => o.id), ["a", "d", "b", "c"], "a before b before c; d is free, so the id breaks the tie at depth 0");
+	const shuffled = [outcomes[3], outcomes[2], outcomes[1], outcomes[0]];
+	assert.deepEqual(mergeOrder(shuffled).map((o) => o.id), ["a", "d", "b", "c"], "the order is a property of the graph, not of who finished first");
+	assert.deepEqual(mergeOrder([dependent("x", ["x.ts"], ["ghost"]), out("y", ["y.ts"])]).map((o) => o.id), ["x", "y"], "an unknown dependency cannot reorder anything");
+});
+
+test("a dependency that failed does not drag its dependents into the merge", () => {
+	const dependent = (id, ok, deps) => ({ ...out(id, [`${id}.ts`], ok), dependsOn: deps });
+	const plan = planMerge([dependent("a", false, []), dependent("b", true, ["a"]), dependent("c", true, [])]);
+	assert.deepEqual(plan.order, ["c", "b"], "only the slices that produced work are ordered, and the dependent still follows its depth even when its ancestor failed");
+	assert.equal(plan.steps.every((s) => s.apply), true);
+});

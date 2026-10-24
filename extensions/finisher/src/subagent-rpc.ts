@@ -1,16 +1,22 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { withTimeout, settleWithTimeout, timeoutNote } from "./timeout.ts";
+import { dirname } from "node:path";
+import { RpcClient, type JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { type TimeoutResult, settleWithTimeout, withTimeout, timeoutNote } from "./timeout.ts";
 import { encodeToolEvent, type ToolEvent } from "./tool-log.ts";
+import { childExitReason, isChildExitEvent, isSettledEvent, outcomeLabel, promptRefused, subscribeCaptured, waitForRun } from "./rpc-events.ts";
+
+export { childExitReason, isChildExit, isSettled, outcomeLabel, subscribeCaptured, waitForRun } from "./rpc-events.ts";
+export type { RunEvent, WaitOutcome, WaitWatchers } from "./rpc-events.ts";
 
 const RPC_CALL_MS = 60_000;
+export const START_TIMEOUT_MS = 60_000;
+export const CHILD_PROBE_MS = 1_000;
 
 const boundedCall = <T>(run: Promise<T>, label: string, ms: number, onTimeout: () => T): Promise<T> =>
 	settleWithTimeout(run, ms, label, onTimeout);
 
 export const timeoutLabel = (label: string, ms: number): string =>
 	timeoutNote({ timedOut: true, label, ms });
-import { dirname } from "node:path";
-import { RpcClient, type JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 export const RPC_ENTRY_SPEC = "@earendil-works/pi-coding-agent/rpc-entry";
 
@@ -57,7 +63,6 @@ export interface RpcRunOptions {
 	model?: string;
 	onChunk?: (chunk: string) => void;
 	signal?: AbortSignal;
-	verdictFile?: string;
 	onTool?: (tool: ToolEvent) => void;
 }
 
@@ -94,7 +99,15 @@ export const toolLineFromEvent = (ev: JsonAgentSessionEvent): string | undefined
 	return tool ? `\n${encodeToolEvent(tool)}\n` : undefined;
 };
 
-export const isSettled = (ev: JsonAgentSessionEvent): boolean => (ev as { type?: string }).type === "agent_settled";
+export const startRpcClient = async (client: RpcClient, timeoutMs: number = START_TIMEOUT_MS): Promise<TimeoutResult<void>> => withTimeout(client.start(), timeoutMs, "rpc start");
+
+export const childExitProbe = (client: RpcClient): string | undefined => {
+	const proc = (client as unknown as { process?: { exitCode?: number | null; signalCode?: string | null } }).process;
+	const code = proc?.exitCode;
+	if (code === null || code === undefined) return undefined;
+	const stderr = typeof client.getStderr === "function" ? client.getStderr() : undefined;
+	return childExitReason(code, proc?.signalCode ?? null, stderr);
+};
 
 export const finalTextFromMessages = (messages: readonly unknown[]): string => {
 	const last = [...messages].reverse().find((m) => (m as { role?: string })?.role === "assistant") as { content?: { type?: string; text?: string }[] } | undefined;
@@ -115,6 +128,24 @@ export const modelLabel = (m: { provider?: string; id?: string } | undefined): s
 const writeHeader = (logPath: string, role: string, prompt: string): void => {
 	mkdirSync(dirname(logPath), { recursive: true });
 	writeFileSync(logPath, `$ pi --mode rpc (finisher sub-agent ${role})\n--- task ${prompt.length} chars ---\n--- live output ---\n`);
+};
+
+const safe = (fn: (() => void) | undefined): void => {
+	try {
+		fn?.();
+	} catch {
+	}
+};
+
+const tailOf = (events: JsonAgentSessionEvent[], limit = 2_000): string => {
+	const parts: string[] = [];
+	for (const ev of events) {
+		const text = textFromEvent(ev);
+		if (text) parts.push(text);
+		const tool = toolLineFromEvent(ev);
+		if (tool) parts.push(tool);
+	}
+	return parts.join("").slice(-limit);
 };
 
 const TIMED_OUT = Symbol("timeout");
@@ -148,7 +179,6 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 		env: {
 			PI_FINISHER_SUBAGENT: "1",
 			FINISHER_ROLE: opts.role,
-			...(opts.verdictFile ? { FINISHER_VERDICT_FILE: opts.verdictFile } : {}),
 		},
 		args: opts.cliArgs ?? [],
 		...(wanted.provider ? { provider: wanted.provider } : {}),
@@ -157,49 +187,69 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 	const startedAt = Date.now();
 	const key = runKey(opts.role, startedAt);
 	liveRpcRuns.set(key, { role: opts.role, client, startedAt, logPath: opts.logPath, onChunk: opts.onChunk });
-	const append = (s: string) => appendFileSync(opts.logPath, s);
+	const append = (s: string) => {
+		try {
+			appendFileSync(opts.logPath, s);
+		} catch {
+		}
+	};
+	const seen: JsonAgentSessionEvent[] = [];
 	try {
-		const started = await withTimeout(client.start(), opts.timeoutMs, `rpc start (${opts.role})`);
-		if (started.timedOut) return { ok: false, output: `${timeoutLabel("rpc start", opts.timeoutMs)} — the sub-agent never came up`, logPath: opts.logPath };
-		const unsub = client.onEvent((ev) => {
-			const raw = toolEventFrom(ev);
-			if (raw) opts.onTool?.(raw);
-			const tool = toolLineFromEvent(ev);
-			if (tool) {
-				append(tool);
-				opts.onChunk?.(tool);
-				return;
-			}
-			const text = textFromEvent(ev);
-			if (text) {
-				append(text);
-				opts.onChunk?.(text);
-			}
-		});
-		const raced = await raceTimeout(
-			settleWithTimeout(client.promptAndWait(opts.prompt, undefined, opts.timeoutMs), opts.timeoutMs + RPC_CALL_MS, `rpc run (${opts.role})`, () => [] as never),
-			opts.timeoutMs,
-			opts.signal,
+		const started = await startRpcClient(client, Math.min(opts.timeoutMs, START_TIMEOUT_MS));
+		if (started.timedOut) return { ok: false, output: `${timeoutLabel("rpc start", started.ms)} — the sub-agent never came up`, logPath: opts.logPath };
+		const wait = waitForRun(
+			(onEvent) =>
+				subscribeCaptured(
+					(l) => client.onEvent(l),
+					(ev) => {
+						seen.push(ev);
+						const raw = toolEventFrom(ev);
+						if (raw) safe(() => opts.onTool?.(raw));
+						const tool = toolLineFromEvent(ev);
+						if (tool) {
+							append(tool);
+							safe(() => opts.onChunk?.(tool));
+						} else {
+							const text = textFromEvent(ev);
+							if (text) {
+								append(text);
+								safe(() => opts.onChunk?.(text));
+							}
+						}
+						if (isSettledEvent(ev) || isChildExitEvent(ev)) onEvent(ev);
+					},
+				),
+			{ deadlineMs: opts.timeoutMs, signal: opts.signal, probe: () => childExitProbe(client), probeMs: CHILD_PROBE_MS },
 		);
-		unsub();
-		if (raced === TIMED_OUT) {
+		const disposition = await boundedCall(client.prompt(opts.prompt), `rpc prompt (${opts.role})`, RPC_CALL_MS, () => "queued").catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
+		if (promptRefused(disposition)) {
+			wait.stop();
+			append("\n--- prompt handled without a run ---\n");
+			return { ok: false, output: `the sub-agent accepted the prompt without starting a run (disposition: ${String(disposition)}) — nothing was executed (log: ${opts.logPath})`, logPath: opts.logPath };
+		}
+		const outcome = await wait.done;
+		if (outcome.kind !== "settled") {
 			await boundedCall(client.abort(), `rpc abort (${opts.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined);
-			const partial = finalTextFromMessages(await boundedCall(client.getMessages(), `rpc getMessages (${opts.role})`, RPC_CALL_MS, () => [] as never).catch(() => []));
-			const why = opts.signal?.aborted ? "cancelled by user (Esc)" : `TIMEOUT ${Math.round(opts.timeoutMs / 1000)}s`;
-			append(`\n--- ${why} ---\n`);
+			const why = outcomeLabel(outcome, opts.timeoutMs);
+			const msgs = await boundedCall(client.getMessages(), `rpc getMessages (${opts.role})`, RPC_CALL_MS, () => [] as never).catch(() => [] as never);
+			const partial = finalTextFromMessages(msgs).trim() || tailOf(seen);
+			append(`\n--- ${why} (${outcome.kind}) ---\n`);
 			return { ok: false, output: `${why}\nlast output:\n${partial.slice(-2_000)} (log: ${opts.logPath})`, logPath: opts.logPath };
 		}
 		const msgs = await boundedCall(client.getMessages(), `rpc getMessages (${opts.role})`, RPC_CALL_MS, () => [] as never);
 		const state = (await boundedCall(client.getState(), `rpc getState (${opts.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined)) as { model?: { provider?: string; id?: string }; sessionId?: string } | undefined;
 		const usedModel = modelLabel(state?.model);
 		const sessionId = typeof state?.sessionId === "string" ? state.sessionId : undefined;
-		const output = finalTextFromMessages(msgs);
+		const answer = finalTextFromMessages(msgs);
+		const output = answer.trim() ? answer : tailOf(seen, 16_000);
 		append(`\n--- exited ok ---\n--- used model: ${usedModel ?? "(unknown)"} ---\n--- session: ${sessionId ?? "(none)"} ---\n`);
 		return { ok: true, output: output.slice(-16_000), logPath: opts.logPath, ...(usedModel ? { usedModel } : {}), ...(sessionId ? { sessionId } : {}) };
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
-		append(`\n--- rpc error: ${msg} ---\n`);
-		return { ok: false, output: `sub-agent rpc error: ${msg} (log: ${opts.logPath})`, logPath: opts.logPath };
+		const stderr = typeof client.getStderr === "function" ? client.getStderr().trim() : "";
+		const partial = tailOf(seen);
+		append(`\n--- rpc error: ${msg}${stderr ? `\n--- stderr: ${stderr.slice(-600)}` : ""} ---\n`);
+		return { ok: false, output: `sub-agent rpc error: ${msg}${stderr ? `\nstderr: ${stderr.slice(-600)}` : ""}${partial ? `\nlast output:\n${partial}` : ""} (log: ${opts.logPath})`, logPath: opts.logPath };
 	} finally {
 		liveRpcRuns.delete(key);
 		await boundedCall(client.stop(), `rpc stop (${opts.role})`, RPC_CALL_MS, () => undefined).catch(() => undefined);

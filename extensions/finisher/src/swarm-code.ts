@@ -4,6 +4,9 @@ export interface CodeSlice {
 	id: string;
 	instruction: string;
 	scope?: string[];
+	acceptance?: string[];
+	dependsOn?: string[];
+	sharedContract?: string;
 }
 
 export interface SlicePlan {
@@ -20,6 +23,7 @@ export interface SliceOutcome {
 	diff?: string;
 	output?: string;
 	tests?: "PASS" | "FAIL" | "SKIP";
+	dependsOn?: string[];
 }
 
 export interface OverlapPair {
@@ -93,8 +97,29 @@ export const findOverlaps = (outcomes: SliceOutcome[]): OverlapPair[] => {
 	return [...pairs.values()].map((p) => ({ ...p, paths: [...p.paths].sort((a, b) => a.localeCompare(b)) })).sort((x, y) => x.a.localeCompare(y.a) || x.b.localeCompare(y.b));
 };
 
-export const mergeOrder = (outcomes: SliceOutcome[]): SliceOutcome[] =>
-	[...outcomes].filter((o) => o.ok).sort((a, b) => a.id.localeCompare(b.id));
+export const mergeDepths = (outcomes: SliceOutcome[]): Map<string, number> => {
+	const byId = new Map(outcomes.map((o) => [o.id, o]));
+	const depth = new Map<string, number>();
+	const visiting = new Set<string>();
+	const walk = (id: string): number => {
+		const known = depth.get(id);
+		if (known !== undefined) return known;
+		if (visiting.has(id)) return 0;
+		visiting.add(id);
+		const deps = (byId.get(id)?.dependsOn ?? []).filter((d) => byId.has(d));
+		const d = deps.length ? Math.max(...deps.map((x) => walk(x) + 1)) : 0;
+		visiting.delete(id);
+		depth.set(id, d);
+		return d;
+	};
+	for (const id of [...byId.keys()].sort((a, b) => a.localeCompare(b))) walk(id);
+	return depth;
+};
+
+export const mergeOrder = (outcomes: SliceOutcome[]): SliceOutcome[] => {
+	const depth = mergeDepths(outcomes);
+	return [...outcomes].filter((o) => o.ok).sort((a, b) => (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0) || a.id.localeCompare(b.id));
+};
 
 export interface MergeStep {
 	id: string;
@@ -153,9 +178,11 @@ export const parseWorkerTests = (out: string): { verdict: "PASS" | "FAIL" | "SKI
 	return undefined;
 };
 
-export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string }): string =>
+export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string; sharedContract?: string; acceptance?: string[] }): string =>
 	[
 		`You are swarm coder ${slice.id}. GOAL: ${opts.goal ?? "(goal supplied by the main agent)"}`,
+		...((opts.sharedContract ?? "").trim() ? ["SHARED CONTRACT (decided before you started — follow it exactly, do not redesign it):", (opts.sharedContract ?? "").trim(), ""] : []),
+		...((opts.acceptance ?? []).length ? ["Your slice is done when these hold:", ...(opts.acceptance ?? []).map((a) => `  - ${a}`), ""] : []),
 		`You work ALONE in your own checkout: ${opts.worktreeDir}. Other coders are editing other checkouts of the same repo at the same time.`,
 		opts.scopes.length ? `Stay inside your slice's paths: ${opts.scopes.join(", ")}. Touching a file outside them is a conflict with another coder.` : "No explicit paths were given: keep the change as narrow as the instruction.",
 		"Write the code for YOUR slice only, then stop. Do not try to merge, commit, rebase or touch another slice's files.",

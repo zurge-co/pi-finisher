@@ -137,11 +137,11 @@ export const readJournal = (home = homedir()): JournalRecord[] => {
 };
 
 export const GAP_THEMES: { theme: string; match: RegExp }[] = [
-	{ theme: "unproven (no command)", match: /\b(no command was run|never declared a verdict|no command reports)\b/i },
+	{ theme: "unproven (no command)", match: /\b(no command was run|never declared a verdict|no command reports|never recorded|no command was named)\b/i },
 	{ theme: "unproven (cannot exercise)", match: /\b(could not exercise|cannot be exercised|needs a human)\b/i },
-	{ theme: "blocked verifier", match: /\b(never produced a verdict|blocked|rpc error|timeout)\b/i },
+	{ theme: "unrunnable check", match: /\b(never produced a verdict|blocked|rpc error|timeout)\b/i },
 	{ theme: "contradiction", match: /\b(contradicts|contradiction)\b/i },
-	{ theme: "verifier wrote the repo", match: /\bchanged the working tree\b/i },
+	{ theme: "wrote the repo while proving it", match: /\bchanged the working tree\b/i },
 	{ theme: "real failure", match: /(exited [1-9]|exited with code [1-9])/i },
 ];
 

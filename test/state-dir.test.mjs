@@ -31,7 +31,7 @@ test("session state is persisted under the new name only", () => {
 });
 
 test("the live surface carries no retired prefix: every live name is a finisher name", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["finisher_goal", "finisher_phase", "finisher_swarm", "finisher_steer"]);
+	assert.deepEqual([...SURFACE_TOOLS], ["finisher_goal", "finisher_phase", "finisher_swarm", "finisher_verify", "finisher_steer"]);
 	assert.deepEqual([...SURFACE_COMMANDS], ["models", "gaps"]);
 	const prefix = `${retiredPrefix}_`;
 	for (const t of SURFACE_TOOLS) assert.ok(!t.startsWith(prefix), `${t} still carries the retired prefix`);

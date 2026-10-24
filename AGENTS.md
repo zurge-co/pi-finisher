@@ -52,20 +52,25 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `subagent-launch.ts` | `launchSubagent`: one RPC sub-agent per role (timeout, cancel, live tail, model override) + handoff capture + provider-missing auto-heal |
 | `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes, provider diagnosis |
 | `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
-| `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `concurrencyFor` (says whether config/slots/tasks limited it), `pickSlot`, `runSwarm` retry/failover with `stopOnDeclaredAnswer`, fan-out prompts |
+| `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `concurrencyFor` (says whether config/slots/tasks limited it), `pickSlot`, `readyTasks`/`runSwarm` (dependency-aware ready frontier, failover, blocked dependents, per-result timing), `swarmMetrics`/`metricsLine` |
 | `swarm-code.ts` | Slice planning/ids, worker prompt, `FILES:` parse, overlap detection, merge plan |
+| `swarm-plan.ts` | The plan-before-spawn contract: `readPlanSlices`, `planRefusals` (missing files, overlapping ownership, unknown/self/cyclic `depends_on`), `planOrder`/`blockedBy` for the dependency scheduler |
 | `evidence.ts` | Reading a verifier's output: `extractCommands` (each command bound to *its own* exit status), `anchoredCommand` (a real command must sit at column 0 or after a `$`/`>` prompt), `pastedSource`/`statusInCode` (a numbered, tab-indented or code-shaped line supplies no status and lends none to a command above it), `cellExitCode`, `declaredVerdict`, `stripFences`/`unclaimedStatus` |
 | `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), the bounded loop (`decideOnce`, `evidenceFingerprint`, `recordEvidence`, `MAX_LOOP_BATCHES`), report render |
+| `verify-tool.ts` | `finisher_verify` — main-only verification: `detectChecks`/`runChecks` run the repo's own typecheck/lint/test first, `judgeDeterministic` judges each case from the harness recording, and the goal loop (`nextGoalDriverStep`, `armGoalRound`) is driven from here |
+| `command-record.ts` | The harness recording of main's own shell calls: `recordedCommand`/`appendCommand` (normalised, bounded) — the evidence `finisher_verify` judges |
+
+The workflow the harness enforces: `finisher_goal` (confirm once) → `finisher_phase` (declare the plan, close one lap at a time) → `finisher_swarm` for coders when the work really splits → `finisher_verify` once, after every lap is closed. Explore and planning are the main agent's own work; verification never spawns a child.
 | `goal-driver.ts` | The confirmed-goal driver: finish / fix / stop, round bookkeeping |
 | `goal-phase.ts` | The lap plan: `declarePlan`/`appendPhases`/`completeLap`, `lapLabel`, `allLapsDone`, and `verifyGate` (verify is refused while a lap is open) |
 | `phase-tool.ts` | `finisher_phase` — declare the plan, close one lap at a time, read the plan |
-| `evidence-record.ts` | The harness recording: `recordCall` (bash calls as they finish, with their real status), `finalStatus`/`recordedFailures`, `judgeRecording` (verdict × recording), `recordingLine` |
-| `verdict-file.ts` | The verifier verdict record: `verdictPath`/`appendVerdict`/`parseVerdicts`/`lastVerdict`, the `FINISHER_VERDICT_FILE` and `FINISHER_ROLE` env contract |
+| `evidence-record.ts` | The harness recording: `recordCall` (bash calls as they finish, with their real status), `finalStatus`/`recordedFailures`, `judgeChecks` (a case is proven only by the command named for it) |
 | `lap-journal.ts` | The global extra-lap journal: `journalPath` (`~/.pi/finisher/laps.jsonl`), `gapRecord`/`doneRecord`, `parseJournal`/`readJournal`, `themeOf`, `summarizeGaps`/`summaryLines` |
-| `verdict-tool.ts` | Child-side `finisher_verdict` tool, and `registerReadonlyGuard` (a verifier cannot write into the repo) |
 | `race-state.ts` | Pure race read: `raceState` (phase/lap/lights/lap clock/total clock/pit time), `raceLoaderFrames`, `raceSegment`, `raceIdleLine`, `clockLabel` |
 | `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys, and `readConfirmTimeout`/`DEFAULT_CONFIRM_TIMEOUT_MS`/`MAX_TIMER_MS` (the dialog deadline: env → config → 120s, `0` = wait forever) |
-| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, `goalConfirmLines`, the one-shot confirm prompt, the declined/no-UI/too-many-cases/unconfirmed-verify notes) plus the change gate: `caseKey`/`sameCaseSet`/`casesOnlyChanged`/`droppedCases`/`GOAL_CHANGE_NOTE` — a confirmed goal and its cases can only change through the dialog |
+| `human-language.ts` | The human's language: `languageVote`/`scriptVotes` (the script the human actually typed decides), `languageTag`/`baseLang`/`scriptKey`/`resolveGoalLang` (a declared tag only refines within that script), `readableIn` + `goalLanguageNote` (a goal the human cannot read is refused, not confirmed), `languageGuideline` (the per-turn directive), `graphemes`/`breakGraphemes` (a line never breaks through a grapheme) |
+| `system-prompt.ts` | Composition of the per-turn system prompt: `HARNESS_GUIDELINES` (hygiene, swarm routing, timeout, the human's language) + `harnessSystemPrompt(base, lang, bulletin)` — the host prompt first, the language directive last |
+| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, `goalConfirmLines(goal, cases, lang, chrome)` + `goalChrome`/`cleanChrome` — the dialog chrome is the human's language, the goal and cases are never translated, the declined/no-UI/too-many-cases/unconfirmed-verify notes) plus the change gate: `caseKey`/`sameCaseSet`/`casesOnlyChanged`/`droppedCases`/`GOAL_CHANGE_NOTE` — a confirmed goal and its cases can only change through the dialog |
 | `goal-dialog.ts` | The confirm dialog the human actually sees: an inline overlay (no scrolling, so every case stays visible) with the goal + every case (y/enter confirms, n/esc declines), `ctx.ui.confirm` in non-TUI sessions, `unavailable` when a session has no dialog at all; `createGoalPicker` hands `askGoalConfirm` to the context |
 | `code-hygiene.ts` | Comment/length scanner (string- and regex-aware) + the rule text given to agents |
 | `test-quality.ts` | Filler-test detector (`no-assertion` / `tautology` / `shape-only`) used by the hygiene gate |
@@ -74,7 +79,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `gui.ts` | TUI dialogs: `finisherCustom`, overlay sizes, `finisherPick`, ext-config checkbox, clarify questions |
 | `viewers.ts` | The sub-agent session page: one page per run (task input + steers + live output), ←/→ paging, 1-9 jumps, ↑↓ scroll, tab strip of every agent, `openAgentSession`/`openAgentsViewer`, non-TUI text fallback |
 | `agent-session.ts` | Pure paging + page text: `orderedSessionRuns`, `stepSessionIndex`, `sessionLabel`/`sessionTitle`/`sessionTabs`, `sessionBody`, `recordSteerOnRun`, `sessionSummaryLine` |
-| `tools.ts` | `finisher_goal`, `finisher_swarm`, `finisher_steer` registration (every tool wrapped in a timeout bound) |
+| `tools.ts` | `finisher_goal`, `finisher_swarm` (coders only — explore/verify are refused by name), `finisher_verify`, `finisher_steer` registration (every tool wrapped in a timeout bound) |
 | `commands.ts` | `/finisher models` (ladder editor, `setSlot`, `ladderRows`, `ladderSummaryLine`), `/finisher gaps` (the extra-lap digest), and the `ctrl+_` live-tail shortcut |
 | `worktree.ts` | Bounded `gitOk`, `excludeFromGitStatus`, `linkDeps` (slice deps), `excludeInWorktree` |
 | `pending-apply.ts` | Cycle bookkeeping: `changePathsSince`, `discardSinceBaseline`, `commitWorkingTree` |
@@ -87,7 +92,8 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `decisions.ts` | `DECISION NEEDED` capture + the report at goal done |
 | `fullscreen.ts` | `tuiMode` default helper (was inside the deleted spec-changes) |
 | `fresh-context.ts` | The goal-boundary reset: `freshResetDecision` (fires once per closed goal, never on a plain reply), `lastUserEntryId` (keeps the human's tail), `shouldReset`, summary/directive, status line |
-| `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort, `toolEventFrom` (args + result, not just a name) |
+| `subagent-rpc.ts` | `RpcClient` sub-agents: live registry, `steer`/`followUp` mid-run, timeout/abort, `toolEventFrom` (args + result, not just a name); the run waits on `waitForRun` (settle **or** child exit **or** deadline), auto-aborts, and always reports the child's stderr |
+| `rpc-events.ts` | The wait contract behind a sub-agent run: `waitForRun` races `agent_settled` against a child-exit probe and the deadline, `childExitReason`, `outcomeLabel`, `exitEvent`/`isChildExitEvent`/`isSettledEvent`, `promptRefused` (a `handled` prompt started no run, so nothing must be waited on) |
 | `tool-log.ts` | The sub-agent page's tool blocks: `toolTarget` (full command / path / pattern), `toolHeadline`, log encoding (`encodeToolEvent`), `parseLogItems` + `renderLogItems` (fold/unfold, bounded output) |
 | `budget.ts` | One verify pass vs the tool cap: `effortFor` (verify always 1 attempt), `wavesFor`, `swarmWallMs`, `budgetFits`, `budgetNote` |
 | `compaction-guard.ts` | `compactionHold`/`reportUnread`: an unread `halted`/`needs-human` report is never compacted away before the human replies |

@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 const evidence = (body) => (String(body).trim() ? `EVIDENCE:\n${body}` : "");
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildFanOutPrompt } from "../extensions/finisher/index.ts";
 import { freshGoalRun, nextGoalDriverStep } from "../extensions/finisher/index.ts";
 import {
 	buildHumanTestNote,
@@ -90,15 +89,6 @@ test("the report names every case with the command and exit that decided it", ()
 	assert.match(text, /not verified — 1 failing, 0 unproven of 2/);
 });
 
-test("the verifier prompt forbids the test suite and demands UNVERIFIED over a guess", () => {
-	const p = buildFanOutPrompt({ mode: "verify", subtasks: [], goal: "g" }, { id: "v1", instruction: "check it" }, 1);
-	assert.match(p, /do not run the test suite/);
-	assert.match(p, /git diff/);
-	assert.match(p, /VERDICT: UNVERIFIED/);
-	assert.match(p, /run NOTHING else/);
-	assert.match(p, /a green suite is not proof/);
-});
-
 test("identical evidence halts instead of spending another round — the fingerprint is what the loop actually reads", () => {
 	const same = buildReport([fail("c1")]);
 	const once = decideOnce(same, recordEvidence(freshAttempts(), buildReport([fail("c1")])));
@@ -120,7 +110,7 @@ test("the driver records the evidence it judged, so the next round can compare a
 	assert.equal(again.action, "halt", "the second identical round stops instead of looping");
 });
 
-test("a verifier that never ran is BLOCKED, never a FAIL and never a quiet UNVERIFIED", () => {
+test("a check that never produced output is BLOCKED, never a FAIL and never a quiet UNVERIFIED", () => {
 	for (const infra of [
 		"sub-agent rpc error: Unknown provider synthetic2",
 		"TIMEOUT 600s\nlast output:\n`npm test`\nexit 0",

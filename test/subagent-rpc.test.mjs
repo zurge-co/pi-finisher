@@ -6,6 +6,8 @@ import {
 	buildRpcSubagentArgs,
 	withFinisherToolGlob,
 	FINISHER_TOOL_GLOB,
+	HARNESS_TOOLS,
+	SUBAGENT_EXCLUDE_TOOLS,
 	finalTextFromMessages,
 	modelLabel,
 	splitModelPattern,
@@ -17,23 +19,33 @@ import {
 
 const here = new URL("..", import.meta.url).pathname;
 
-test("every role boots with the finisher tools excluded, so a sub-agent can never spawn the harness", () => {
-	for (const [role, tools] of Object.entries({ swarm: [], verifier: ["write", "edit"] })) {
+test("every role boots with the harness tools excluded by name, so a sub-agent can never spawn the harness", () => {
+	for (const [role, tools] of Object.entries({ swarm: [] })) {
 		const args = buildRpcSubagentArgs(tools, role);
 		const at = args.indexOf("--exclude-tools");
 		assert.ok(at >= 0, `${role} must exclude tools`);
 		const list = args[at + 1].split(",");
-		assert.equal(list[0], FINISHER_TOOL_GLOB, `${role} must exclude the harness tools first`);
+		for (const harness of HARNESS_TOOLS) assert.ok(list.includes(harness), `${role} must exclude ${harness} by name`);
 		for (const t of tools) assert.ok(list.includes(t), `${role} must still exclude ${t}`);
-		assert.equal(list.filter((t) => t === FINISHER_TOOL_GLOB).length, 1, `${role} must not duplicate the glob`);
+		assert.equal(list.filter((t) => t === FINISHER_TOOL_GLOB).length, 0, `${role} carries no glob: a glob cannot spare the one tool the verifier is told to call`);
 	}
 });
 
-test("adding the glob is idempotent and never drops a role's own exclusions", () => {
-	assert.deepEqual(withFinisherToolGlob(undefined), [FINISHER_TOOL_GLOB]);
-	assert.deepEqual(withFinisherToolGlob([]), [FINISHER_TOOL_GLOB]);
-	assert.deepEqual(withFinisherToolGlob([FINISHER_TOOL_GLOB]), [FINISHER_TOOL_GLOB]);
-	assert.deepEqual(withFinisherToolGlob(["write", FINISHER_TOOL_GLOB, "edit"]), [FINISHER_TOOL_GLOB, "write", "edit"]);
+test("a coder can never call finisher_verify: a child that verified its own work would grade itself", () => {
+	const coder = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
+	const list = coder[coder.indexOf("--exclude-tools") + 1].split(",");
+	assert.ok(list.includes("finisher_verify"), "verify belongs to main — a coder must not be able to prove its own work");
+	assert.ok(list.includes("finisher_swarm") && list.includes("finisher_goal") && list.includes("finisher_phase"), "and it cannot re-enter any other harness tool");
+});
+
+test("adding the harness exclusions is idempotent and never drops a role's own exclusions", () => {
+	const base = [...HARNESS_TOOLS];
+	assert.deepEqual(withFinisherToolGlob(undefined), base);
+	assert.deepEqual(withFinisherToolGlob([]), base);
+	assert.deepEqual(withFinisherToolGlob([...base]), base, "re-applying never duplicates", );
+	assert.deepEqual(withFinisherToolGlob([FINISHER_TOOL_GLOB]), base, "a legacy glob is replaced, not kept");
+	assert.deepEqual(withFinisherToolGlob(["write", FINISHER_TOOL_GLOB, "edit"]), [...base, "write", "edit"], "a role keeps its own exclusions alongside the harness ones");
+	assert.deepEqual(withFinisherToolGlob(withFinisherToolGlob(undefined)), withFinisherToolGlob(undefined), "the exclusions are stable");
 });
 
 test("the rpc boot keeps a session so the run can be revisited, and never a hand-rolled spawn", () => {

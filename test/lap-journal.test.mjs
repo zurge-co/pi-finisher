@@ -92,9 +92,10 @@ test("every gap reason lands on a theme, so nothing is silently uncounted", () =
 	const cases = [
 		["no command was run — a claim", "unproven (no command)"],
 		["the verifier could not exercise the change directly", "unproven (cannot exercise)"],
-		["the verifier never produced a verdict — TIMEOUT 600s", "blocked verifier"],
+		["the check never produced output — TIMEOUT 600s", "unrunnable check"],
+		["the harness never recorded `npm test` running — a case with no executed command is not proven", "unproven (no command)"],
 		["the verdict says PASS but `x` exited 1 — the report contradicts itself", "contradiction"],
-		["the verifier changed the working tree", "verifier wrote the repo"],
+		["the run changed the working tree while proving it", "wrote the repo while proving it"],
 		["`node probe.mjs` exited 1", "real failure"],
 		["something new", "other"],
 		[undefined, "no reason given"],

@@ -1,4 +1,4 @@
-import { type OverlayOptions, type SelectItem } from "@earendil-works/pi-tui";
+import { type OverlayHandle, type OverlayOptions, type SelectItem } from "@earendil-works/pi-tui";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type State } from "./types.ts";
 
@@ -22,11 +22,11 @@ export type LaunchSubagent = (
 	signal?: AbortSignal,
 	modelOverride?: string,
 	opts?: { caseId?: string },
-) => Promise<{ ok: boolean; output: string; logPath: string; calls?: import("./evidence-record.ts").RecordedCall[]; verdict?: import("./evidence-record.ts").RecordedVerdict }>;
+) => Promise<{ ok: boolean; output: string; logPath: string; calls?: import("./evidence-record.ts").RecordedCall[] }>;
 
 export type RunCodeSwarm = (
 	ctx: ExtensionContext,
-	slices: { id: string; instruction: string; scope?: string[] }[],
+	slices: { id: string; instruction: string; scope?: string[]; acceptance?: string[]; dependsOn?: string[]; sharedContract?: string }[],
 	opts: {
 		slots: any[];
 		concurrency: number;
@@ -36,12 +36,19 @@ export type RunCodeSwarm = (
 		ladder: string[];
 		source: string;
 		notes: string;
+		budget?: string | null;
 	},
 ) => Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown>; isError?: boolean }>;
 
+export interface CustomDialogOptions {
+	overlay?: boolean;
+	overlayOptions?: OverlayOptions | (() => OverlayOptions);
+	onHandle?: (handle: OverlayHandle) => void;
+}
+
 export type FinisherCustom = <T>(
 	ctx: ExtensionContext,
-	overlay: OverlayOptions,
+	overlay: CustomDialogOptions,
 	build: (tui: any, theme: any, kb: (name: string) => string, done: (v: T) => void) => any,
 	allowPeek?: (() => boolean) | boolean,
 ) => Promise<T>;
@@ -72,9 +79,9 @@ export interface HarnessContext {
 	openAgentsViewer: OpenAgentsViewer;
 	openAgentSession: OpenAgentSession;
 	finisherCustom: FinisherCustom;
-	OVERLAY_LG: OverlayOptions;
-	OVERLAY_MD: OverlayOptions;
-	OVERLAY_XL: OverlayOptions;
+	OVERLAY_LG: CustomDialogOptions;
+	OVERLAY_MD: CustomDialogOptions;
+	OVERLAY_XL: CustomDialogOptions;
 	scrollKeyAction: ScrollKeyAction;
 	REJECT_WITH_REASON: string;
 	askRejectReason: AskRejectReason;

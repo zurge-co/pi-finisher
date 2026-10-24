@@ -27,4 +27,10 @@ export const budgetNote = (input: BudgetInput): string | undefined => {
 	return `⚠ budget: this fan-out can take up to ${need}s (${input.attempts} attempt(s) × ${Math.round(input.subagentMs / 1000)}s × ${input.waves} wave(s)) but the tool cap is ${have}s — lower maxAttempts, raise toolTimeoutMs in .finisher/config.json, or widen swarmConcurrency`;
 };
 
-export const effortFor = (mode: "explore" | "verify" | "code", requested?: number): number => (mode === "verify" ? 1 : Math.max(1, Math.floor(requested ?? 2)));
+export const MAX_EFFORT = 5;
+export const MAX_ATTEMPTS_CEILING = MAX_EFFORT;
+
+export const effortFor = (requested?: number): number => {
+	const n = Math.floor(Number(requested ?? 2));
+	return Number.isFinite(n) ? Math.max(1, Math.min(n, MAX_EFFORT)) : 2;
+};

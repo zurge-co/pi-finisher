@@ -6,11 +6,13 @@ export interface StateBox {
 }
 
 export const createStateBox = (initial: State): StateBox => {
-	let current = initial;
+	const current = initial;
 	return {
 		get: () => current,
 		set: (s) => {
-			current = s;
+			const writable = current as unknown as Record<string, unknown>;
+			for (const key of Object.keys(writable)) if (!(key in s)) delete writable[key];
+			Object.assign(current, s);
 		},
 	};
 };
