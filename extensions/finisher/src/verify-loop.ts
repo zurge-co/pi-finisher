@@ -1,11 +1,7 @@
-export type CaseVerdict = "PASS" | "FAIL" | "UNVERIFIED";
+import { declaredVerdict, extractCommands, infraFailure, type CaseVerdict, type EvidenceCommand } from "./evidence.ts";
 
-export interface EvidenceCommand {
-	command: string;
-	exitCode?: number;
-	output?: string;
-	ranAt?: number;
-}
+export { declaredVerdict, extractCommands } from "./evidence.ts";
+export type { CaseVerdict, EvidenceCommand } from "./evidence.ts";
 
 export interface CaseEvidence {
 	caseId: string;
@@ -19,39 +15,14 @@ export interface VerifyReport {
 	allPass: boolean;
 	unverified: string[];
 	failed: string[];
+	blocked?: string[];
 }
-
-const COMMAND_LINE = /^(?:\$\s*|>\s*)?((?:npm|npx|pnpm|yarn|bun|node|deno|python3?|pytest|go|cargo|make|tsc|vitest|jest|deno)\b.*)$/;
-const EXIT_LINE = /\bexit(?:\s*code)?[:=]?\s*(-?\d+)\b/i;
-
-export const extractCommands = (output: string): EvidenceCommand[] => {
-	const commands: EvidenceCommand[] = [];
-	const lines = output.split("\n");
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i].trim();
-		const m = line.match(COMMAND_LINE);
-		if (!m) continue;
-		const command = m[1].trim();
-		const tail = lines.slice(i, Math.min(i + 6, lines.length)).join("\n");
-		const exit = tail.match(EXIT_LINE);
-		const evidence: EvidenceCommand = { command };
-		if (exit) evidence.exitCode = Number(exit[1]);
-		const body = lines.slice(i + 1, Math.min(i + 4, lines.length)).map((l) => l.trim()).filter(Boolean).join(" ");
-		if (body) evidence.output = body.slice(0, 300);
-		commands.push(evidence);
-	}
-	return commands;
-};
-
-export const declaredVerdict = (output: string): CaseVerdict | undefined => {
-	const matches = [...output.matchAll(/VERDICT:\s*(PASS|FAIL|UNVERIFIED)\b/gi)];
-	if (!matches.length) return undefined;
-	return matches[matches.length - 1][1].toUpperCase() as CaseVerdict;
-};
 
 export const judgeCase = (caseId: string, output: string, opts: { exitCode?: number } = {}): CaseEvidence => {
 	const commands = extractCommands(output);
 	const declared = declaredVerdict(output);
+	if (!output.trim() || infraFailure(output))
+		return { caseId, verdict: "BLOCKED", commands, reason: `the verifier never produced a verdict — ${infraFailure(output) ?? "it returned nothing"}. This is not a failing case: nothing was exercised.` };
 	if (declared === "UNVERIFIED")
 		return { caseId, verdict: "UNVERIFIED", commands, reason: "the verifier could not exercise the change directly — a human must test this" };
 	if (!commands.length)
@@ -61,9 +32,9 @@ export const judgeCase = (caseId: string, output: string, opts: { exitCode?: num
 	if (opts.exitCode !== undefined && opts.exitCode !== 0) return { caseId, verdict: "FAIL", commands, reason: `the verifier process exited ${opts.exitCode}` };
 	if (declared === "FAIL") return { caseId, verdict: "FAIL", commands, reason: "the verifier declared FAIL" };
 	if (declared === "PASS")
-		return commands.some((c) => c.exitCode === 0 || c.exitCode === undefined)
+		return commands.some((c) => c.exitCode === 0)
 			? { caseId, verdict: "PASS", commands }
-			: { caseId, verdict: "UNVERIFIED", commands, reason: "declared PASS but no command shows a successful exit" };
+			: { caseId, verdict: "UNVERIFIED", commands, reason: "declared PASS but no command reports an exit status of 0 — a claim without a status proves nothing" };
 	return { caseId, verdict: "UNVERIFIED", commands, reason: "the verifier ran commands but never declared a verdict" };
 };
 
@@ -72,7 +43,12 @@ export const buildReport = (cases: CaseEvidence[]): VerifyReport => ({
 	allPass: cases.length > 0 && cases.every((c) => c.verdict === "PASS"),
 	unverified: cases.filter((c) => c.verdict === "UNVERIFIED").map((c) => c.caseId),
 	failed: cases.filter((c) => c.verdict === "FAIL").map((c) => c.caseId),
+	blocked: cases.filter((c) => c.verdict === "BLOCKED").map((c) => c.caseId),
 });
+
+export const needsHuman = (report: VerifyReport): string[] => [...report.unverified, ...(report.blocked ?? [])];
+
+export const isPartial = (report: VerifyReport): boolean => report.failed.length > 0 && needsHuman(report).length > 0;
 
 export interface VerifyAttempts {
 	rounds: number;
@@ -80,6 +56,8 @@ export interface VerifyAttempts {
 }
 
 export const freshAttempts = (): VerifyAttempts => ({ rounds: 0 });
+
+export const recordEvidence = (attempts: VerifyAttempts, report: VerifyReport): VerifyAttempts => ({ ...attempts, lastFingerprint: evidenceFingerprint(report) });
 
 export const evidenceFingerprint = (report: VerifyReport): string =>
 	report.cases
@@ -97,7 +75,11 @@ export const MAX_LOOP_BATCHES = 3;
 
 export const decideOnce = (report: VerifyReport, attempts: VerifyAttempts, maxBatches = MAX_LOOP_BATCHES): VerifyDecision => {
 	if (report.allPass) return { kind: "pass" };
+	const blocked = report.blocked ?? [];
+	if (blocked.length) return { kind: "human", reason: `the verifier could not run at all for ${blocked.join(", ")} — a broken verifier is not evidence, so this is yours to check` };
 	if (report.failed.length) {
+		if (attempts.rounds > 0 && attempts.lastFingerprint === evidenceFingerprint(report))
+			return { kind: "halt", reason: "identical evidence to the previous round — the same commands with the same results cannot prove anything new" };
 		if (attempts.rounds >= maxBatches) return { kind: "halt", reason: `the same goal failed verification ${attempts.rounds} times — stopping instead of looping forever` };
 		return { kind: "replan", reason: `verification failed: ${report.failed.join(", ")}` };
 	}
@@ -112,18 +94,24 @@ export const buildReplanPrompt = (report: VerifyReport, goal: string): string =>
 		"do not re-run the test suite as proof.",
 	].join("\n");
 
-export const buildHumanTestNote = (report: VerifyReport): string =>
-	[
-		"⚠ not proven — this needs a human:",
-		...report.cases.filter((c) => c.verdict === "UNVERIFIED").map((c) => `  ${c.caseId}: ${c.reason ?? "could not be exercised directly"}`),
-		"the change was left as it is; nothing else was run.",
-	].join("\n");
+export const buildHumanTestNote = (report: VerifyReport): string => {
+	const human = report.cases.filter((c) => c.verdict === "UNVERIFIED" || c.verdict === "BLOCKED");
+	const failing = report.cases.filter((c) => c.verdict === "FAIL");
+	const lines = ["⚠ not proven — this needs a human:", ...human.map((c) => `  ${c.caseId}: ${c.reason ?? "could not be exercised directly"}`)];
+	if (failing.length) {
+		const passesNow = report.cases.filter((c) => c.verdict === "PASS").length;
+		lines.push(`  ${failing.length} case(s) also still fail (${failing.map((c) => c.caseId).join(", ")}), so fixing this is not the only work left.`);
+		lines.push(`  what was actually proven: ${passesNow} of ${report.cases.length} (${report.cases.filter((c) => c.verdict === "PASS").map((c) => c.caseId).join(", ") || "nothing"}).`);
+	}
+	lines.push("the change was left as it is; nothing else was run.");
+	return lines.join("\n");
+};
 
 export const renderVerifyReport = (report: VerifyReport): string => {
-	const head = report.allPass ? "✅ verified — every case is backed by executed evidence" : `❌ not verified — ${report.failed.length} failing, ${report.unverified.length} unproven of ${report.cases.length}`;
+	const head = report.allPass ? "✅ verified — every case is backed by executed evidence" : `❌ not verified — ${report.failed.length} failing, ${(report.unverified.length ?? 0) + (report.blocked?.length ?? 0)} unproven of ${report.cases.length}`;
 	const lines = [head, ""];
 	for (const c of report.cases) {
-		const icon = c.verdict === "PASS" ? "✓" : c.verdict === "FAIL" ? "✗" : "?";
+		const icon = c.verdict === "PASS" ? "✓" : c.verdict === "FAIL" ? "✗" : c.verdict === "BLOCKED" ? "⊘" : "?";
 		lines.push(`${icon} ${c.caseId} ${c.verdict}${c.reason ? ` — ${c.reason}` : ""}`);
 		for (const cmd of c.commands) lines.push(`    $ ${cmd.command}${typeof cmd.exitCode === "number" ? ` → exit ${cmd.exitCode}` : ""}`);
 	}
