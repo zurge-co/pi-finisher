@@ -253,48 +253,29 @@ stages:
 A verify run **never creates a goal**. If no confirmed goal is open, it reports its evidence and
 says so — it cannot mark a goal confirmed, so verifying first is never a way around the dialog.
 
-## Fresh context and the handoff stack
+## Fresh context: a lap boundary, never a goal close
 
-A context reset happens at exactly one moment: when a **confirmed goal closes** (`agent_before_settle`
-→ one compaction entry, only once per goal). Asking the agent a question, getting an answer, or any
-other reply that is not the end of a goal run never compacts anything — the transcript you just read
-stays there.
+A context reset happens at exactly one moment: **while a goal is still open**, when a lap closes
+(`turn_end` → at most one compaction entry per lap). **Closing the goal is not a boundary** — the
+transcript, the verify report and the evidence that already ran stay on screen and in context to
+read back, nothing fires at settle time, and the next task starts from the context you already have.
+Asking a question, getting an answer, or any other reply is never a boundary either.
 
-When a goal does close, the compaction keeps every entry from the **last user message onward**, so the
-request and the report that answered it remain readable (and in context) while the noisy middle is
-summarized. Everything before that is replaced by the handoff stack below.
+What a lap compaction carries is **not** a transcript or a statistic — it is the lap tracker: the
+goal, the confirmed cases, every lap with its mark and its own spent time, and the latest status of
+each recorded command. It is written to `.finisher/tracker.json` while the goal is open, removed the
+moment the goal closes, and appended as a hidden tracker message so the fresh context still knows
+where the goal stands.
 
-What survives is **not** a transcript or a statistic — it is the handoff stack in
-`.finisher/handoff.jsonl`, and it is scoped to **one goal**: notes carry the goal they were learned
-in, so loops inside a goal share knowledge while a new goal starts from an empty stack.
+The reset is bounded by design: once per lap, never twice for the same lap, never for a plan that has
+just closed its last lap (it hands straight over to verify), and never while a `halted`/`needs-human`
+report is still unread. `{"freshContext": false}` in `.finisher/config.json` turns the lap reset off;
+with it off the context simply keeps growing, and goal close stays untouched either way.
 
-```
-sub-agent finishes
-   └─ classify() asks: would this make the NEXT task faster or more correct?
-        ├─ no  → dropped (no model call is spent on it)
-        └─ yes → condensed to ONE line → stack (deduped, capped at 12)
-   └─► next task starts with that stack injected + an empty context
-```
-
-Sub-agents run under `RpcClient`, so a finding can be pushed into a **run that is already working**
-with `steer()` instead of restarting it. Every role boots with `--exclude-tools finisher_*`, so a
-sub-agent can never re-enter the harness.
-
-The classifier is the gate: **nothing is carried without a verdict.** pi ships classifier models
-across many providers — a few examples:
-
-| classifier | credential |
-|---|---|
-| `typesafe/jev-latest` | `TYPESAFE_API_KEY` |
-| `cloudflare-workers-ai/@cf/cloudflare/clef(-flash)` | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
-| `openrouter/typesafe/jev-1.14`, `opencode/jev-1.13` | that provider's key |
-
-That table is **not** the list of what the harness accepts — it prefers `jev` first, then `clef`, and
-otherwise takes whichever classifier `getAvailableOfType("classifier")` returns. With none available
-the gate switches itself off: notes are dropped, no nagging, and the run continues.
-
-There is no switch to turn the context reset off — it fires once per closed goal, and never on a plain
-reply.
+The handoff stack is **parked** (`HANDOFF_ENABLED = false`): nothing is classified into it, no handoff
+model is called, and it injects nothing. Sub-agents still run under `RpcClient`, so a finding can be
+pushed into a **run that is already working** with `steer()` instead of restarting it, and every role
+boots with `--exclude-tools finisher_*`, so a sub-agent can never re-enter the harness.
 
 ## Coders prove their own slice
 

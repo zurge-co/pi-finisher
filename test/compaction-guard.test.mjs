@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { compactionHold, freshResetDecision, HELD_OUTCOMES, outcomeNeedsHuman } from "../extensions/finisher/index.ts";
+import { compactionHold, HELD_OUTCOMES, outcomeNeedsHuman } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const reasons = ["manual", "threshold", "overflow"];
@@ -38,13 +38,6 @@ test("the hold names its reason so the human is told why compaction was skipped"
 		assert.match(held.note, /compaction held/);
 		assert.match(held.note, /human/);
 	}
-});
-
-test("the fresh-context reset obeys the same rule: an unread failed report is never summarized away", () => {
-	const base = { enabled: true, hasWork: true, goal: { doneAt: 5_000 }, now: 6_000 };
-	assert.equal(freshResetDecision({ ...base, reportUnread: true }).reset, false, "the report must stay on screen");
-	assert.deepEqual(freshResetDecision({ ...base, reportUnread: false }), { reset: true, goalAt: 5_000 }, "a verified or already-read goal still resets as before");
-	assert.equal(freshResetDecision(base).reset, true, "a caller that never sets the flag keeps the old behaviour");
 });
 
 test("the registered hook really cancels: it holds an unread failed report, and releases once the human has spoken", async () => {

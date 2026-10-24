@@ -21,11 +21,9 @@ import { createGoalPicker } from "./src/goal-dialog.ts";
 import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
-import { buildFreshSummary, freshCompactionEntry, freshDirective, freshLapDecision, freshResetDecision, isTrackerEntry, lapCompactionSummary, lastUserEntryId, readFreshContextConfig, trackerEntryDraft } from "./src/fresh-context.ts";
+import { freshCompactionEntry, freshLapDecision, lapCompactionSummary, readFreshContextConfig, trackerEntryDraft } from "./src/fresh-context.ts";
 import { buildLapTracker, clearLapTracker, readLapTracker, renderLapTracker, writeLapTracker } from "./src/lap-tracker.ts";
 import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
-import { readHandoff } from "./src/handoff-stack.ts";
-import { handoffStackFor } from "./src/handoff-gate.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
 import { enforceDeadline, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
 import { registerTools } from "./src/tools.ts";
@@ -282,30 +280,6 @@ export default function (pi: ExtensionAPI) {
 		box.get().freshResetLapAt = decision.lapAt;
 		persist();
 		return { entries: [freshCompactionEntry(summary), trackerEntryDraft(summary)] };
-	});
-
-	pi.on("agent_before_settle", async (ev, ctx) => {
-		const cfg = readFreshContextConfig(ctx.cwd);
-		const decision = freshResetDecision({
-			enabled: cfg.enabled,
-			hasWork: ev.context.contextEntries.length > 0,
-			aborted: ev.outcome !== "completed",
-			lastResetAt: box.get().freshResetAt,
-			goal: box.get().goalDriver as { doneAt?: number } | undefined,
-			consumedGoalAt: box.get().freshResetGoalAt,
-			reportUnread: reportUnread(box.get().goalDriver, box.get().humanAt),
-			now: Date.now(),
-		});
-		if (!decision.reset) return;
-		const summary = buildFreshSummary(handoffStackFor(readHandoff(ctx.cwd)));
-		const tracker = buildLapTracker(box.get().goalDriver, box.get().verifyCalls ?? [], Date.now());
-		const carried = tracker && tracker.laps > 0 ? tracker : undefined;
-		box.get().freshResetAt = Date.now();
-		box.get().freshResetGoalAt = decision.goalAt;
-		clearLapTracker(ctx.cwd);
-		persist();
-		const entry = freshCompactionEntry(freshDirective(summary), lastUserEntryId(ev.context.contextEntries));
-		return { entries: carried ? [entry, trackerEntryDraft(lapCompactionSummary(carried))] : [entry] };
 	});
 
 	pi.on("agent_end", async (ev, ctx) => {

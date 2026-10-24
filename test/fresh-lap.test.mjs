@@ -46,7 +46,7 @@ test("every reason not to reset wins over the boundary, and none of them depends
 		[{ consumedLapAt: goal.lapAt }, "an already-paid boundary is not paid twice"],
 		[{ lastResetAt: base.now - 500 }, "two settles of one boundary do not compact twice"],
 		[{ goal: undefined }, "no goal means no lap boundary"],
-		[{ goal: { ...goal, doneAt: 5_000 } }, "a closed goal is the fresh-context boundary, not a lap one"],
+		[{ goal: { ...goal, doneAt: 5_000 } }, "a closed goal is no boundary at all, so the transcript stays"],
 		[{ goal: { ...goal, phases: [] } }, "a goal with no declared plan has no laps to cross"],
 	];
 	for (const [patch, why] of off) assert.equal(freshLapDecision({ ...base, ...patch }).reset, false, why);
