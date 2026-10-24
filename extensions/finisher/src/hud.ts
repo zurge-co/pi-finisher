@@ -1,9 +1,9 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { clip, formatPanelRow, liveRuns, panelRowEntries, type PanelOptions, type PanelRun } from "./agent-panel.ts";
+import { GOAL_HIT } from "./goal-page.ts";
 import { raceIdleLine, raceLampToken, raceSegment, raceState, type Race, type RaceGoal } from "./race-state.ts";
 
 export const HUD_MARK = "▚";
-export const HUD_NAME = "finisher";
 export const HUD_MAX_ROWS = 6;
 export const HUD_MIN_BOX_WIDTH = 18;
 
@@ -52,7 +52,7 @@ export const hudRowEntries = (input: HudInput, maxRows = HUD_MAX_ROWS): { text: 
 export const hudRows = (input: HudInput, maxRows = HUD_MAX_ROWS): string[] => hudRowEntries(input, maxRows).map((e) => e.text);
 
 export const hudIdleLine = (input: HudInput): string =>
-	truncateToWidth(raceIdleLine(raceOf({ ...input, width: 0 }), HUD_MARK, HUD_NAME), Math.max(0, input.width), "…");
+	truncateToWidth(raceIdleLine(raceOf({ ...input, width: 0 }), HUD_MARK), Math.max(0, input.width), "…");
 export const hudLines = (input: HudInput): string[] => hudFrames(input).map((f) => f.text);
 
 export type HudKind = "border" | "goal" | "row" | "idle";
@@ -103,11 +103,11 @@ export const hudPaint = (frames: HudFrame[], theme: HudTheme, race?: Race): stri
 export const hudFrames = (input: HudInput): HudFrame[] => {
 	const width = Math.max(8, Math.floor(input.width));
 	const race = raceOf({ ...input, width });
-	if (!hudActive(input)) return [{ kind: "idle", text: truncateToWidth(raceIdleLine(race, HUD_MARK, HUD_NAME), width, "…") }];
+	if (!hudActive(input)) return [{ kind: "idle", text: truncateToWidth(raceIdleLine(race, HUD_MARK), width, "…") }];
 	const live = liveRuns(input.runs).length;
-	const segments = [`${HUD_MARK} ${HUD_NAME}`, raceSegment(race), live ? `${live} live · click a row · ctrl+_ pages` : ""];
+	const segments = [`${HUD_MARK} ${raceSegment(race)}`, live ? `${live} live · click a row · ctrl+_ pages` : ""];
 	const body: HudFrame[] = [
-		...(input.goal ? [{ kind: "goal" as const, text: truncateToWidth(`▸ ${clip(input.goal.goal, 120)}`, Math.max(0, width - 4), "…") }] : []),
+		...(input.goal ? [{ kind: "goal" as const, text: truncateToWidth(`▸ ${clip(input.goal.goal, 120)}`, Math.max(0, width - 4), "…"), hit: GOAL_HIT }] : []),
 		...hudRowEntries(input).map(({ text, hit }) => ({ kind: "row" as const, text, hit })),
 	];
 	if (width < HUD_MIN_BOX_WIDTH)

@@ -32,13 +32,14 @@ test("the box is drawn only while the run is live, and idle is exactly one line"
 	assert.equal(hudActive({ runs: [run("swarm")], width: 80 }), true);
 	const idle = hudLines({ runs: [], width: 80 });
 	assert.equal(idle.length, 1, "an idle session costs one line, not a panel");
-	assert.match(idle[0], new RegExp(`^${HUD_MARK} finisher · ${RACE_LIGHT_OFF}{5} READY`));
+	assert.match(idle[0], new RegExp(`^${HUD_MARK} ${RACE_LIGHT_OFF}{5} READY`));
+	assert.ok(!/finisher|total time/i.test(idle[0]), "the HUD names neither the extension nor a \"total time\" label");
 	assert.ok(!/turns|tok/.test(idle[0]), "the cost counters moved to the footer, never the HUD");
 	const won = hudLines({ runs: [], width: 80, goal: goal({ doneAt: 62_000, outcome: "verified" }) });
 	assert.equal(won.length, 1, "a finished goal closes back to one line");
-	assert.match(won[0], /P1 · 1:01 · 3 laps · pit /, "the total race time survives the win");
+	assert.match(won[0], /P1 1:01 · 3 laps · pit /, "the total race time survives the win");
 	const lost = hudLines({ runs: [], width: 80, goal: goal({ doneAt: 62_000, outcome: "halted" }) });
-	assert.match(lost[0], /✕{5} DNF · halted · 1:01 · 1\/3 laps/);
+	assert.match(lost[0], /✕{5} DNF · halted 1:01 · 1\/3 laps/);
 	assert.equal(hudIdleLine({ runs: [], width: 20 }).length > 0, true);
 });
 

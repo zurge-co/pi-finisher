@@ -1,8 +1,10 @@
-import { Key, Text, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, Text, matchesKey, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { relative } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { panelize } from "./models.ts";
+import { GOAL_PAGE_KEYS, GOAL_PAGE_MIN_ROWS, goalPageLines, goalPageMaxOffset, goalPageSummary, goalPageTitle, goalPageWindow } from "./goal-page.ts";
+import { goalDriverDone } from "./goal-driver.ts";
 import { orderedSessionRuns, sessionBody, sessionKeyLine, sessionNoteLine, sessionSummaryLine, sessionTabs, sessionTitle, sessionToolCount, startSessionIndex, stepSessionIndex, SESSION_MIN_BODY_ROWS } from "./agent-session.ts";
 import { type HarnessContext, type OpenAgentsViewer } from "./kit.ts";
 import { type SubagentRun } from "./types.ts";
@@ -149,11 +151,76 @@ export const createViewers = (ctx: HarnessContext) => {
 		}, () => true);
 	};
 
+	const openGoalPage = (ctx: ExtensionContext): Promise<null> => {
+		const goal = state.goalDriver;
+		if (!goal) {
+			ctx.ui.notify("no goal is open — confirm one with finisher_goal to get a lap plan", "info");
+			return Promise.resolve(null);
+		}
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify([goalPageTitle(goal), goalPageSummary(goal), ...goalPageLines(goal).map((l) => `${l.mark} ${l.position}/${l.total} ${l.text}`)].join("\n"), "info");
+			return Promise.resolve(null);
+		}
+		return finisherCustom<null>(ctx, OVERLAY_XL, (tui, theme, _kb, done) => {
+			const border = new DynamicBorder((s: string) => theme.fg("borderAccent", s));
+			const tick = setInterval(() => tui.requestRender(), 1_000);
+			let offset = 0;
+			let following = true;
+			const rows = () => Math.max(GOAL_PAGE_MIN_ROWS, Math.floor(tui.terminal.rows * 0.9) - 8);
+			return {
+				render: (w: number) => {
+					const open = state.goalDriver;
+					const lines = goalPageLines(open);
+					const maxOffset = goalPageMaxOffset(lines.length, rows());
+					if (following) offset = maxOffset;
+					offset = Math.max(0, Math.min(offset, maxOffset));
+					const out: string[] = [...border.render(w)];
+					out.push(...new Text(theme.fg("accent", theme.bold(goalPageTitle(open))), 1, 0).render(w));
+					out.push(...new Text(theme.fg("muted", goalPageSummary(open)), 1, 0).render(w));
+					out.push(...new Text(theme.fg("text", open?.goal ?? ""), 1, 0).render(w).flatMap((ln) => wrapTextWithAnsi(ln, Math.max(20, w - 4))));
+					const window = goalPageWindow(lines.length, rows(), offset);
+					for (const line of lines.slice(window.from, window.to)) {
+						const token = line.mark === "✓" ? "success" : line.mark === "▶" ? "accent" : "dim";
+						const head = theme.fg(token, `${line.mark} ${line.position}/${line.total}`);
+						const spent = line.spent ? theme.fg("dim", `  (${line.spent})`) : "";
+						for (const [i, ln] of wrapTextWithAnsi(`${line.text}${spent}`, Math.max(20, w - 10)).entries()) out.push(`  ${i === 0 ? head : " ".repeat(visibleWidth(`${line.mark} ${line.position}/${line.total}`))}  ${ln}`);
+					}
+					const range = lines.length > rows() ? ` · ${window.from + 1}-${window.to}/${lines.length}${following ? " following" : ""}` : "";
+					out.push(...new Text(theme.fg("dim", `${GOAL_PAGE_KEYS}${range}`), 1, 0).render(w));
+					out.push(...border.render(w));
+					return panelize(theme, out, w);
+				},
+				invalidate: () => {},
+				handleInput: (data: string) => {
+					if (matchesKey(data, Key.escape) || matchesKey(data, Key.enter)) {
+						done(null);
+						return;
+					}
+					const total = goalPageLines(state.goalDriver).length;
+					const act = scrollKeyAction(data);
+					if (act === "top") {
+						following = false;
+						offset = 0;
+					} else if (act === "bottom") {
+						following = true;
+						offset = goalPageMaxOffset(total, rows());
+					} else if (act) {
+						const step = act.page ? rows() : 1;
+						offset = Math.max(0, Math.min(goalPageMaxOffset(total, rows()), offset + act.dir * step));
+						following = offset >= goalPageMaxOffset(total, rows());
+					}
+					tui.requestRender();
+				},
+				dispose: () => clearInterval(tick),
+			};
+		}, () => true);
+	};
+
 	const tailViewer = (ctx: ExtensionContext, run: SubagentRun): Promise<null> => openAgentSession(ctx, run);
 
 	const openAgentsViewer: OpenAgentsViewer = async (ctx: ExtensionContext): Promise<void> => {
 		await openAgentSession(ctx);
 	};
 
-	return { tailViewer, runLabel, openAgentsViewer, openAgentSession };
+	return { tailViewer, runLabel, openAgentsViewer, openAgentSession, openGoalPage };
 };

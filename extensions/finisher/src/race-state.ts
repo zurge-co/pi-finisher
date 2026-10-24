@@ -140,8 +140,12 @@ export const raceLampToken = (race: Race): string => {
 	return "dim";
 };
 
-export const raceSegment = (race: Race): string =>
-	race.phase === "run" || race.phase === "verify" ? `${raceLightsText(race)} ${race.caption} ${race.lapClock}` : `${raceLightsText(race)} ${race.caption}`;
+export const raceSegment = (race: Race): string => {
+	if (race.phase === "run" || race.phase === "verify") return `${raceLightsText(race)} ${race.caption} ${race.totalClock}`;
+	if (race.phase === "win") return `${raceLightsText(race)} P1 ${race.totalClock}`;
+	if (race.phase === "dnf") return `${raceLightsText(race)} ${race.caption} ${race.totalClock}`;
+	return `${raceLightsText(race)} ${race.caption}`;
+};
 
 export const raceLoaderCaption = (race: Race): string => {
 	if (race.phase === "run") return `${race.caption} ${race.lapClock}`;
@@ -166,9 +170,10 @@ export const raceLoaderFrames = (race: Race, fg: (token: string, text: string) =
 
 export const raceLoaderMessage = (race: Race): string => ` ${raceLoaderCaption(race)}`;
 
-export const raceIdleLine = (race: Race, mark: string, name = "finisher", tally = ""): string => {
+export const raceIdleLine = (race: Race, mark: string, name = "", tally = ""): string => {
 	const tail = tally ? ` · ${tally}` : "";
-	if (race.phase === "win") return `${mark} ${name} · ${raceSegment(race)} · ${race.totalClock} · ${race.laps} laps · pit ${race.pitClock}${tail}`;
-	if (race.phase === "dnf") return `${mark} ${name} · ${raceSegment(race)} · ${race.totalClock} · ${race.done}/${race.laps || "?"} laps · pit ${race.pitClock}`;
-	return `${mark} ${name} · ${raceSegment(race)}`;
+	if (race.phase === "win") return `${mark} ${raceSegment(race)} · ${race.laps} laps · pit ${race.pitClock}${tail}`;
+	if (race.phase === "dnf") return `${mark} ${raceSegment(race)} · ${race.done}/${race.laps || "?"} laps · pit ${race.pitClock}`;
+	const head = name ? `${mark} ${name} · ` : `${mark} `;
+	return `${head}${raceSegment(race)}`;
 };

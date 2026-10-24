@@ -25,10 +25,12 @@ missing most often, so the plan can be made better instead of guessed.
 
 - **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
   click between the goal and the result.
-- **A quiet HUD.** No cost counters and no warning tally anywhere: the idle line is lights + phase
-  (and, for a finished goal, the total clock, the lap count and the pit split), and the box carries
-  only the goal, the race and the live agents. Hygiene and trajectory findings still block or flag
-  the work itself — they just never cost you a column.
+- **A quiet HUD.** No cost counters, no warning tally, no brand name and no "total time" label: the
+  top border is the lights, the lap position (`LAP 2/5`) and the clock of the whole goal; the idle line
+  is the lights and the phase (and, for a finished goal, the total, the lap count and the pit split).
+  Hygiene and trajectory findings still block or flag the work itself — they just never cost you a column.
+- **The plan is one click away.** Click the goal row in the HUD and every lap opens in full — no lap
+  text is ever truncated there — with the lap position and the total goal clock on its header.
 - **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
 - **Nobody answers, nothing starts.** Every goal dialog has a deadline
   (`confirmTimeoutMs` in `.finisher/config.json`, `FINISHER_CONFIRM_TIMEOUT_MS`, default 120s, `0` = wait
@@ -90,19 +92,50 @@ box: one line for the goal, one row per live agent (tag, model, slot, elapsed, l
 nothing is running it collapses to a single idle line, so a quiet session costs one row, not a panel.
 
 ```
-╭─ ▚ finisher ─ goal round 2 ─ 5 live ─ turns 12 · tok 84k ╮
-│ ▸ make the scheduler prove its bound, not assert it
-│ SWA  ▶ swarm    slot1 provider/a   42s  fixing the scheduler bound…
-│ SWA2 ▶ swarm    slot2 provider/b   41s  reading src/swarm.ts…
-│ VER  ▶ verifier        provider/c   12s  $ npm test -- swarm-scheduler
-╰────────────────────────────────────────────────────────╯
+╭─ ▚ ●●○○○ LAP 4/5 4:12 ─ 2 live · click a row · ctrl+_ pages                 ─╮
+│ ▸ make the scheduler prove its bound, not assert it                          │
+│ SWA   ▶ swarm slot1 provider/a 42s fixing the scheduler bound                │
+│ SWA   ▶ swarm slot2 provider/b 41s reading src/swarm.ts                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
 ```
+
+The top border is the whole race: the mark, the lane lights, the **lap position** (`LAP 2/5`) and the
+**clock of the entire goal** — no brand name on it, and no "total time" wording anywhere. Below it is
+the goal row, then one row per live agent.
 
 Idle:
 
 ```
-▚ finisher · idle · turns 3 · tok 12k
+▚ ○○○○○ READY
 ```
+
+A finished goal closes back to one line, keeping its total, the lap count and the pit split:
+
+```
+▚ ●●●●● P1 12:36 · 5 laps · pit 0:41
+```
+
+### The goal page
+
+**Click the goal row** in the HUD and the whole plan opens — every lap in full, never truncated, with
+the lap position and the total goal clock on the header. Lap marks are `✓` done, `▶` current, `·` todo;
+`↑↓` scrolls, `PgUp/PgDn` pages, `g`/`G` jumps to the ends, `Esc` closes.
+
+```
+▚ LAP 4/5 4:12
+3/5 laps closed · laps 3:11 · pit 1:01
+make the scheduler prove its bound, not assert it
+  ✓ 1/5  read the ladder and the scheduler  (0:32)
+  ✓ 2/5  rewrite the retry policy so the bound holds  (2:00)
+  ✓ 3/5  prove it with a command that can fail  (0:39)
+  ▶ 4/5  wire the report
+  · 5/5  close the goal
+Esc close · ↑↓ scroll · PgUp/PgDn page · g/G top/bottom
+```
+
+A lap that has closed carries the time it spent in parentheses; the header keeps the position
+(`LAP 4/5`) and the clock of the whole goal, the second line splits the run into laps, verify and pit.
+A plan longer than the terminal pages instead of clipping: no lap text is ever cut in half.
 
 ### One page per sub-agent
 

@@ -57,7 +57,8 @@ test("the verified shape the harness always produces shows its verification wind
 	assert.equal(race.racedMs, 44_000, "three closed laps keep their own measured time");
 	assert.equal(race.verifyMs, 16_000, "the time after the last lap is the verification window");
 	assert.equal(race.pitClock, "0:00", "a run with no idle overhead has no pit time");
-	assert.match(raceIdleLine(race, "▚"), /P1 · 1:00 · 3 laps · pit 0:00/);
+	assert.ok(!raceIdleLine(race, "▚").includes(" · 1:00 · 1:00"), "the total clock is on the line once, not twice");
+	assert.match(raceIdleLine(race, "▚"), /^▚ ●{5} P1 1:00 · 3 laps · pit 0:00$/);
 	const overhead = { ...doneGoal(), lapMs: [10_000, 10_000, 10_000], lapAt: 45_000, doneAt: 61_000 };
 	const race2 = raceState({ goal: overhead, lanes: RACE_LANES });
 	assert.equal(race2.verifyMs, 16_000, "the verify window still starts at the last lap close");
@@ -100,10 +101,10 @@ test("a done race closes to one line that names the result, the total, the laps 
 		assert.ok(!/turns|tok/.test(line), `the cost counters live in the footer, not the HUD: ${line}`);
 		assert.equal([...raceLightsText(race)].length, RACE_LANES);
 	}
-	assert.match(raceIdleLine(lost, "▚"), /✕{5} DNF · halted · 0:39 · 2\/3 laps/);
+	assert.match(raceIdleLine(lost, "▚"), /^▚ ✕{5} DNF · halted 0:39 · 2\/3 laps · pit /);
 	const idle = hudLines({ runs: [], width: 120, lanes: RACE_LANES });
 	assert.equal(idle.length, 1);
-	assert.match(idle[0], /^▚ finisher · ○{5} READY$/);
+	assert.match(idle[0], /^▚ ○{5} READY$/);
 });
 
 test("every HUD line fits the width it is given, at any width, for every race phase", () => {
@@ -136,15 +137,15 @@ test("the HUD and the loader show the same race, including the clock the loader 
 		assert.ok(caption.endsWith(race.lapClock), `the loader clock is the race clock: ${caption}`);
 		const hud = hudLines(input).join("\n");
 		assert.ok(hud.includes(race.caption), "the HUD names the same lap");
-		assert.ok(hud.includes(race.lapClock), `the HUD shows the same clock the loader counts: ${race.lapClock} missing from ${hud.split("\n")[0]}`);
+		assert.ok(hud.includes(race.totalClock), `the HUD carries the clock of the whole goal, not just the lap: ${race.totalClock} missing from ${hud.split("\n")[0]}`);
 	}
 	const idle = hudLines({ goal: { goal: "done", confirmedAt: 1_000, doneAt: 61_000, outcome: "verified", phases: plan3().phases, lap: 4, lapAt: 45_000, lapMs: [10_000, 15_000, 19_000] }, runs: [], lanes: 5, width: 200 });
-	assert.match(idle[0], /P1 · 1:00 · 3 laps · pit 0:00/, "a finished goal keeps its total, lap count and pit");
+	assert.match(idle[0], /P1 1:00 · 3 laps · pit 0:00/, "a finished goal keeps its total, lap count and pit");
 });
 
 test("the idle line stays one bare line: no cost counters and no warning tally", () => {
 	const quiet = hudIdleLine({ runs: [], width: 200, lanes: 5 });
-	assert.match(quiet, /^▚ finisher · ○{5} READY$/, "an idle session says only what it is");
+	assert.match(quiet, /^▚ ○{5} READY$/, "an idle session says only what it is");
 	const noisy = hudIdleLine({ runs: [], width: 200, lanes: 5, flags: 2, hygiene: 1, escalations: 3 });
 	assert.equal(noisy, quiet, "warning counters never clutter the idle line — they live on the open box");
 	for (const text of [quiet, noisy]) assert.ok(!/turns|tok|⚠|🧹|🚨/.test(text), "and the cost counters are gone from the HUD entirely");
@@ -158,10 +159,10 @@ test("a done race closes to one line that names the result, the total, the laps 
 		assert.ok(!/turns|tok/.test(line), `the cost counters live in the footer, not the HUD: ${line}`);
 		assert.equal([...raceLightsText(race)].length, RACE_LANES);
 	}
-	assert.match(raceIdleLine(lost, "▚"), /✕{5} DNF · halted · 0:39 · 2\/3 laps/);
+	assert.match(raceIdleLine(lost, "▚"), /^▚ ✕{5} DNF · halted 0:39 · 2\/3 laps · pit /);
 	const idle = hudLines({ runs: [], width: 120, lanes: RACE_LANES });
 	assert.equal(idle.length, 1);
-	assert.match(idle[0], /^▚ finisher · ○{5} READY$/);
+	assert.match(idle[0], /^▚ ○{5} READY$/);
 });
 
 test("every HUD line fits the width it is given, at any width, for every race phase", () => {
@@ -194,9 +195,9 @@ test("the HUD and the loader show the same race, including the clock the loader 
 		assert.ok(caption.endsWith(race.lapClock), `the loader clock is the race clock: ${caption}`);
 		const hud = hudLines(input).join("\n");
 		assert.ok(hud.includes(race.caption), "the HUD names the same lap");
-		assert.ok(hud.includes(race.lapClock), `the HUD shows the same clock the loader counts: ${race.lapClock} missing from ${hud.split("\n")[0]}`);
+		assert.ok(hud.includes(race.totalClock), `the HUD carries the clock of the whole goal, not just the lap: ${race.totalClock} missing from ${hud.split("\n")[0]}`);
 	}
 	const idle = hudLines({ goal: { goal: "done", confirmedAt: 1_000, doneAt: 61_000, outcome: "verified", phases: plan3().phases, lap: 4, lapAt: 45_000, lapMs: [10_000, 15_000, 19_000] }, runs: [], lanes: 5, width: 200 });
-	assert.match(idle[0], /P1 · 1:00 · 3 laps · pit 0:00/, "a finished goal keeps its total, lap count and pit");
+	assert.match(idle[0], /P1 1:00 · 3 laps · pit 0:00/, "a finished goal keeps its total, lap count and pit");
 });
 

@@ -2,6 +2,7 @@ import { type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { goalDriverDone } from "./goal-driver.ts";
 import { hudActive, hudRender, hudSignature, HUD_MAX_ROWS, type HudGoal, type HudInput, type HudTheme } from "./hud.ts";
+import { GOAL_HIT } from "./goal-page.ts";
 import { panelTickMs } from "./agent-panel.ts";
 import { raceLoaderFrames, raceLoaderMessage, raceState } from "./race-state.ts";
 import { type HarnessContext } from "./kit.ts";
@@ -13,6 +14,7 @@ const LANES = 5;
 export const createPanelWidget = (ctx: HarnessContext) => {
 	const state = ctx.state;
 	const openAgentSession = ctx.openAgentSession;
+	const openGoalPage = ctx.openGoalPage;
 
 	const activeRun = (): SubagentRun | undefined => {
 		for (let i = state.subagentRuns.length - 1; i >= 0; i--) if (state.subagentRuns[i].status === "running") return state.subagentRuns[i];
@@ -85,8 +87,13 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 					const clicked = (event: TuiMouseEvent): { handled: boolean } | undefined => {
 						if (event.type !== "click") return undefined;
 						const index = hits[event.y];
-						const run = index === undefined ? undefined : state.subagentRuns[index];
-						if (!run || !lastCtx) return undefined;
+						if (index === undefined || !lastCtx) return undefined;
+						if (index === GOAL_HIT) {
+							void openGoalPage(lastCtx);
+							return { handled: true };
+						}
+						const run = state.subagentRuns[index];
+						if (!run) return undefined;
 						void openAgentSession(lastCtx, run);
 						return { handled: true };
 					};

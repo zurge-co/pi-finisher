@@ -53,6 +53,7 @@ export * from "./src/agent-panel.ts";
 export * from "./src/agent-session.ts";
 export * from "./src/viewers.ts";
 export * from "./src/hud.ts";
+export * from "./src/goal-page.ts";
 export * from "./src/swarm-code.ts";
 export * from "./src/swarm-plan.ts";
 export * from "./src/budget.ts";
