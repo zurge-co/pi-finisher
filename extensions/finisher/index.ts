@@ -14,6 +14,7 @@ import { createGui } from "./src/gui.ts";
 import { createPanelWidget } from "./src/panel-widget.ts";
 import { applyFullscreenDefault } from "./src/fullscreen.ts";
 import { createViewers } from "./src/viewers.ts";
+import { createGoalPicker } from "./src/goal-dialog.ts";
 import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
@@ -42,6 +43,7 @@ export * from "./src/code-hygiene.ts";
 export * from "./src/test-quality.ts";
 export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
+export * from "./src/goal-dialog.ts";
 export * from "./src/agent-panel.ts";
 export * from "./src/agent-session.ts";
 export * from "./src/viewers.ts";
@@ -118,6 +120,8 @@ export default function (pi: ExtensionAPI) {
 	Object.assign(kit, subagents);
 	const swarm = createCodeSwarm(kit);
 	Object.assign(kit, swarm);
+	const goalPicker = createGoalPicker(kit);
+	Object.assign(kit, goalPicker);
 
 	createHygieneHook(kit);
 	registerTools(kit);

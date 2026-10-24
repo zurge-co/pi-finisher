@@ -1,8 +1,8 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildGoalToolText, goalKey, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
+import { buildGoalToolText, goalDriverDone, goalKey, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
 import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
-import { goalCases } from "./goal-confirm.ts";
+import { GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, goalCases, tooManyCasesNote, unconfirmedGoalNote } from "./goal-confirm.ts";
 import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
 import { buildReport, freshAttempts, judgeCase, renderVerifyReport } from "./verify-loop.ts";
@@ -29,6 +29,7 @@ export const registerTools = (ctx: HarnessContext) => {
 	const launchSubagent = ctx.launchSubagent;
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const armGoalRound = ctx.armGoalRound;
+	const askGoalConfirm = ctx.askGoalConfirm;
 
 	const capFor = (name: string, configured: number, cwd: string, params: unknown): number => {
 		if (name !== SWARM_TOOL) return configured;
@@ -131,8 +132,20 @@ export const registerTools = (ctx: HarnessContext) => {
 			if (p.mode === "verify") {
 				const report = buildReport(results.map((r) => judgeCase(r.id, r.output, r.ok ? {} : { exitCode: 1 })));
 				const active = state.goalDriver as GoalRunState | undefined;
-				const driver = active && !active.doneAt ? active : { ...resumeOrStart(undefined, p.goal?.trim() || "goal"), attempts: freshAttempts() };
+				const openGoal = !!active && !goalDriverDone(active);
+				const verified = `${NON_GOAL_PREFIX}${report.cases.map((c) => c.caseId).join(", ") || "run"}`;
+				const driver = active && !active.doneAt ? active : { ...resumeOrStart(undefined, p.goal?.trim() || verified), attempts: freshAttempts() };
 				const step = nextGoalDriverStep(driver, report);
+				if (!openGoal) {
+					persist();
+					updateWidget(ctx);
+					const summary = buildReport(report.cases);
+					return {
+						content: [{ type: "text", text: ["verify-only run: " + driver.goal, "", unconfirmedGoalNote(summary.allPass), "", step.text, "", body].join("\n") }],
+						details: { mode: p.mode, report, verifiedOnly: true, effort, budget: budget ?? null, results },
+						...(summary.allPass ? {} : { isError: true }),
+					};
+				}
 				const finalText = reportWithDecisions(step.text, state.decisions ?? []);
 				if (step.action === "finish" || step.action === "human" || step.action === "halt") writeDecisionsFile(ctx.cwd, driver.goal, state.decisions ?? []);
 				state.goalDriver = step.state;
@@ -170,12 +183,21 @@ export const registerTools = (ctx: HarnessContext) => {
 		}),
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
-			if (!goal) return { content: [{ type: "text", text: "finisher_goal: goal is empty — ctx.state the outcome the human wants" }], details: {}, isError: true };
+			if (!goal) return { content: [{ type: "text", text: "finisher_goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
 			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
 			const previous = state.goalDriver as GoalRunState | undefined;
-			const isNewGoal = !previous || goalKey(previous.goal) !== goalKey(goal);
+			const openGoal = !!previous && !goalDriverDone(previous);
+			const sameOpenGoal = openGoal && goalKey(previous.goal) === goalKey(goal);
 			const started = resumeOrStart(previous, goal);
-			if (isNewGoal) {
+			if (!sameOpenGoal) {
+				const confirmed = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
+				if (confirmed.length > GOAL_TOO_MANY_CASES)
+					return { content: [{ type: "text", text: tooManyCasesNote(confirmed.length) }], details: { goal, confirmed: false, cases: confirmed.length }, isError: true };
+				const outcome = await askGoalConfirm(ctx, goal, confirmed);
+				if (outcome === "declined")
+					return { content: [{ type: "text", text: GOAL_DECLINED_NOTE }], details: { goal, confirmed: false, outcome }, isError: true };
+				if (outcome === "unavailable")
+					return { content: [{ type: "text", text: GOAL_NO_UI_NOTE }], details: { goal, confirmed: false, outcome }, isError: true };
 				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
 			}

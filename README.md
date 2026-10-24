@@ -25,16 +25,24 @@ goal (confirmed once)
 ## Quick start
 
 ```text
-1. Tell the agent the goal                 → finisher_goal confirms it once (no approval later)
+1. Tell the agent the goal                 → a confirm dialog: the goal + every case, y/enter = yes
 2. Let it run                              → the widget shows every live agent side by side
 3. Read the report                         → per case: PASS / FAIL / UNVERIFIED + the commands run
 ```
+
+The dialog is the one gate and it always appears before a new goal starts: nothing runs on a goal
+that was not confirmed. It shows the goal and **every** case in it — nothing is hidden behind a cap,
+so the human is never asked to approve a list they cannot read; a list too long to weigh (more than
+24 cases) is refused before anyone is shown anything. Declining (`n` / `Esc`) starts nothing and tells
+the agent why; a session with no dialog at all (headless/print mode) is reported as unconfirmable
+instead of self-confirming. A goal is asked once while it is open — the fix→verify rounds never
+re-ask — and asked again once it has closed, because a finished goal's yes cannot start new work.
 
 ## What you can call
 
 | Tool | What it does |
 |---|---|
-| `finisher_goal` | The single confirmation. Then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. |
+| `finisher_goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. |
 | `finisher_steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
 | `finisher_swarm` | `explore` (read-only fan-out), `verify` (independent verifiers), `code` (one git worktree + branch per slice, merged back deterministically, overlapping paths never merged silently). |
 
@@ -146,6 +154,9 @@ to run the test suite as proof. Three outcomes:
 | every case exercised and holds | one report, done |
 | a case failed | the main agent is told to plan the next loop itself, then verify once at the end again (bounded, then it halts) |
 | nothing could be exercised directly | the verifier runs nothing else and tells you to test by hand |
+
+A verify run **never creates a goal**. If no confirmed goal is open, it reports its evidence and
+says so — it cannot mark a goal confirmed, so verifying first is never a way around the dialog.
 
 ## Fresh context and the handoff stack
 

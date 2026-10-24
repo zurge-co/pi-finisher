@@ -10,7 +10,7 @@ const CORE = new Set(["pi", "state", "persist", "flag", "escalate", "updateWidge
 
 test("every kit member a kit or tool destructures off the shared context is actually provided by a kit", () => {
 	const provided = new Set(CORE);
-	for (const file of ["src/gui.ts", "src/viewers.ts", "src/panel-widget.ts", "src/subagent-launch.ts", "src/code-swarm.ts"]) {
+	for (const file of ["src/gui.ts", "src/viewers.ts", "src/panel-widget.ts", "src/subagent-launch.ts", "src/code-swarm.ts", "src/goal-dialog.ts"]) {
 		for (const m of src(file).matchAll(/^\treturn \{([^}]*)\}/gm))
 			for (const name of m[1].split(",").map((s) => s.trim()).filter(Boolean)) provided.add(name);
 	}

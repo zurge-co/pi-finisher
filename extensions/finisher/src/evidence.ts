@@ -52,6 +52,8 @@ export const commandName = (text: string): string | undefined => {
 	return COMMAND_START.test(cleaned) ? cleaned : undefined;
 };
 
+export const commandShaped = (line: string): boolean => commandName(stripFences(line)) !== undefined;
+
 interface Candidate {
 	command: string;
 	at: number;
@@ -74,6 +76,28 @@ export const stripFences = (line: string): string => (/^\s*```/.test(line) ? "" 
 
 export const STATUS_BEFORE_EXIT = /^(.*?)\bexit(?:ed)?(?:\s*(?:code|status))?\s*[:=]?\s*-?\d{1,3}\b/i;
 
+const NUMBERED_DUMP = /^\s*\d{1,5}\s*[:\t]/;
+const TAB_INDENT = /^ *\t/;
+const CODE_TEXT = /\b(?:const|let|var|function|return|await|import|export|new|typeof|class|undefined)\b|=>|\w+\(|[{}]|\.\w+\s*=[^=]/;
+
+export const pastedSource = (line: string): boolean => {
+	const body = stripFences(line);
+	if (!body.trim()) return false;
+	if (NUMBERED_DUMP.test(body) || TAB_INDENT.test(body)) return true;
+	return CODE_TEXT.test(body);
+};
+
+const ANCHORED = /^\s*[$>]|^\S/;
+
+export const anchoredCommand = (line: string): boolean => ANCHORED.test(stripFences(line));
+
+export const statusInCode = (line: string): boolean => {
+	const body = stripFences(line);
+	if (!pastedSource(body)) return false;
+	const own = body.match(STATUS_BEFORE_EXIT);
+	return own ? own[1].replace(/[\s*`_|>-]/g, "").length > 0 : true;
+};
+
 export const unclaimedStatus = (line: string): boolean => {
 	const body = stripFences(line).trim();
 	if (!body) return false;
@@ -87,7 +111,7 @@ const commandsOnLine = (line: string): Candidate[] => {
 	const found: Candidate[] = [];
 	const body = stripFences(line);
 	if (!body) return found;
-	const whole = commandName(body.includes("|") ? body.split("|").slice(1).join(" ") : body);
+	const whole = anchoredCommand(body) ? commandName(body.includes("|") ? body.split("|").slice(1).join(" ") : body) : undefined;
 	if (whole) found.push({ command: whole, at: 0, explicit: false });
 	for (const m of body.matchAll(/`([^`\n]+)`/g)) {
 		const inner = commandName(m[1]);
@@ -112,7 +136,8 @@ const exitFor = (lines: string[], index: number, cand: Candidate): number | unde
 		}
 	}
 	for (const line of lines.slice(index + 1, Math.min(index + 4, lines.length))) {
-		if (commandsOnLine(line).length) return undefined;
+		if (commandsOnLine(line).length || commandShaped(line)) return undefined;
+		if (statusInCode(line)) continue;
 		const later = stripFences(line).match(EXIT_LINE);
 		if (later) return Number(later[1]);
 	}
@@ -124,7 +149,8 @@ export const extractCommands = (output: string): EvidenceCommand[] => {
 	const seen = new Set<string>();
 	const lines = output.split("\n");
 	for (let i = 0; i < lines.length; i++) {
-		for (const cand of [...commandsOnLine(lines[i]), ...(unclaimedStatus(lines[i]) ? [{ command: `(unowned status) ${stripFences(lines[i]).trim().slice(0, 120)}`, at: 0, explicit: true, unowned: true }] : [])]) {
+		const unowned = !pastedSource(lines[i]) && unclaimedStatus(lines[i]);
+		for (const cand of [...commandsOnLine(lines[i]), ...(unowned ? [{ command: `(unowned status) ${stripFences(lines[i]).trim().slice(0, 120)}`, at: 0, explicit: true, unowned: true }] : [])]) {
 			const exitCode = exitFor(lines, i, cand);
 			const key = `${cand.command}=${exitCode ?? "?"}`;
 			if (seen.has(key)) continue;

@@ -47,6 +47,7 @@ export type FinisherCustom = <T>(
 
 export type FinisherPick = (ctx: ExtensionContext, title: string, items: SelectItem[], hint?: string) => Promise<string | null>;
 export type AskClarify = (ctx: ExtensionContext, q: { question: string; choices?: string[]; freeText?: boolean }) => Promise<string | undefined>;
+export type AskGoalConfirm = (ctx: ExtensionContext, goal: string, cases: string[]) => Promise<"confirmed" | "declined" | "unavailable">;
 export type AcceptPending = (ctx: ExtensionContext, commitIfStaged: boolean, notifyViaBulletin?: boolean) => { ok: boolean; text: string; specVersion?: number };
 export type ScrollAction = { dir: 1 | -1; page: boolean } | "top" | "bottom" | null;
 export type ScrollKeyAction = (data: string) => ScrollAction;
@@ -63,6 +64,7 @@ export interface HarnessContext {
 	launchSubagent: LaunchSubagent;
 	runCodeSwarm: RunCodeSwarm;
 	armGoalRound: ArmGoalRound;
+	askGoalConfirm: AskGoalConfirm;
 	askClarifyQuestion: AskClarify;
 	acceptPending: AcceptPending;
 	finisherPick: FinisherPick;

@@ -54,11 +54,12 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
 | `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `concurrencyFor` (says whether config/slots/tasks limited it), `pickSlot`, `runSwarm` retry/failover with `stopOnDeclaredAnswer`, fan-out prompts |
 | `swarm-code.ts` | Slice planning/ids, worker prompt, `FILES:` parse, overlap detection, merge plan |
-| `evidence.ts` | Reading a verifier's output: `extractCommands` (each command bound to *its own* exit status), `cellExitCode`, `declaredVerdict`, `stripFences`/`unclaimedStatus` |
+| `evidence.ts` | Reading a verifier's output: `extractCommands` (each command bound to *its own* exit status), `anchoredCommand` (a real command must sit at column 0 or after a `$`/`>` prompt), `pastedSource`/`statusInCode` (a numbered, tab-indented or code-shaped line supplies no status and lends none to a command above it), `cellExitCode`, `declaredVerdict`, `stripFences`/`unclaimedStatus` |
 | `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), the bounded loop (`decideOnce`, `evidenceFingerprint`, `recordEvidence`, `MAX_LOOP_BATCHES`), report render |
 | `goal-driver.ts` | The confirmed-goal driver: finish / fix / stop, round bookkeeping |
 | `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys |
-| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, the one-shot confirm prompt) |
+| `goal-confirm.ts` | Goal confirmation contract (`goalGate`, `goalCases`, `goalConfirmLines` with no case cap, the one-shot confirm prompt, the declined/no-UI/too-many-cases/unconfirmed-verify notes) |
+| `goal-dialog.ts` | The confirm dialog the human actually sees: an inline overlay (no scrolling, so every case stays visible) with the goal + every case (y/enter confirms, n/esc declines), `ctx.ui.confirm` in non-TUI sessions, `unavailable` when a session has no dialog at all; `createGoalPicker` hands `askGoalConfirm` to the context |
 | `code-hygiene.ts` | Comment/length scanner (string- and regex-aware) + the rule text given to agents |
 | `test-quality.ts` | Filler-test detector (`no-assertion` / `tautology` / `shape-only`) used by the hygiene gate |
 | `review-file.ts` | One written file's review: hygiene violations + weak tests in a single message |
