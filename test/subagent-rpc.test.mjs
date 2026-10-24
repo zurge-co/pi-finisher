@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	buildRpcSubagentArgs,
-	withZenseToolGlob,
+	withFinisherToolGlob,
 	FINISHER_TOOL_GLOB,
 	finalTextFromMessages,
 	modelLabel,
@@ -17,7 +17,7 @@ import {
 
 const here = new URL("..", import.meta.url).pathname;
 
-test("every role boots with the zense tools excluded, so a sub-agent can never spawn the harness", () => {
+test("every role boots with the finisher tools excluded, so a sub-agent can never spawn the harness", () => {
 	for (const [role, tools] of Object.entries({ swarm: [], verifier: ["write", "edit"] })) {
 		const args = buildRpcSubagentArgs(tools, role);
 		const at = args.indexOf("--exclude-tools");
@@ -30,10 +30,10 @@ test("every role boots with the zense tools excluded, so a sub-agent can never s
 });
 
 test("adding the glob is idempotent and never drops a role's own exclusions", () => {
-	assert.deepEqual(withZenseToolGlob(undefined), [FINISHER_TOOL_GLOB]);
-	assert.deepEqual(withZenseToolGlob([]), [FINISHER_TOOL_GLOB]);
-	assert.deepEqual(withZenseToolGlob([FINISHER_TOOL_GLOB]), [FINISHER_TOOL_GLOB]);
-	assert.deepEqual(withZenseToolGlob(["write", FINISHER_TOOL_GLOB, "edit"]), [FINISHER_TOOL_GLOB, "write", "edit"]);
+	assert.deepEqual(withFinisherToolGlob(undefined), [FINISHER_TOOL_GLOB]);
+	assert.deepEqual(withFinisherToolGlob([]), [FINISHER_TOOL_GLOB]);
+	assert.deepEqual(withFinisherToolGlob([FINISHER_TOOL_GLOB]), [FINISHER_TOOL_GLOB]);
+	assert.deepEqual(withFinisherToolGlob(["write", FINISHER_TOOL_GLOB, "edit"]), [FINISHER_TOOL_GLOB, "write", "edit"]);
 });
 
 test("the rpc boot keeps a session so the run can be revisited, and never a hand-rolled spawn", () => {
@@ -70,8 +70,12 @@ test("stream events are read by type, and anything else is ignored instead of le
 	assert.equal(textFromEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hi" } }), "hi");
 	assert.equal(textFromEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "hm" } }), "");
 	assert.equal(textFromEvent({ type: "turn_start" }), "");
-	assert.equal(toolLineFromEvent({ type: "tool_execution_start", toolName: "bash" }), "\n⚙ bash\n");
-	assert.equal(toolLineFromEvent({ type: "tool_execution_end", toolName: "bash" }), undefined);
+	const started = toolLineFromEvent({ type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "npm test -- swarm-scheduler" } });
+	assert.ok(started && started.includes("npm test -- swarm-scheduler"), "the page must see the full command, not just the tool name");
+	assert.equal(toolLineFromEvent({ type: "tool_execution_start", toolName: "bash" }), undefined, "no call id means no block to open");
+	const ended = toolLineFromEvent({ type: "tool_execution_end", toolCallId: "c1", toolName: "bash", isError: false, result: { content: [{ type: "text", text: "ok" }] } });
+	assert.ok(ended && ended.includes("ok"), "the end event carries the tool's own output");
+	assert.equal(toolLineFromEvent({ type: "tool_execution_update", toolCallId: "c1", toolName: "bash" }), undefined, "a partial update is not a finished block");
 	assert.equal(isSettled({ type: "agent_settled" }), true);
 	assert.equal(isSettled({ type: "agent_end" }), false, "agent_end is not the settle point — retries and compaction follow it");
 });

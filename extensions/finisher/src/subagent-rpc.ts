@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { withTimeout, settleWithTimeout, timeoutNote } from "./timeout.ts";
+import { encodeToolEvent, type ToolEvent } from "./tool-log.ts";
 
 const RPC_CALL_MS = 60_000;
 
@@ -42,6 +43,7 @@ export interface RpcRunHandle {
 	role: string;
 	client: RpcClient;
 	startedAt: number;
+	logPath?: string;
 	onChunk?: (chunk: string) => void;
 }
 
@@ -66,9 +68,28 @@ export const textFromEvent = (ev: JsonAgentSessionEvent): string => {
 	return e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta" && typeof e.assistantMessageEvent.delta === "string" ? e.assistantMessageEvent.delta : "";
 };
 
+const outputOf = (result: unknown): string | undefined => {
+	const r = result as { content?: unknown; output?: unknown } | undefined;
+	if (typeof r?.output === "string") return r.output;
+	if (!Array.isArray(r?.content)) return undefined;
+	const text = r.content.map((c) => (c as { type?: string; text?: string })?.type === "text" ? ((c as { text?: string }).text ?? "") : "").join("\n").trim();
+	return text || undefined;
+};
+
+export const toolEventFrom = (ev: JsonAgentSessionEvent): ToolEvent | undefined => {
+	const e = ev as { type?: string; toolCallId?: string; toolName?: string; args?: unknown; result?: unknown; isError?: boolean; durationMs?: number };
+	if (!e.toolName || !e.toolCallId) return undefined;
+	if (e.type === "tool_execution_start") return { phase: "start", id: e.toolCallId, name: e.toolName, ...(e.args === undefined ? {} : { args: e.args }) };
+	if (e.type === "tool_execution_end") {
+		const output = outputOf(e.result);
+		return { phase: "end", id: e.toolCallId, name: e.toolName, ...(e.isError === true ? { isError: true } : {}), ...(typeof e.durationMs === "number" ? { durationMs: e.durationMs } : {}), ...(output ? { output } : {}) };
+	}
+	return undefined;
+};
+
 export const toolLineFromEvent = (ev: JsonAgentSessionEvent): string | undefined => {
-	const e = ev as { type?: string; toolName?: string };
-	return e.type === "tool_execution_start" && e.toolName ? `\n⚙ ${e.toolName}\n` : undefined;
+	const tool = toolEventFrom(ev);
+	return tool ? `\n${encodeToolEvent(tool)}\n` : undefined;
 };
 
 export const isSettled = (ev: JsonAgentSessionEvent): boolean => (ev as { type?: string }).type === "agent_settled";
@@ -129,7 +150,7 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 	});
 	const startedAt = Date.now();
 	const key = runKey(opts.role, startedAt);
-	liveRpcRuns.set(key, { role: opts.role, client, startedAt, onChunk: opts.onChunk });
+	liveRpcRuns.set(key, { role: opts.role, client, startedAt, logPath: opts.logPath, onChunk: opts.onChunk });
 	const append = (s: string) => appendFileSync(opts.logPath, s);
 	try {
 		const started = await withTimeout(client.start(), opts.timeoutMs, `rpc start (${opts.role})`);
@@ -179,15 +200,28 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 
 export const liveByRole = (role?: string): RpcRunHandle[] => [...liveRpcRuns.values()].filter((r) => !role || r.role === role);
 
-export const steerLive = async (role: string, message: string): Promise<number> => {
-	const live = liveByRole(role);
-	for (const r of live) await boundedCall(r.client.steer(message), `rpc steer (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
-	return live.length;
+export const steerMarker = (mode: "steer" | "followUp", message: string): string =>
+	`\n\n── ${mode === "followUp" ? "follow-up" : "steer"} pushed into this run ──\n${message}\n\n`;
+
+export const markSteerInLog = (logPath: string | undefined, mode: "steer" | "followUp", message: string): void => {
+	if (!logPath) return;
+	try {
+		appendFileSync(logPath, steerMarker(mode, message));
+	} catch {
+	}
 };
 
-export const followUpLive = async (role: string, message: string): Promise<number> => {
+const pushIntoLive = async (role: string, message: string, mode: "steer" | "followUp"): Promise<RpcRunHandle[]> => {
 	const live = liveByRole(role);
-	for (const r of live) await boundedCall(r.client.followUp(message), `rpc followUp (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
-	return live.length;
+	for (const r of live) {
+		markSteerInLog(r.logPath, mode, message);
+		if (mode === "followUp") await boundedCall(r.client.followUp(message), `rpc followUp (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
+		else await boundedCall(r.client.steer(message), `rpc steer (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
+	}
+	return live;
 };
+
+export const steerLive = async (role: string, message: string): Promise<number> => (await pushIntoLive(role, message, "steer")).length;
+
+export const followUpLive = async (role: string, message: string): Promise<number> => (await pushIntoLive(role, message, "followUp")).length;
 

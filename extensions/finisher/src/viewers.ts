@@ -1,138 +1,159 @@
-import { Container, Key, SelectList, Spacer, Text, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type OverlayOptions } from "@earendil-works/pi-tui";
+import { Key, Text, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { relative } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { panelize } from "./models.ts";
-import { type OpenAgentsViewer, type ScrollKeyAction, type ZenseCustom, type HarnessContext } from "./kit.ts";
-import { type State, type SubagentRun } from "./types.ts";
+import { orderedSessionRuns, sessionBody, sessionKeyLine, sessionNoteLine, sessionSummaryLine, sessionTabs, sessionTitle, sessionToolCount, startSessionIndex, stepSessionIndex, SESSION_MIN_BODY_ROWS } from "./agent-session.ts";
+import { type HarnessContext, type OpenAgentsViewer } from "./kit.ts";
+import { type SubagentRun } from "./types.ts";
 
 export const createViewers = (ctx: HarnessContext) => {
 	const state = ctx.state;
 	const finisherCustom = ctx.finisherCustom;
-	const OVERLAY_MD = ctx.OVERLAY_MD;
 	const OVERLAY_XL = ctx.OVERLAY_XL;
 	const scrollKeyAction = ctx.scrollKeyAction;
+	const persist = ctx.persist;
 	const pi = ctx.pi;
 
-	const tailViewer = (ctx: ExtensionContext, run: SubagentRun): Promise<null> =>
-		finisherCustom<null>(ctx, OVERLAY_XL, (tui, theme, _kb, done) => {
-			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+	const runLabel = (r: SubagentRun) =>
+		`${r.status === "running" ? "▶" : r.ok ? "✅" : "❌"} ${r.role} @ ${new Date(r.startedAt ?? r.at).toLocaleTimeString()}`;
+
+	const logLines = (run: SubagentRun): string[] => {
+		if (!run.logPath || !existsSync(run.logPath)) return ["(waiting for the first output…)"];
+		try {
+			return readFileSync(run.logPath, "utf8").split("\n");
+		} catch {
+			return ["(the log could not be read)"];
+		}
+	};
+
+	const sessionSummary = (runs: SubagentRun[], cwd: string): string =>
+		runs
+			.map((r, i) => `${i + 1}/${runs.length} ${runLabel(r)}${r.slotId ? ` ${r.slotId}` : ""}${r.model ? ` ${r.model}` : ""}${(r.steers ?? []).length ? ` · steered ${(r.steers ?? []).length}×` : ""}\n  task: ${sessionSummaryLine(r)}`)
+			.join("\n");
+
+	const openAgentSession = (ctx: ExtensionContext, at?: SubagentRun): Promise<null> => {
+		const runs = orderedSessionRuns(state.subagentRuns);
+		if (!runs.length) {
+			ctx.ui.notify("no sub-agent has run in this session yet — start one with finisher_swarm", "info");
+			return Promise.resolve(null);
+		}
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify(sessionSummary(runs, ctx.cwd), "info");
+			return Promise.resolve(null);
+		}
+		const wanted = at ? Math.max(0, runs.indexOf(at)) : startSessionIndex(state.subagentRuns);
+		return finisherCustom<null>(ctx, OVERLAY_XL, (tui, theme, _kb, done) => {
+			const border = new DynamicBorder((s: string) => theme.fg("borderAccent", s));
 			const tick = setInterval(() => tui.requestRender(), 1_000);
-			let cacheKey = "";
-			let wrapped: string[] = [];
-			let offset = 0;
-			let follow = true;
-			const rows = () => Math.max(4, Math.floor(tui.terminal.rows * 0.9) - 6);
-			const maxOffset = () => Math.max(0, wrapped.length - rows());
-			const readWrapped = (wWrap: number): string[] => {
+			let index = wanted;
+			let expanded = state.toolOutputExpanded === true;
+			let cache: { key: string; wrapped: string[] } = { key: "", wrapped: [] };
+			const offsets = new Map<number, number>();
+			const follows = new Map<number, boolean>();
+			const rows = () => Math.max(SESSION_MIN_BODY_ROWS, Math.floor(tui.terminal.rows * 0.9) - 8);
+			const current = (): SubagentRun | undefined => runs[Math.min(index, runs.length - 1)];
+			const maxOffset = (total: number) => Math.max(0, total - rows());
+			const wrappedFor = (run: SubagentRun, width: number): string[] => {
 				const st = run.logPath && existsSync(run.logPath) ? statSync(run.logPath) : null;
-				const key = `${wWrap}:${st ? `${st.size}:${Math.round(st.mtimeMs)}` : "none"}`;
-				if (key !== cacheKey) {
-					cacheKey = key;
-					const raw = st ? readFileSync(run.logPath!, "utf8").split("\n") : ["(waiting for output…)"];
-					wrapped = raw.flatMap((ln) => wrapTextWithAnsi(ln, wWrap));
-				}
-				return wrapped;
+				const key = `${run.role}:${run.at}:${run.prompt?.length ?? 0}:${(run.steers ?? []).length}:${width}:${expanded ? "x" : "c"}:${st ? `${st.size}:${Math.round(st.mtimeMs)}` : "none"}`;
+				if (key !== cache.key) cache = { key, wrapped: sessionBody(run, logLines(run), width, { expanded }).flatMap((ln) => wrapTextWithAnsi(ln, width)) };
+				return cache.wrapped;
 			};
 			return {
 				render: (w: number) => {
-					const lines = readWrapped(Math.max(20, w - 4));
+					const run = current();
+					const out: string[] = [...border.render(w)];
+					if (!run) {
+						out.push(...new Text(theme.fg("dim", "no sub-agent to show"), 1, 0).render(w));
+						out.push(...border.render(w));
+						return panelize(theme, out, w);
+					}
+					const body = wrappedFor(run, Math.max(20, w - 4));
 					const h = rows();
-					if (follow) offset = maxOffset();
-					offset = Math.max(0, Math.min(offset, maxOffset()));
-					const status =
-						run.status === "running"
-							? `▶ running ${Math.round((Date.now() - (run.startedAt ?? run.at)) / 1000)}s`
-							: run.ok
-								? "✅ done"
-								: "❌ failed";
-					const out: string[] = [];
-					out.push(...border.render(w));
-					out.push(...new Text(theme.fg("accent", theme.bold(`🧪 sub-agent: ${run.role} — ${status}`)), 1, 0).render(w));
-					out.push(...new Text(theme.fg("dim", run.logPath ? relative(ctx.cwd, run.logPath) : "(no log)"), 1, 0).render(w));
-					const slice = lines.slice(offset, offset + h);
-					for (const ln of slice) out.push("  " + ln);
+					const following = follows.get(index) ?? true;
+					let offset = offsets.get(index) ?? (following ? maxOffset(body.length) : 0);
+					if (following) offset = maxOffset(body.length);
+					offset = Math.max(0, Math.min(offset, maxOffset(body.length)));
+					offsets.set(index, offset);
+					out.push(...new Text(theme.fg("accent", theme.bold(sessionTitle(run, index, runs.length, w))), 1, 0).render(w));
+					out.push(...new Text(theme.fg("muted", sessionTabs(runs, index, w)), 1, 0).render(w));
+					out.push(...new Text(theme.fg("dim", `${run.logPath ? relative(ctx.cwd, run.logPath) : "(no log)"} • ${sessionNoteLine(run)}`), 1, 0).render(w));
+					const slice = body.slice(offset, offset + h);
+					for (const ln of slice) out.push(`  ${ln}`);
 					for (let i = slice.length; i < h; i++) out.push("");
-					const range = follow
-						? "▶ tail (following end of log)"
-						: `⏸ lines ${offset + 1}-${Math.min(offset + h, lines.length)}/${lines.length} — press G to resume following`;
+					const range = following
+						? `▶ following the end • ${Math.min(body.length, offset + h)}/${body.length} lines`
+						: `⏸ ${offset + 1}-${Math.min(offset + h, body.length)}/${body.length} — G resumes following`;
 					out.push(...new Text(theme.fg("dim", range), 1, 0).render(w));
-					out.push(...new Text(theme.fg("dim", "auto refresh 1s • ↑↓ scroll • ←→ page • g/G top/bottom • space = read chat • Esc close (sub-agent keeps running)"), 1, 0).render(w));
+					out.push(...new Text(theme.fg("dim", sessionKeyLine(runs.length, sessionToolCount(logLines(run)), expanded)), 1, 0).render(w));
 					out.push(...border.render(w));
 					return panelize(theme, out, w);
 				},
-				invalidate: () => {},
+				invalidate: () => {
+					cache = { key: "", wrapped: [] };
+				},
 				handleInput: (data: string) => {
-					if (matchesKey(data, Key.escape) || matchesKey(data, Key.enter)) { done(null); return; }
+					if (matchesKey(data, Key.escape) || matchesKey(data, Key.enter)) {
+						done(null);
+						return;
+					}
+					if (data === "t") {
+						expanded = !expanded;
+						state.toolOutputExpanded = expanded;
+						persist();
+						tui.requestRender();
+						return;
+					}
+					if (runs.length > 1 && matchesKey(data, Key.right)) {
+						index = stepSessionIndex(index, runs.length, 1);
+						tui.requestRender();
+						return;
+					}
+					if (runs.length > 1 && matchesKey(data, Key.left)) {
+						index = stepSessionIndex(index, runs.length, -1);
+						tui.requestRender();
+						return;
+					}
+					const jump = /^[1-9]$/.test(data) ? Number(data) - 1 : -1;
+					if (jump >= 0 && jump < runs.length) {
+						index = jump;
+						tui.requestRender();
+						return;
+					}
+					const run = current();
+					const total = run ? wrappedFor(run, Math.max(20, tui.terminal.columns - 4)).length : 0;
 					const act = scrollKeyAction(data);
-					if (act === "top") { offset = 0; follow = false; }
-					else if (act === "bottom") { follow = true; offset = maxOffset(); }
-					else if (act) {
-						if (act.dir < 0) follow = false;
-						offset = Math.max(0, Math.min(maxOffset(), offset + act.dir * (act.page ? rows() : 1)));
-						if (offset >= maxOffset()) follow = true;
+					const page = rows();
+					if (act === "top") {
+						follows.set(index, false);
+						offsets.set(index, 0);
+					} else if (act === "bottom") {
+						follows.set(index, true);
+						offsets.set(index, maxOffset(total));
+					} else if (act) {
+						const step = act.page ? page : 1;
+						const next = Math.max(0, Math.min(maxOffset(total), (offsets.get(index) ?? 0) + act.dir * step));
+						offsets.set(index, next);
+						follows.set(index, next >= maxOffset(total));
+					} else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
+						const dir = matchesKey(data, Key.pageDown) ? 1 : -1;
+						const next = Math.max(0, Math.min(maxOffset(total), (offsets.get(index) ?? 0) + dir * page));
+						offsets.set(index, next);
+						follows.set(index, next >= maxOffset(total));
 					}
 					tui.requestRender();
 				},
 				dispose: () => clearInterval(tick),
 			};
-		});
-
-	const runLabel = (r: SubagentRun) =>
-		`${r.status === "running" ? "▶" : r.ok ? "✅" : "❌"} ${r.role} @ ${new Date(r.startedAt ?? r.at).toLocaleTimeString()}`;
-
-	const openAgentsViewer = async (ctx: ExtensionContext): Promise<void> => {
-		const runs = state.subagentRuns;
-		if (!runs.length) {
-			ctx.ui.notify("no sub-agent runs in this session yet", "info");
-			return;
-		}
-		const recent = runs.slice(-15).map((r, i) => ({ run: r, idx: runs.length - Math.min(runs.length, 15) + i })).reverse();
-		if (ctx.mode !== "tui") {
-			ctx.ui.notify(
-				recent.map(({ run: r }) => `${runLabel(r)}  log: ${r.logPath ? relative(ctx.cwd, r.logPath) : "—"}`).join("\n"),
-				"info",
-			);
-			return;
-		}
-		const picked = await finisherCustom<string | null>(ctx, OVERLAY_MD, (tui, theme, _kb, done) => {
-			const container = new Container();
-			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-			container.addChild(new Text(theme.fg("accent", theme.bold("🧪 Zense sub-agent runs (pick one for a live tail)")), 1, 0));
-			const list = new SelectList(
-				recent.map(({ run: r, idx }) => ({
-					value: String(idx),
-					label: runLabel(r),
-					description: `${r.summary ? r.summary.slice(0, 80) : ""} ${r.logPath ? "| " + relative(ctx.cwd, r.logPath) : ""}`.trim(),
-				})),
-				Math.min(recent.length, 10),
-				{
-					selectedPrefix: (t) => theme.fg("accent", t),
-					selectedText: (t) => theme.fg("accent", t),
-					description: (t) => theme.fg("muted", t),
-					scrollInfo: (t) => theme.fg("dim", t),
-					noMatch: (t) => theme.fg("warning", t),
-				},
-			);
-			list.onSelect = (item) => done(item.value);
-			list.onCancel = () => done(null);
-			container.addChild(list);
-			container.addChild(new Text(theme.fg("dim", "↑↓ navigate • Enter watch • Esc cancel • space = read chat (list hidden, comes back)"), 1, 0));
-			container.addChild(new Spacer(1));
-			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-			return {
-				render: (w: number) => panelize(theme, container.render(w), w),
-				invalidate: () => container.invalidate(),
-				handleInput: (data: string) => {
-					list.handleInput(data);
-					tui.requestRender();
-				},
-			};
 		}, () => true);
-		const runIdx = picked == null ? -1 : Number(picked);
-		if (runIdx < 0 || !state.subagentRuns[runIdx]) return;
-		await tailViewer(ctx, state.subagentRuns[runIdx]);
 	};
 
-	return { tailViewer, runLabel, openAgentsViewer };
+	const tailViewer = (ctx: ExtensionContext, run: SubagentRun): Promise<null> => openAgentSession(ctx, run);
+
+	const openAgentsViewer: OpenAgentsViewer = async (ctx: ExtensionContext): Promise<void> => {
+		await openAgentSession(ctx);
+	};
+
+	return { tailViewer, runLabel, openAgentsViewer, openAgentSession };
 };
