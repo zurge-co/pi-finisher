@@ -3,6 +3,7 @@ import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-
 import { panelize } from "./models.ts";
 import { GOAL_CONFIRM_KEYS, GOAL_CONFIRM_TITLE, goalConfirmLines, type GoalAskOutcome, type GoalConfirmLineKind } from "./goal-confirm.ts";
 import { type FinisherCustom, type HarnessContext } from "./kit.ts";
+import { MAX_TIMER_MS, readConfirmTimeout } from "./goal-run.ts";
 
 export interface GoalPicker {
 	ctx: ExtensionContext;
@@ -19,11 +20,18 @@ export const askGoalViaPicker = (ctx: ExtensionContext, goal: string, cases: str
 	return ctx.ui.confirm(GOAL_CONFIRM_TITLE, detail.join("\n")).then((ok) => (ok ? "confirmed" : "declined") as GoalAskOutcome);
 };
 
-const askGoalViaDialog = ({ ctx, custom }: GoalPicker, goal: string, cases: string[]): Promise<GoalAskOutcome> =>
+const askGoalViaDialog = ({ ctx, custom }: GoalPicker, goal: string, cases: string[], timeoutMs = 0): Promise<GoalAskOutcome> =>
 	custom<GoalAskOutcome | null>(
 		ctx,
 		{},
-		(tui, theme, _kb, done) => {
+		(tui, theme, _kb, finish) => {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const done = (v: GoalAskOutcome | null): void => {
+				if (timer) clearTimeout(timer);
+				timer = undefined;
+				finish(v);
+			};
+			if (timeoutMs > 0) timer = setTimeout(() => done("timeout"), Math.min(timeoutMs, MAX_TIMER_MS));
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const lines = goalConfirmLines(goal, cases);
 			return {
@@ -53,18 +61,29 @@ const askGoalViaDialog = ({ ctx, custom }: GoalPicker, goal: string, cases: stri
 		() => true,
 	).then((outcome) => outcome ?? "declined");
 
-export const askGoalConfirmation = (picker: GoalPicker, goal: string, cases: string[]): Promise<GoalAskOutcome> => {
+export const askGoalConfirmation = (picker: GoalPicker, goal: string, cases: string[], timeoutMs?: number): Promise<GoalAskOutcome> => {
 	if (!picker.ctx.hasUI) return Promise.resolve("unavailable");
-	if (picker.ctx.mode !== "tui") return askGoalViaPicker(picker.ctx, goal, cases).catch(() => "declined" as GoalAskOutcome);
-	try {
-		return Promise.resolve(askGoalViaDialog(picker, goal, cases)).catch(() => askGoalViaPicker(picker.ctx, goal, cases).catch(() => "declined" as GoalAskOutcome));
-	} catch {
-		return askGoalViaPicker(picker.ctx, goal, cases).catch(() => "declined" as GoalAskOutcome);
-	}
+	const ask = (): Promise<GoalAskOutcome> =>
+		picker.ctx.mode !== "tui"
+			? askGoalViaPicker(picker.ctx, goal, cases).catch(() => "declined" as GoalAskOutcome)
+			: Promise.resolve(askGoalViaDialog(picker, goal, cases, timeoutMs)).catch(() => askGoalViaPicker(picker.ctx, goal, cases).catch(() => "declined" as GoalAskOutcome));
+	const timed = (run: Promise<GoalAskOutcome>): Promise<GoalAskOutcome> => {
+		if (!timeoutMs || timeoutMs <= 0) return run;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const expired = new Promise<GoalAskOutcome>((res) => {
+			timer = setTimeout(() => res("timeout"), Math.min(timeoutMs, MAX_TIMER_MS));
+		});
+		return Promise.race([run, expired]).finally(() => {
+			if (timer) clearTimeout(timer);
+		});
+	};
+	if (picker.ctx.mode === "tui") return timed(ask());
+	return timed(ask());
 };
 
 export const createGoalPicker = (ctx: HarnessContext) => {
 	const custom = ctx.finisherCustom;
-	const askGoalConfirm: HarnessContext["askGoalConfirm"] = (toolCtx, goal, cases) => askGoalConfirmation({ ctx: toolCtx, custom }, goal, cases);
+	const askGoalConfirm: HarnessContext["askGoalConfirm"] = (toolCtx, goal, cases) =>
+		askGoalConfirmation({ ctx: toolCtx, custom }, goal, cases, readConfirmTimeout(toolCtx.cwd));
 	return { askGoalConfirm };
 };

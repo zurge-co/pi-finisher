@@ -51,6 +51,21 @@ export const readConfigSurface = (cwd: string): ConfigSurface => {
 
 export const costCeilingKeysPresent = (cwd: string): string[] => readConfigSurface(cwd).ignoredKeys;
 
+export const DEFAULT_CONFIRM_TIMEOUT_MS = 120_000;
+export const MAX_TIMER_MS = 2_147_483_647;
+
+export const readConfirmTimeout = (cwd: string, env: Record<string, string | undefined> = process.env): number => {
+	const config = readJson(join(finisherDir(cwd), "config.json"));
+	const fromEnv = env.FINISHER_CONFIRM_TIMEOUT_MS;
+	const pick = (v: unknown): number | undefined => {
+		const raw = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : undefined;
+		if (raw === undefined || !Number.isFinite(raw) || raw < 0) return undefined;
+		if (raw === 0) return 0;
+		return Math.min(Math.max(raw, 1_000), MAX_TIMER_MS);
+	};
+	return pick(fromEnv) ?? pick(config.confirmTimeoutMs) ?? DEFAULT_CONFIRM_TIMEOUT_MS;
+};
+
 export const isRetiredTool = (name: string): boolean => (RETIRED_TOOLS as readonly string[]).includes(name);
 
 export const isLiveTool = (name: string): boolean => (SURFACE_TOOLS as readonly string[]).includes(name);

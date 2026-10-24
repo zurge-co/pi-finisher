@@ -25,6 +25,10 @@ missing most often, so the plan can be made better instead of guessed.
 - **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
   click between the goal and the result.
 - **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
+- **Nobody answers, nothing starts.** Every goal dialog has a deadline
+  (`confirmTimeoutMs` in `.finisher/config.json`, `FINISHER_CONFIRM_TIMEOUT_MS`, default 120s, `0` = wait
+  forever). A timeout is a refusal: the run stops, complains once, and refuses any further `finisher_goal`
+  until the human writes again — it never starts on a guess and never re-opens the dialog by itself.
 - **The goal is the human's.** A goal and its case list can only change through the confirm dialog:
   the same goal with the same cases resumes silently, a new case list re-opens the dialog, and a
   declined or unavailable dialog leaves the confirmed goal byte-identical. A verify run can never

@@ -22,7 +22,7 @@ export interface State {
 	trajectoryFlags: string[];
 	subagentRuns: SubagentRun[];
 	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
-	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetGoalAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[]; cases?: string[] }; humanAt?: number; toolOutputExpanded?: boolean; hygieneViolations?: HygieneViolationRef[]; }
+	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetGoalAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[]; cases?: string[] }; 	goalConsent?: { blockedAt: number; reason: "declined" | "timeout" }; humanAt?: number; toolOutputExpanded?: boolean; hygieneViolations?: HygieneViolationRef[]; }
 
 export interface HygieneViolationRef {
 	path: string;

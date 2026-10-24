@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { GOAL_TOO_MANY_CASES, goalConfirmLines } from "../extensions/finisher/index.ts";
+import { DEFAULT_CONFIRM_TIMEOUT_MS, GOAL_TOO_MANY_CASES, goalConfirmLines, readConfirmTimeout, resetCycleState } from "../extensions/finisher/index.ts";
 import { askGoalConfirmation, goalLineColor } from "../extensions/finisher/src/goal-dialog.ts";
 import { registerTools } from "../extensions/finisher/src/tools.ts";
 import { createStateBox } from "../extensions/finisher/index.ts";
@@ -259,11 +259,13 @@ test("the goal and its cases can only change through the dialog: the agent canno
 	assert.match(changed.content[0].text, /and it looks nice/, "and says exactly what would have been added");
 	assert.equal(JSON.stringify(box.get().goalDriver), before, "a declined change leaves the confirmed goal byte-identical");
 
+	box.get().humanAt = Date.now() + 1;
 	answer = "unavailable";
 	const noUi = await run("finisher_goal", { goal: "ship the race HUD", cases: ["only one case now"] });
 	assert.equal(noUi.isError, true, "no dialog means no change — never a silent rewrite");
 	assert.equal(JSON.stringify(box.get().goalDriver), before, "and the goal is untouched");
 
+	box.get().humanAt = Date.now() + 2;
 	answer = "confirmed";
 	await run("finisher_goal", { goal: "ship the race HUD", cases: ["only one case now"] });
 	assert.deepEqual(box.get().goalDriver.cases, ["only one case now"], "a confirmed change does apply");
@@ -315,4 +317,96 @@ test("an open plan is never replaced behind the human's back", async () => {
 	const replaced = await run("finisher_phase", { plan: ["something else entirely"] });
 	assert.equal(replaced.details.action, "blocked", "a second plan is refused while laps are open");
 	assert.equal(JSON.stringify(box.get().goalDriver), before, "so the laps and the time already spent are untouched");
+});
+
+test("a dialog nobody answers times out into a refusal, never into a started goal", async () => {
+	const defs = [];
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	const notes = [];
+	registerTools({
+		pi: { registerTool: (def) => defs.push(def) },
+		get state() { return box.get(); },
+		persist: () => {},
+		updateWidget: () => {},
+		escalate: (kind, detail) => box.get().escalations.push({ kind, detail, at: Date.now() }),
+		askGoalConfirm: async () => "timeout",
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		armGoalRound: () => {},
+		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
+	});
+	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-timeout-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: (text) => notes.push(text) } };
+	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
+
+	const first = await run("finisher_goal", { goal: "a goal nobody answered", cases: ["c1"] });
+	assert.equal(first.isError, true, "a timeout is a refusal");
+	assert.equal(box.get().goalDriver, undefined, "and the goal is never started on a timeout");
+	assert.match(first.content[0].text, /nobody answered the goal dialog/, "the agent is told why");
+	assert.match(first.content[0].text, /STOP here/, "and that the run is stopped, not paused for a new guess");
+	assert.match(first.content[0].text, /resumes when the human asks for it again/, "only a human message resumes it");
+	assert.equal(notes.length, 1, "the human is complained at, not silently ignored");
+	assert.match(notes[0], /nothing was started/);
+	assert.deepEqual(box.get().escalations.map((e) => e.kind), ["goal-confirm-timeout"], "the report will mention it too");
+	assert.equal(box.get().goalConsent?.reason, "timeout", "the refusal is recorded, so a retry cannot slip through");
+
+	const retry = await run("finisher_goal", { goal: "a goal nobody answered", cases: ["c1"] });
+	assert.equal(retry.isError, true, "the agent may not retry the dialog on its own");
+	assert.equal(retry.details.outcome, "blocked-until-human");
+	assert.equal(notes.length, 1, "and no second dialog is opened");
+
+	box.get().humanAt = Date.now() + 1;
+	const afterHuman = await run("finisher_goal", { goal: "a goal the human now wants", cases: ["c1"] });
+	assert.equal(afterHuman.details.outcome, "timeout", "once the human speaks again the dialog is offered again (and here times out a second time)");
+
+	box.get().goalDriver = { goal: "the human's goal", confirmedAt: 1_000, attempts: { rounds: 0 }, cases: ["c1"] };
+	box.get().humanAt = Date.now() + 10;
+	const before = JSON.stringify(box.get().goalDriver);
+	const changed = await run("finisher_goal", { goal: "the human's goal", cases: ["c1", "c2"] });
+	assert.equal(changed.isError, true, "a timed-out case change is refused too");
+	assert.equal(JSON.stringify(box.get().goalDriver), before, "and leaves the confirmed goal byte-identical");
+	assert.match(changed.content[0].text, /added: c2/, "naming what would have changed");
+});
+
+test("the timeout is configurable, and 0 means wait forever", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "finisher-cfg-"));
+	mkdirSync(join(dir, ".finisher"), { recursive: true });
+	writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify({ confirmTimeoutMs: 90_000 }));
+	assert.equal(readConfirmTimeout(dir), 90_000);
+	writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify({ confirmTimeoutMs: 0 }));
+	assert.equal(readConfirmTimeout(dir), 0, "0 disables the timer instead of silently becoming the default");
+	assert.equal(readConfirmTimeout(dir, { FINISHER_CONFIRM_TIMEOUT_MS: "5000" }), 5_000, "the env wins over the file");
+	writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify({ confirmTimeoutMs: 5e12 }));
+	assert.equal(readConfirmTimeout(dir), 2_147_483_647, "a value past the timer ceiling is clamped, never fired instantly");
+	for (const junk of [{ confirmTimeoutMs: -1 }, { confirmTimeoutMs: "90s" }, { confirmTimeoutMs: null }, { confirmTimeoutMs: Number.NaN }]) {
+		writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(junk));
+		assert.equal(readConfirmTimeout(dir), DEFAULT_CONFIRM_TIMEOUT_MS, `junk ${JSON.stringify(junk)} falls back`);
+	}
+	rmSync(join(dir, ".finisher", "config.json"));
+	assert.equal(readConfirmTimeout(dir), DEFAULT_CONFIRM_TIMEOUT_MS, "no config at all keeps the default");
+});
+
+test("a refusal never outlives its own goal: a confirmed goal and a fresh cycle both clear it", async () => {
+	const defs = [];
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [], goalConsent: { blockedAt: 1_000_000, reason: "timeout" } });
+	registerTools({
+		pi: { registerTool: (def) => defs.push(def) },
+		get state() { return box.get(); },
+		persist: () => {},
+		updateWidget: () => {},
+		escalate: () => {},
+		askGoalConfirm: async () => "confirmed",
+		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
+		armGoalRound: () => {},
+		launchSubagent: async () => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [] }),
+	});
+	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-consent-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
+	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);
+
+	const blocked = await run("finisher_goal", { goal: "g", cases: ["c1"] });
+	assert.equal(blocked.details.outcome, "blocked-until-human", "a stale refusal stops the run while the human is silent");
+
+	box.get().humanAt = Date.now() + 1;
+	await run("finisher_goal", { goal: "g", cases: ["c1"] });
+	assert.equal(box.get().goalConsent, undefined, "a confirmed goal clears the old refusal, so the next goal is not blocked by it");
+	resetCycleState(box.get());
+	assert.equal(box.get().goalConsent, undefined, "and a cycle reset cannot inherit one either");
 });

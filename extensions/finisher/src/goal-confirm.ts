@@ -36,7 +36,7 @@ export const buildGoalConfirmPrompt = (goal: string, cases: string[]): string =>
 
 export const GOAL_AFTER_CONFIRM_NOTE = "goal confirmed — no gate between here and the result; verify every case and report once at the end";
 
-export type GoalAskOutcome = "confirmed" | "declined" | "unavailable";
+export type GoalAskOutcome = "confirmed" | "declined" | "unavailable" | "timeout";
 
 export const GOAL_CONFIRM_TITLE = "▚ confirm this goal once";
 export const GOAL_CONFIRM_KEYS = "y / enter = confirm  •  n / esc = decline";
@@ -81,6 +81,16 @@ export const droppedCases = (previous: string[], next: string[]): string[] =>
 
 export const GOAL_CHANGE_NOTE =
 	"the confirmed goal was left exactly as it was — a goal and its cases can only change when the human confirms the change in the dialog. Call finisher_goal again with the same goal to continue it, or state the new goal and let the human confirm it.";
+
+export const GOAL_TIMEOUT_NOTE = (seconds: number): string =>
+	[
+		`⏱ nobody answered the goal dialog within ${seconds}s, so the goal was NOT confirmed and NOTHING was started.`,
+		"STOP here. Do not open the dialog again, do not start the work, do not guess the cases, and do not continue an earlier plan.",
+		"report this timeout to the human once and wait: the work only resumes when the human asks for it again, with the goal they want.",
+	].join("\n");
+
+export const GOAL_CONSENT_WAIT_NOTE =
+	"the human has not said anything since the last goal dialog was refused (declined or timed out), so this run stays stopped. Report the refusal once and wait — do not ask again, do not start work, and do not re-word the goal hoping it passes. Only a new message from the human resumes it.";
 
 export const GOAL_DECLINED_NOTE =
 	"goal NOT confirmed — the human declined the goal or its cases, so nothing was started. Re-state the goal, or the cases that were wrong, and call finisher_goal again. Do not begin the work on your own.";

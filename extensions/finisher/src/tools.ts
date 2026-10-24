@@ -1,8 +1,8 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildGoalToolText, goalDriverDone, goalKey, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
-import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
-import { GOAL_CHANGE_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, casesOnlyChanged, droppedCases, goalCases, sameCaseSet, tooManyCasesNote, unconfirmedGoalNote } from "./goal-confirm.ts";
+import { costCeilingKeysPresent, readConfirmTimeout, surfaceLine } from "./goal-run.ts";
+import { GOAL_CHANGE_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, NON_GOAL_PREFIX, casesOnlyChanged, droppedCases, goalCases, sameCaseSet, tooManyCasesNote, unconfirmedGoalNote, type GoalAskOutcome } from "./goal-confirm.ts";
 import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
 import { buildReport, freshAttempts, judgeCase, repairNote, renderVerifyReport, unusableCases } from "./verify-loop.ts";
@@ -32,6 +32,7 @@ export const registerTools = (ctx: HarnessContext) => {
 	const pi = ctx.pi;
 	const state = ctx.state;
 	const updateWidget = ctx.updateWidget;
+	const escalate = ctx.escalate;
 	const launchSubagent = ctx.launchSubagent;
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const armGoalRound = ctx.armGoalRound;
@@ -281,12 +282,48 @@ export const registerTools = (ctx: HarnessContext) => {
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
 			if (!goal) return { content: [{ type: "text", text: "finisher_goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
+			const consent = state.goalConsent;
+			if (consent && (state.humanAt ?? 0) <= consent.blockedAt)
+				return {
+					content: [{ type: "text", text: `${GOAL_CONSENT_WAIT_NOTE}\n(last refusal: ${consent.reason})` }],
+					details: { goal, confirmed: false, outcome: "blocked-until-human", reason: consent.reason },
+					isError: true,
+				};
 			const cases = (p.cases ?? []).map((c: string) => c.trim()).filter(Boolean);
 			const previous = state.goalDriver as GoalRunState | undefined;
 			const openGoal = !!previous && !goalDriverDone(previous);
 			const sameOpenGoal = openGoal && goalKey(previous.goal) === goalKey(goal);
 			const confirmedBefore = previous?.cases ?? state.spec?.crossCheck ?? [];
 			const casesChanged = sameOpenGoal && cases.length > 0 && confirmedBefore.length > 0 && !sameCaseSet(cases, confirmedBefore);
+
+			const askSeconds = Math.round(readConfirmTimeout(ctx.cwd) / 1000);
+			const refusal = (outcome: GoalAskOutcome, what: string, extra = "") => {
+				const note =
+					outcome === "timeout"
+						? `${GOAL_TIMEOUT_NOTE(askSeconds)}${extra}`
+						: outcome === "declined"
+							? `${what === "goal" ? GOAL_DECLINED_NOTE : GOAL_CHANGE_NOTE}${extra}`
+							: `${GOAL_NO_UI_NOTE}${extra}`;
+				if (outcome === "timeout" || outcome === "declined") {
+					state.goalConsent = { blockedAt: Date.now(), reason: outcome };
+					const line =
+						outcome === "timeout"
+							? `⏱ finisher: nobody answered the goal dialog in ${askSeconds}s — nothing was started; the run is stopped until you ask again`
+							: "finisher: the goal was declined — nothing was started; the run is stopped until you ask again";
+					try {
+						escalate(outcome === "timeout" ? "goal-confirm-timeout" : "goal-declined", `${goal} — ${askSeconds}s`, ctx);
+					} catch {
+					}
+					try {
+						ctx.ui.notify(line, "warning");
+					} catch {
+					}
+					persist();
+					updateWidget(ctx);
+				}
+				return { content: [{ type: "text" as const, text: note }], details: { goal, confirmed: false, outcome, casesChanged: what !== "goal" }, isError: true };
+			};
+
 			const started = resumeOrStart(previous, goal, Date.now(), casesChanged ? [] : confirmedBefore);
 			if (casesChanged) {
 				const added = casesOnlyChanged(confirmedBefore, cases);
@@ -295,14 +332,8 @@ export const registerTools = (ctx: HarnessContext) => {
 				if (confirmedNow.length > GOAL_TOO_MANY_CASES)
 					return { content: [{ type: "text", text: tooManyCasesNote(confirmedNow.length) }], details: { goal, confirmed: false, cases: confirmedNow.length }, isError: true };
 				const change = await askGoalConfirm(ctx, goal, confirmedNow);
-				if (change !== "confirmed") {
-					const why = change === "declined" ? "the human declined the new case list" : "no dialog was available to confirm the change";
-					return {
-						content: [{ type: "text", text: `${GOAL_CHANGE_NOTE}\n(${why}${added.length ? ` · added: ${added.join("; ")}` : ""}${gone.length ? ` · removed: ${gone.join("; ")}` : ""})` }],
-						details: { goal, confirmed: false, outcome: change, casesChanged: true },
-						isError: true,
-					};
-				}
+				const diff = `${added.length ? ` · added: ${added.join("; ")}` : ""}${gone.length ? ` · removed: ${gone.join("; ")}` : ""}`;
+				if (change !== "confirmed") return refusal(change, "cases", diff);
 				state.decisions = [];
 			}
 			if (!sameOpenGoal) {
@@ -310,14 +341,12 @@ export const registerTools = (ctx: HarnessContext) => {
 				if (confirmed.length > GOAL_TOO_MANY_CASES)
 					return { content: [{ type: "text", text: tooManyCasesNote(confirmed.length) }], details: { goal, confirmed: false, cases: confirmed.length }, isError: true };
 				const outcome = await askGoalConfirm(ctx, goal, confirmed);
-				if (outcome === "declined")
-					return { content: [{ type: "text", text: GOAL_DECLINED_NOTE }], details: { goal, confirmed: false, outcome }, isError: true };
-				if (outcome === "unavailable")
-					return { content: [{ type: "text", text: GOAL_NO_UI_NOTE }], details: { goal, confirmed: false, outcome }, isError: true };
+				if (outcome !== "confirmed") return refusal(outcome, "goal");
 				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
 			}
 			state.goalDriver = cases.length || confirmedBefore.length ? { ...started, cases: cases.length ? cases : confirmedBefore } : started;
+			state.goalConsent = undefined;
 			if (cases.length && !state.spec) {
 				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
 				state.phase = "implementation";
