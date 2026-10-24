@@ -17,12 +17,17 @@ import { createViewers } from "./src/viewers.ts";
 import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
-import { buildFreshSummary, readFreshContextConfig, shouldReset, freshCompactionEntry } from "./src/fresh-context.ts";
+import { buildFreshSummary, freshCompactionEntry, freshDirective, freshResetDecision, lastUserEntryId, readFreshContextConfig } from "./src/fresh-context.ts";
+import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
 import { readHandoff } from "./src/handoff-stack.ts";
+import { handoffStackFor } from "./src/handoff-gate.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
 import { applyBashTimeout, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
 import { registerTools } from "./src/tools.ts";
 import { registerCommands } from "./src/commands.ts";
+export * from "./src/commands.ts";
+export * from "./src/panel-widget.ts";
+export * from "./src/state-box.ts";
 
 export * from "./src/types.ts";
 export * from "./src/worktree.ts";
@@ -38,17 +43,25 @@ export * from "./src/test-quality.ts";
 export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
 export * from "./src/agent-panel.ts";
+export * from "./src/agent-session.ts";
+export * from "./src/viewers.ts";
+export * from "./src/hud.ts";
 export * from "./src/swarm-code.ts";
+export * from "./src/budget.ts";
+export * from "./src/evidence.ts";
 export * from "./src/verify-loop.ts";
 export * from "./src/goal-driver.ts";
 export * from "./src/goal-run.ts";
 export * from "./src/handoff-stack.ts";
 export * from "./src/handoff-classify.ts";
 export * from "./src/fresh-context.ts";
+export * from "./src/compaction-guard.ts";
 export * from "./src/fullscreen.ts";
 export * from "./src/handoff-model.ts";
 export * from "./src/decisions.ts";
 export * from "./src/subagent-rpc.ts";
+export * from "./src/tool-log.ts";
+export * from "./src/handoff-gate.ts";
 export * from "./src/ladder-model.ts";
 export * from "./src/timeout.ts";
 
@@ -156,6 +169,17 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
+	pi.on("before_agent_start", async (event) => {
+		if (event.messageType === "user") box.get().humanAt = Date.now();
+	});
+
+	pi.on("session_before_compact", async (event, ctx) => {
+		const held = compactionHold({ reason: event.reason, goal: box.get().goalDriver, humanAt: box.get().humanAt });
+		if (!held.hold) return;
+		if (ctx.hasUI && held.note) ctx.ui.notify(held.note, "info");
+		return { cancel: true };
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
 		let sp = event.systemPrompt;
 		sp += "\n\n" + CODE_HYGIENE_GUIDELINE + "\n\n" + SWARM_ROUTING_GUIDELINE;
@@ -178,13 +202,22 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_before_settle", async (ev, ctx) => {
 		const cfg = readFreshContextConfig(ctx.cwd);
-		const hasWork = ev.context.contextEntries.length > 0;
-		const alreadyReset = (box.get().freshResetAt ?? 0) > Date.now() - 2_000;
-		if (!shouldReset({ enabled: cfg.enabled, alreadyReset, hasWork, aborted: ev.outcome !== "completed" })) return;
-		const summary = buildFreshSummary(readHandoff(ctx.cwd));
+		const decision = freshResetDecision({
+			enabled: cfg.enabled,
+			hasWork: ev.context.contextEntries.length > 0,
+			aborted: ev.outcome !== "completed",
+			lastResetAt: box.get().freshResetAt,
+			goal: box.get().goalDriver as { doneAt?: number } | undefined,
+			consumedGoalAt: box.get().freshResetGoalAt,
+			reportUnread: reportUnread(box.get().goalDriver, box.get().humanAt),
+			now: Date.now(),
+		});
+		if (!decision.reset) return;
+		const summary = buildFreshSummary(handoffStackFor(readHandoff(ctx.cwd)));
 		box.get().freshResetAt = Date.now();
+		box.get().freshResetGoalAt = decision.goalAt;
 		persist();
-		return { entries: [freshCompactionEntry(summary || "[finisher fresh context] a task finished; this context was reset on purpose. Re-read the repo and state from disk instead of trusting memory.")] };
+		return { entries: [freshCompactionEntry(freshDirective(summary), lastUserEntryId(ev.context.contextEntries))] };
 	});
 
 	pi.on("agent_end", async (ev, ctx) => {

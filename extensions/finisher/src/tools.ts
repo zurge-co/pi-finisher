@@ -4,16 +4,22 @@ import { buildGoalToolText, goalKey, nextGoalDriverStep, resumeOrStart, type Goa
 import { costCeilingKeysPresent, surfaceLine } from "./goal-run.ts";
 import { goalCases } from "./goal-confirm.ts";
 import { type ArmGoalRound, type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
-import { effectiveLadder, readSwarmConcurrency, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
-import { buildReport, decideOnce, freshAttempts, judgeCase, renderVerifyReport } from "./verify-loop.ts";
+import { effectiveLadder, concurrencyFor, swarmSlots, swarmSummaryLine, buildFanOutPrompt, readModelLadder, type FanOutArgs, type SwarmTask, type SwarmSlot, runSwarm } from "./swarm.ts";
+import { buildReport, freshAttempts, judgeCase, renderVerifyReport } from "./verify-loop.ts";
 import { type State } from "./types.ts";
 import { headOf } from "./pending-apply.ts";
 import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
 import { clearOtherGoals } from "./handoff-stack.ts";
+import { handoffOff } from "./handoff-gate.ts";
 import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
+import { budgetNote, capNeededFor, effortFor, SWARM_TOOL, wavesFor } from "./budget.ts";
+import { subagentTimeout } from "./subagent-config.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
 import { liveByRole, steerLive, followUpLive } from "./subagent-rpc.ts";
+import { recordSteerOnRun } from "./agent-session.ts";
+
+export const roleForMode = (mode: "explore" | "verify" | "code"): "swarm" | "verifier" => (mode === "verify" ? "verifier" : "swarm");
 
 export const registerTools = (ctx: HarnessContext) => {
 	const persist = ctx.persist;
@@ -23,13 +29,24 @@ export const registerTools = (ctx: HarnessContext) => {
 	const launchSubagent = ctx.launchSubagent;
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const armGoalRound = ctx.armGoalRound;
-	const askClarifyQuestion = ctx.askClarifyQuestion;
+
+	const capFor = (name: string, configured: number, cwd: string, params: unknown): number => {
+		if (name !== SWARM_TOOL) return configured;
+		const p = params as { mode?: "explore" | "verify" | "code"; subtasks?: unknown[]; maxAttempts?: number } | undefined;
+		const mode = p?.mode ?? "explore";
+		const tasks = Array.isArray(p?.subtasks) ? p.subtasks.length : 0;
+		const { ladder } = effectiveLadder(cwd);
+		const spread = concurrencyFor(cwd, swarmSlots(ladder).length, tasks);
+		const needed = capNeededFor({ subagentMs: subagentTimeout(roleForMode(mode), cwd), attempts: effortFor(mode, p?.maxAttempts), waves: wavesFor(tasks, spread.concurrency) });
+		return Math.max(configured, needed);
+	};
 
 	const boundedTool = <TParams extends TSchema, TDetails, TState>(def: ToolDefinition<TParams, TDetails, TState>): ToolDefinition<TParams, TDetails, TState> => ({
 		...def,
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
 			const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
-			const r = await withTimeout(Promise.resolve(def.execute(toolCallId, params, signal, onUpdate, ctx)), readToolTimeout(cwd, def.name), TOOL_TIMEOUT_LABEL(def.name));
+			const configured = readToolTimeout(cwd, def.name);
+			const r = await withTimeout(Promise.resolve(def.execute(toolCallId, params, signal, onUpdate, ctx)), capFor(def.name, configured, cwd, params), TOOL_TIMEOUT_LABEL(def.name));
 			if (!r.timedOut) return r.value as never;
 			return { content: [{ type: "text", text: timeoutNote(r) }], details: { timedOut: true, tool: def.name }, isError: true } as never;
 		},
@@ -37,13 +54,14 @@ export const registerTools = (ctx: HarnessContext) => {
 
 	pi.registerTool(boundedTool({
 		name: "finisher_swarm",
-		label: "Zense Swarm",
+		label: "finisher · swarm",
 		description:
 			"Run several sub-agents AT THE SAME TIME on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). mode=explore fans a goal out into read-only research slices; mode=verify sends independent verifiers that must prove the goal with real commands; mode=code gives every slice its OWN git worktree + branch so coders write in parallel without touching each other, then merges back in deterministic slice-id order and refuses to merge silently when two slices touched the same path. No token/cost ceiling.",
 		promptSnippet: "Fan out parallel sub-agents across the model priority ladder (explore / verify / code in isolated worktrees)",
 		promptGuidelines: [
 			"Use finisher_swarm explore when a goal needs many independent reads (survey, locate, compare) — gives back one merged report instead of serial sub-agent turns.",
 			"Use finisher_swarm verify to prove the result against reality: each verifier must RUN commands and end with VERDICT: PASS/FAIL. A claim with no executed command is UNVERIFIED, never PASS. The loop is bounded — fix the real cause and call verify again; identical evidence stops it.",
+			"Treat a worker's report as the evidence: do not re-read the files it read, do not re-run the commands it ran, and for verify never re-check a case a verifier already judged — its verdict and its commands are final for that case.",
 			"Use finisher_swarm code when the change splits into independent slices: each coder gets its own worktree, so give every slice its scope and let them all run at once. Slices that need the same file must be one slice — overlapping paths are blocked and reported, never merged silently.",
 			"Decide library/layout/approach yourself — do not ask the human.",
 		],
@@ -77,21 +95,35 @@ export const registerTools = (ctx: HarnessContext) => {
 					details: { missingLadder: true },
 					isError: true,
 				};
-			const concurrency = readSwarmConcurrency(ctx.cwd, slots.length);
+			const spread = concurrencyFor(ctx.cwd, slots.length, p.subtasks.length);
+			const concurrency = spread.concurrency;
+			const effort = effortFor(p.mode, p.maxAttempts);
+			const budget = budgetNote({
+				toolCapMs: readToolTimeout(ctx.cwd, SWARM_TOOL),
+				subagentMs: subagentTimeout(roleForMode(p.mode), ctx.cwd),
+				attempts: effort,
+				waves: wavesFor(p.subtasks.length, concurrency),
+			});
 			const notes = costCeilingKeysPresent(ctx.cwd).length ? ` ⚠ ignored ceiling key(s): ${costCeilingKeysPresent(ctx.cwd).join(", ")}` : "";
 			const runOne = <T,>(promptFor: (task: SwarmTask<T>, attempt: number) => string) => async (task: SwarmTask<T>, slot: SwarmSlot, attempt: number) => {
 				if (sig?.aborted) return { ok: false, output: "cancelled by user (Esc)" };
 				const before = state.subagentRuns.length;
-				const pending = launchSubagent(ctx, "swarm", promptFor(task, attempt), undefined, sig, slot.model);
+				const pending = launchSubagent(ctx, roleForMode(p.mode), promptFor(task, attempt), undefined, sig, slot.model);
 				const started = state.subagentRuns[before];
 				if (started) started.slotId = slot.id;
 				const r = await pending;
 				return { ok: r.ok, output: r.ok ? r.output : `${r.output}\n(log: ${r.logPath})` };
 			};
-			if (p.mode === "code") return await runCodeSwarm(ctx, p.subtasks, { slots, concurrency, maxAttempts: p.maxAttempts ?? 2, goal: p.goal, sig, ladder, source, notes });
+			if (p.mode === "code") return await runCodeSwarm(ctx, p.subtasks, { slots, concurrency, maxAttempts: effort, goal: p.goal, sig, ladder, source, notes });
 			const fan: FanOutArgs = { mode: p.mode, subtasks: p.subtasks.map((s: { id: string; instruction: string }) => ({ id: s.id.trim(), instruction: s.instruction })), ...(p.goal?.trim() ? { goal: p.goal.trim() } : {}) };
 			const tasks = fan.subtasks.map((s) => ({ id: s.id, payload: s }));
-			const results = await runSwarm(tasks, { slots, concurrency, maxAttempts: p.maxAttempts ?? 2, run: runOne((task, attempt) => buildFanOutPrompt(fan, task.payload!, attempt)) });
+			const results = await runSwarm(tasks, {
+				slots,
+				concurrency,
+				maxAttempts: effort,
+				stopOnDeclaredAnswer: p.mode === "verify",
+				run: runOne((task, attempt) => buildFanOutPrompt(fan, task.payload!, attempt)),
+			});
 			const failed = results.filter((r) => !r.ok);
 			const body = results
 				.map((r) => `## ${r.id} ${r.ok ? "✓" : "✗"}${r.model ? ` [${r.model}]` : ""}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ""}\n${r.output.trim() || "(no output)"}`)
@@ -108,14 +140,14 @@ export const registerTools = (ctx: HarnessContext) => {
 				updateWidget(ctx);
 				if (step.action === "replan") armGoalRound(step.text);
 				return {
-					content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), "", body].join("\n") }],
-					details: { mode: p.mode, report, decision: decideOnce(report, driver.attempts), step: step.action, outcome: step.state.outcome, results },
+					content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), ...(budget ? ["", budget] : []), "", body].join("\n") }],
+					details: { mode: p.mode, report, decision: { kind: step.action }, step: step.action, outcome: step.state.outcome, effort, budget: budget ?? null, results },
 					...(report.allPass ? {} : { isError: true }),
 				};
 			}
 			return {
-				content: [{ type: "text", text: `${swarmSummaryLine(results)} (concurrency ${concurrency})\n\n${body}${failed.length ? `\n\n⚠ ${failed.length} slice(s) failed — re-run just those slices or do them yourself` : ""}` }],
-				details: { mode: p.mode, concurrency, results },
+				content: [{ type: "text", text: `${swarmSummaryLine(results)} (concurrency ${concurrency})\n${budget ? `${budget}\n` : ""}\n${body}${failed.length ? `\n\n⚠ ${failed.length} slice(s) failed — re-run just those slices or do them yourself` : ""}` }],
+				details: { mode: p.mode, concurrency, concurrencySource: spread.source, effort, budget: budget ?? null, results },
 				...(failed.length ? { isError: true } : {}),
 			};
 		},
@@ -123,7 +155,7 @@ export const registerTools = (ctx: HarnessContext) => {
 
 	pi.registerTool(boundedTool({
 		name: "finisher_goal",
-		label: "Zense Goal",
+		label: "finisher · goal",
 		description:
 			"Confirm a goal ONCE and let the harness drive it: it runs the verify fan-out on your model ladder, judges each case from executed evidence, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
@@ -144,7 +176,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const isNewGoal = !previous || goalKey(previous.goal) !== goalKey(goal);
 			const started = resumeOrStart(previous, goal);
 			if (isNewGoal) {
-				clearOtherGoals(ctx.cwd, goal);
+				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
 			}
 			state.goalDriver = started;
@@ -168,7 +200,7 @@ verification runs once, reading the change and exercising the changed code direc
 
 	pi.registerTool(boundedTool({
 		name: "finisher_steer",
-		label: "Zense Steer",
+		label: "finisher · steer",
 		description:
 			"Push a finding into a sub-agent THAT IS STILL RUNNING, so it corrects course without being restarted. Call it with no arguments to list who is working right now. You decide when this matters — the harness never guesses on your behalf. steer lands after the current turn's tool calls, before the next model request; followUp lands after the agent finishes its current work.",
 		promptSnippet: "Send a finding into a running sub-agent (steer or follow-up) instead of restarting it",
@@ -197,6 +229,7 @@ verification runs once, reading the change and exercising the changed code direc
 			const message = pp.message.trim();
 			const how = pp.mode ?? "steer";
 			const n = how === "followUp" ? await followUpLive(role, message) : await steerLive(role, message);
+			if (n) recordSteerOnRun(state, role, how, message);
 			if (!n)
 				return {
 					content: [{ type: "text", text: `no "${role}" sub-agent is running — nothing was sent. Live right now: ${live.map((r) => r.role).join(", ") || "(none)"}. A steer cannot reach a worker that already finished; its result is in the handoff stack instead.` }],

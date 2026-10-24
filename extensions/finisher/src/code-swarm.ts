@@ -160,5 +160,5 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		};
 	};
 
-	return { runCodeSwarm };
+	return { runCodeSwarm, armGoalRound };
 };

@@ -6,10 +6,21 @@ import { stackSummary, type HandoffItem } from "./handoff-stack.ts";
 export const FRESH_KEY = "freshContext";
 export const FRESH_DEFAULT = true;
 export const FRESH_SUMMARY_MAX = 1_200;
+export const FRESH_DIRECTIVE = "[finisher fresh context] the confirmed goal is closed; the work that produced it was summarized on purpose so the next task starts clean. Re-read the repo and state from disk instead of trusting memory.";
 
 export interface FreshContextConfig {
 	enabled: boolean;
 	source: "config" | "default" | "broken-config";
+}
+
+export interface FreshResetInput {
+	enabled: boolean;
+	alreadyReset: boolean;
+	hasWork: boolean;
+	aborted?: boolean;
+	goalDone?: boolean;
+	freshBoundary?: boolean;
+	reportUnread?: boolean;
 }
 
 export const configPath = (cwd: string): string => join(finisherDir(cwd), "config.json");
@@ -43,20 +54,65 @@ export const writeFreshContextConfig = (cwd: string, enabled: boolean): boolean 
 export const buildFreshSummary = (items: HandoffItem[], limit = 6): string => {
 	const body = stackSummary(items, limit);
 	if (!body) return "";
-	return clipSummary(`[finisher fresh context] a task finished; this context was reset on purpose. What earlier work learned that this one must not rediscover:\n${body}\nRe-read the repo and the tracker from disk instead of trusting memory.`);
+	return clipSummary(`[finisher fresh context] what this run learned that the next one must not rediscover:\n${body}\nRe-read the repo and the tracker from disk instead of trusting memory.`);
 };
+
+export const freshDirective = (summary: string): string => summary || FRESH_DIRECTIVE;
 
 export const clipSummary = (text: string, max = FRESH_SUMMARY_MAX): string => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
 
 export const isOneLineSummary = (text: string): boolean => !text.includes("\n") || text.length <= FRESH_SUMMARY_MAX;
 
-export const shouldReset = (opts: { enabled: boolean; alreadyReset: boolean; hasWork: boolean; aborted?: boolean }): boolean =>
-	opts.enabled && !opts.alreadyReset && opts.hasWork && !opts.aborted;
+export const isGoalBoundary = (goal: { doneAt?: number } | undefined, consumedAt: number | undefined): boolean =>
+	!!goal?.doneAt && goal.doneAt !== consumedAt;
 
-export const freshCompactionEntry = (summary: string): { type: "compaction"; summary: string; firstKeptEntryId: null } => ({
+export const shouldReset = (opts: FreshResetInput): boolean =>
+	opts.enabled && !opts.alreadyReset && opts.hasWork && !opts.aborted && opts.reportUnread !== true && opts.goalDone === true && opts.freshBoundary === true;
+
+export const FRESH_DEBOUNCE_MS = 2_000;
+
+export interface FreshResetState {
+	enabled: boolean;
+	hasWork: boolean;
+	aborted?: boolean;
+	lastResetAt?: number;
+	goal?: { doneAt?: number };
+	consumedGoalAt?: number;
+	reportUnread?: boolean;
+	now?: number;
+}
+
+export const freshResetDecision = (o: FreshResetState): { reset: boolean; goalAt?: number } => {
+	const now = o.now ?? Date.now();
+	const goalAt = o.goal?.doneAt;
+	const reset = shouldReset({
+		enabled: o.enabled,
+		hasWork: o.hasWork,
+		aborted: o.aborted,
+		alreadyReset: (o.lastResetAt ?? 0) > now - FRESH_DEBOUNCE_MS,
+		goalDone: !!goalAt,
+		freshBoundary: isGoalBoundary(o.goal, o.consumedGoalAt),
+		reportUnread: o.reportUnread,
+	});
+	return reset ? { reset: true, goalAt } : { reset: false };
+};
+
+export interface EntryRef {
+	sourceEntry?: { id?: string; type?: string; message?: { role?: string } };
+}
+
+export const lastUserEntryId = (entries: EntryRef[]): string | null => {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const e = entries[i]?.sourceEntry;
+		if (e?.type === "message" && e.message?.role === "user" && typeof e.id === "string") return e.id;
+	}
+	return null;
+};
+
+export const freshCompactionEntry = (summary: string, firstKeptEntryId: string | null = null): { type: "compaction"; summary: string; firstKeptEntryId: string | null } => ({
 	type: "compaction",
 	summary: clipSummary(summary),
-	firstKeptEntryId: null,
+	firstKeptEntryId,
 });
 
 export const freshStatusLine = (cfg: FreshContextConfig, items: HandoffItem[]): string =>
