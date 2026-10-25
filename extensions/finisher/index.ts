@@ -48,6 +48,8 @@ export * from "./src/test-quality.ts";
 export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
 export * from "./src/intake.ts";
+export * from "./src/goal-clarify.ts";
+export * from "./src/clarify-dialog.ts";
 export * from "./src/check-runner.ts";
 export * from "./src/check-file.ts";
 export * from "./src/suite-budget.ts";

@@ -23,6 +23,16 @@ test("the language directive is the human's, and it is the last rule the agent r
 	for (const lang of ["th", "ko", "ar"]) assert.ok(harnessSystemPrompt(base, lang).includes(lang), `the prompt names the language it demands for ${lang}`);
 });
 
+test("the goal-first rule is followed by the clarify rule, which bounds the questions instead of inviting an interview", () => {
+	const guidelines = HARNESS_GUIDELINES("th");
+	const at = guidelines.findIndex((rule) => /at most 3 questions/.test(rule));
+	assert.equal(at, 1, "the clarify rule sits directly behind the goal-first rule");
+	assert.match(guidelines[at], /as I said is enough/, "the escape the human always has");
+	assert.match(guidelines[at], /reading the code would answer/, "and the questions the harness may never ask");
+	assert.match(guidelines[at], /never run a second round/, "the bound is one round per goal");
+	assert.ok(harnessSystemPrompt(base, "th").includes(guidelines[at]), "and it really reaches the prompt the model reads");
+});
+
 test("a context bulletin rides along once and only when there is one", () => {
 	const bulletin = "the repo already has a release script";
 	const withBulletin = harnessSystemPrompt(base, "th", bulletin);

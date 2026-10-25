@@ -42,6 +42,10 @@ missing most often, so the plan can be made better instead of guessed.
   the same goal with the same cases resumes silently, a new case list re-opens the dialog, and a
   declined or unavailable dialog leaves the confirmed goal byte-identical. A verify run can never
   name or re-case a goal, and an open plan is never replaced behind your back.
+- **A vague goal is asked once, not guessed.** When the human's words cannot yield a checkable case,
+  `finisher_goal` asks at most 3 questions — each with options to pick (drawn from the repo's own
+  module names) and an "as I said is enough" escape — and folds the answers into the cases before the
+  same confirm dialog opens. One round per goal, never a question that reading the code would answer.
 - **Evidence or it did not happen.** A case with no executed command is `UNVERIFIED`, never `PASS`.
   The loop is bounded: identical evidence stops it, rounds are counted.
 - **Five models in parallel.** `priority1..priority5` in `.finisher/models.json` are the slots; the

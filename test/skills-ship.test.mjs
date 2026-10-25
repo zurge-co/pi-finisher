@@ -47,6 +47,19 @@ test("the human's words are check and result, never probe or verdict", () => {
 	assert.match(read("README.md"), /check/i);
 });
 
+test("the skill and the README carry one and the same bound for a vague goal", () => {
+	const sources = [
+		["skills/goal-intake/SKILL.md", read("skills", "goal-intake", "SKILL.md")],
+		["README.md", read("README.md")],
+	];
+	for (const [name, text] of sources) {
+		assert.match(text, /at most 3 questions/i, `${name} states the cap`);
+		assert.match(text, /options/i, `${name} says the human picks instead of typing`);
+		assert.match(text, /as I said is enough/i, `${name} names the escape`);
+		assert.match(text, /reading the code/i, `${name} names the question that may never be asked`);
+	}
+});
+
 test("the README states that no configuration is needed after install", () => {
 	const readme = read("README.md");
 	assert.match(readme, /## Nothing to configure/);

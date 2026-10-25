@@ -21,6 +21,22 @@ Nothing has to be configured for this. It is on from install, in every session.
 - A case the human alone can check is passed as `{ id, human: true, note }` — it is reported to them
   separately and never fails the run.
 
+## When the human's own words are vague
+
+Some messages carry no checkable outcome: "make it faster", "clean this up", "ปรับปรุงหน่อย".
+Reading more code cannot answer what they meant, so `finisher_goal` asks — once, before the dialog.
+
+- At most 3 questions, one per gap it names: what should change (`target`), how the result is
+  checked (`observable`), how far the change may reach (`scope`).
+- Every question carries options to pick — drawn from the repo's own module and directory names where
+  it can — and the last option is always "as I said is enough".
+- Never a question that reading the code would answer: which file owns a behaviour is your job, what
+  counts as done is theirs.
+- The answers are folded into the cases before the same confirm dialog opens, so the human weighs one
+  sharpened case list and confirms once. There is no second round for the same goal.
+- If they pick "as I said is enough", confirm their words and make the cases concrete in the first
+  lap; a clarifying answer that cannot be checked is kept as a note, never dressed up as a case.
+
 ## The dialog happens once
 
 The human confirms the goal and its cases in one dialog. After the confirmation there is no gate

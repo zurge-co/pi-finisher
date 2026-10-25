@@ -20,6 +20,9 @@ import { recordSteerOnRun } from "./agent-session.ts";
 import { countSuite } from "./suite-budget.ts";
 import { registerPhaseTool } from "./phase-tool.ts";
 import { verifyToolDefinition, VERIFY_TOOL } from "./verify-tool.ts";
+import { applyAnswers, clarifyPlan, markClarify, type ClarifyGap } from "./goal-clarify.ts";
+import { askClarify, clarifyTargets } from "./clarify-dialog.ts";
+import { caseKey } from "./goal-confirm.ts";
 
 export const SWARM_MODES = ["code"] as const;
 export const RETIRED_MODES = ["explore", "verify"] as const;
@@ -44,6 +47,7 @@ export const registerTools = (ctx: HarnessContext) => {
 	const updateWidget = ctx.updateWidget;
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const askGoalConfirm = ctx.askGoalConfirm;
+	const askClarifyQuestion = ctx.askClarifyQuestion;
 
 	registerPhaseTool(ctx);
 
@@ -200,6 +204,27 @@ export const registerTools = (ctx: HarnessContext) => {
 				};
 			const confirmed = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
 
+			let askGoal = goal;
+			let askCases = confirmed;
+			let sharpened: string[] | undefined;
+			let clarifyNotes: string[] = [];
+			const clarify: { gaps: ClarifyGap[]; asked: number } = { gaps: [], asked: 0 };
+			const plan = clarifyPlan({ goal, cases: confirmed }, state, caseKey(goal), { targets: clarifyTargets(ctx.cwd) }, lang);
+			if (asks && plan.ask && typeof askClarifyQuestion === "function" && Boolean(ctx.hasUI)) {
+				const asked = await askClarify((question) => askClarifyQuestion(ctx, { question: question.question, choices: question.options }), plan.questions, lang);
+				markClarify(state, caseKey(goal), Date.now());
+				clarify.gaps = plan.gaps;
+				clarify.asked = asked.asked;
+				if (Object.keys(asked.answers).length) {
+					const applied = applyAnswers({ goal, cases: confirmed }, asked.answers, lang);
+					askGoal = applied.goalText;
+					askCases = applied.cases;
+					sharpened = applied.cases;
+					clarifyNotes = applied.notes;
+				}
+				persist();
+			}
+
 			const askSeconds = Math.round(readConfirmTimeout(ctx.cwd) / 1000);
 			const refusal = (outcome: GoalAskOutcome, extra = "") => {
 				if (outcome !== "timeout" && outcome !== "declined")
@@ -218,15 +243,16 @@ export const registerTools = (ctx: HarnessContext) => {
 			};
 
 			if (asks) {
-				if (confirmed.length > GOAL_TOO_MANY_CASES)
-					return { content: [{ type: "text", text: tooManyCasesNote(confirmed.length) }], details: { goal, confirmed: false, cases: confirmed.length }, isError: true };
-				const outcome = await askGoalConfirm(ctx, goal, confirmed);
+				if (askCases.length > GOAL_TOO_MANY_CASES)
+					return { content: [{ type: "text", text: tooManyCasesNote(askCases.length) }], details: { goal, confirmed: false, cases: askCases.length, clarify }, isError: true };
+				const outcome = await askGoalConfirm(ctx, askGoal, askCases);
 				if (outcome !== "confirmed") return refusal(outcome);
 				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
+				if (clarifyNotes.length) state.decisions = clarifyNotes.map((note) => ({ at: Date.now(), from: "clarify", question: "the human made the intent concrete", assumption: note }));
 			}
 			const started = gate === "reopen" ? reopenGoal(previous as GoalRunState, cases, state.humanAt ?? 0) : resumeOrStart(previous, goal, Date.now(), cases);
-			const adopted = casesForGate(gate, cases, confirmed, started.cases ?? before);
+			const adopted = casesForGate(gate, sharpened ?? cases, sharpened ?? confirmed, started.cases ?? before);
 			state.goalDriver = adopted.length ? { ...started, cases: adopted } : started;
 			if (gate !== "resume" || !state.suiteAtStart) state.suiteAtStart = countSuite(ctx.cwd);
 			state.goalConsent = undefined;
@@ -254,6 +280,7 @@ export const registerTools = (ctx: HarnessContext) => {
 								...(gate === "reopen" ? [GOAL_UNCHANGED_NOTE, ""] : []),
 								"the goal is confirmed — work until every case holds, then call finisher_verify ONCE at the end:",
 								...next.map((c, i) => `  ${i + 1}. ${c}`),
+								...(clarifyNotes.length ? ["", "kept from the human's own answer, so they are never guessed again:", ...clarifyNotes.map((note) => `  ${note}`)] : []),
 								"",
 								"verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from a command the harness recorded, and each case's result lands in .finisher/checks — never in a new test file.",
 								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",
@@ -262,7 +289,7 @@ export const registerTools = (ctx: HarnessContext) => {
 						}),
 					},
 				],
-				details: { goal, cases: next, round: 0, resumed: gate === "reopen" ? "goal-unchanged" : gate },
+				details: { goal, cases: next, round: 0, resumed: gate === "reopen" ? "goal-unchanged" : gate, clarify },
 			};
 		},
 	}));

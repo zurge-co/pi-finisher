@@ -1,6 +1,7 @@
 import { Container, Key, Markdown, SelectList, Spacer, Text, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type OverlayOptions, type SelectItem } from "@earendil-works/pi-tui";
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createEscGuard } from "./esc-guard.ts";
+import { CLARIFY_PICK_HINT } from "./clarify-dialog.ts";
 import { panelize } from "./models.ts";
 import { type AskClarify, type AskRejectReason, type FinisherCustom, type FinisherPick, type ScrollKeyAction, type HarnessContext } from "./kit.ts";
 
@@ -117,5 +118,15 @@ export const createGui = (ctx: HarnessContext) => {
 		}, () => filter === "");
 	};
 
-	return { escGuard, escGuardUnsubscribe, finisherCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, finisherPick };
+	const askClarifyQuestion: AskClarify = (ctx, q) => {
+		const choices = (q.choices ?? []).map((choice) => String(choice ?? "").trim()).filter(Boolean);
+		if (!choices.length || typeof ctx.ui?.custom !== "function") return Promise.resolve(undefined);
+		const items = choices.map((choice) => ({ value: choice, label: choice }));
+		return finisherPick(ctx, q.question, items, CLARIFY_PICK_HINT).then(
+			(picked) => picked ?? undefined,
+			() => undefined,
+		);
+	};
+
+	return { escGuard, escGuardUnsubscribe, finisherCustom, OVERLAY_LG, OVERLAY_MD, OVERLAY_XL, scrollKeyAction, REJECT_WITH_REASON, askRejectReason, askClarifyQuestion, finisherPick };
 };

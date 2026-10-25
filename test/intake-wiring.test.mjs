@@ -9,11 +9,14 @@ const here = new URL("..", import.meta.url).pathname;
 
 const liveHarness = () => {
 	const handlers = {};
+	const tools = {};
 	const pi = {
 		on: (name, fn) => {
 			(handlers[name] ??= []).push(fn);
 		},
-		registerTool: () => {},
+		registerTool: (definition) => {
+			tools[definition.name] = definition;
+		},
 		registerCommand: () => {},
 		registerShortcut: () => {},
 		registerVirtualModel: () => {},
@@ -36,7 +39,7 @@ const liveHarness = () => {
 		}
 		return out ?? "";
 	};
-	return { call, prompt };
+	return { call, prompt, run: (name, input) => tools[name].execute("call-1", input, undefined, undefined, ctx) };
 };
 
 test("the running extension closes code exploration once the pre-goal budget is spent, and never before", async () => {
@@ -64,6 +67,22 @@ test("the pre-goal system prompt carries the draft goal and every drafted case, 
 	assert.match(text, /finisher_goal/);
 	assert.ok(text.includes("Ship the report page"), "the drafted goal is the human's own words");
 	assert.ok(text.includes("It must open from the HUD row"), "and so is every drafted case");
+});
+
+test("the goal tool asks its bounded clarify round before the confirm dialog, and never asks twice", () => {
+	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
+	assert.match(tools, /clarifyPlan\(\{ goal, cases: confirmed \}/, "the tool reads the gaps from the draft it is about to confirm");
+	assert.match(tools, /plan\.ask[\s\S]{0,600}?askClarifyQuestion\(/, "and asks before the human is shown anything");
+	assert.match(tools, /markClarify\(state, caseKey\(goal\)/, "the round is marked on the goal itself, so an unchanged goal never asks again");
+	assert.match(tools, /askGoalConfirm\(ctx, askGoal, askCases\)/, "the dialog receives the sharpened goal text and the sharpened cases");
+	assert.match(readFileSync(join(here, "extensions/finisher/src/gui.ts"), "utf8"), /askClarifyQuestion/, "and the session really provides the question dialog, not a stub");
+});
+
+test("a session with no dialog refuses the goal instead of waiting on a clarify question", async () => {
+	const harness = liveHarness();
+	const result = await harness.run("finisher_goal", { goal: "make it better", cases: [], lang: "en" });
+	assert.equal(result.details.outcome, "unavailable", "no UI means no dialog, and no invented confirmation");
+	assert.match(result.content[0].text, /no dialog/, "the refusal says why");
 });
 
 test("confirming a goal resets the intake budget, so a confirmed run explores freely", () => {
