@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import finisher from "../extensions/finisher/index.ts";
-import { INTAKE_GRACE_CALLS, intakeDirective } from "../extensions/finisher/index.ts";
+import { CLARIFY_MAX, INTAKE_GRACE_CALLS, intakeDirective } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 
-const liveHarness = () => {
+const liveHarness = (overrides = {}) => {
 	const handlers = {};
 	const tools = {};
 	const pi = {
@@ -23,7 +23,7 @@ const liveHarness = () => {
 		appendEntry: () => {},
 	};
 	finisher(pi);
-	const ctx = { cwd: process.cwd(), hasUI: false, mode: "headless", ui: { notify: () => {} }, sessionManager: { getEntries: () => [] } };
+	const ctx = { cwd: process.cwd(), hasUI: false, mode: "headless", ui: { notify: () => {} }, sessionManager: { getEntries: () => [] }, ...overrides };
 	const call = async (toolName, input = {}) => {
 		for (const handler of handlers.tool_call ?? []) {
 			const r = await handler({ toolName, input }, ctx);
@@ -89,4 +89,44 @@ test("confirming a goal resets the intake budget, so a confirmed run explores fr
 	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
 	assert.match(tools, /state\.goalDriver = adopted[\s\S]{0,400}state\.preGoalCalls = 0/, "the counter is reset where the goal is adopted, not somewhere else");
 	assert.equal(INTAKE_GRACE_CALLS > 0, true, "a zero budget would block the very first look at the repo");
+});
+
+const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text, dim: (text) => text, style: (text) => text, colors: {}, appearance: "dark" };
+
+const humanUi = (seen) => ({
+	cwd: process.cwd(),
+	hasUI: true,
+	mode: "tui",
+	ui: {
+		notify: () => {},
+		setWidget: () => {},
+		custom: (factory, options) =>
+			new Promise((resolve) => {
+				const handle = { setHidden: () => {}, hide: () => {}, isHidden: () => false, focus: () => {}, unfocus: () => {}, isFocused: () => true, getBounds: () => undefined };
+				options?.onHandle?.(handle);
+				const component = factory({ terminal: { rows: 40, columns: 120 }, requestRender: () => {} }, theme, () => "", resolve);
+				seen.push(component.render(120).join("\n"));
+				component.handleInput("\r");
+			}),
+	},
+	sessionManager: { getEntries: () => [{ type: "message", message: { role: "user" } }], getSessionId: () => "session-clarify" },
+});
+
+test("the real goal tool asks its bounded round first, and the confirm dialog is handed what the human sharpened", async () => {
+	const seen = [];
+	const vague = await liveHarness(humanUi(seen)).run("finisher_goal", { goal: "make it better", cases: ["it works"], lang: "en" });
+	assert.equal(vague.isError, undefined, "a vague goal is still confirmable: the ask sharpens it, it never gates it");
+	const questions = seen.slice(0, -1);
+	assert.ok(questions.length >= 1 && questions.length <= CLARIFY_MAX, `asked ${questions.length} questions, never more than the bound`);
+	for (const page of questions) assert.match(page, /as I said is enough/, "every question carries the escape, so the human can stop at any point");
+	const dialog = seen.at(-1);
+	assert.match(dialog, /make it better/, "the human's own words are still the goal they confirm");
+	assert.match(dialog, /it works/, "and the case they already gave is not lost on the way");
+	assert.match(dialog, /npm test exits 0/, "the observable the human picked reaches the dialog as a case the harness can check");
+
+	const quiet = [];
+	const sharp = await liveHarness(humanUi(quiet)).run("finisher_goal", { goal: "make the HUD ticker 20% faster in src/hud.ts", cases: ["npm test exits 0"], lang: "en" });
+	assert.equal(sharp.isError, undefined);
+	assert.equal(quiet.length, 1, "a goal that is already specific goes straight to the confirm dialog, asking nothing");
+	assert.match(quiet[0], /src\/hud\.ts/, "and that dialog shows the goal it was given");
 });
