@@ -6,30 +6,30 @@ const bash = (command, isError) => ({ name: "bash", args: { command }, isError }
 const rec = (...events) => events.reduce((calls, ev) => recordCall(calls, ev), []);
 
 test("a case is proven only by the command named for it — a claim, or another command's success, proves nothing", () => {
-	assert.equal(judgeChecks([], ["node probe.mjs"]).verdict, "UNVERIFIED", "the command never ran, so the case is not proven");
-	assert.equal(judgeChecks(rec(bash("npm test", false)), ["node probe.mjs"]).verdict, "UNVERIFIED", "a different command cannot answer for this case");
-	assert.equal(judgeChecks([], []).verdict, "UNVERIFIED", "no named command, no proof");
-	assert.equal(judgeChecks(rec(bash("node probe.mjs", false)), ["node probe.mjs"]).verdict, "PASS");
-	assert.equal(judgeChecks(rec(bash("node probe.mjs", true)), ["node probe.mjs"]).verdict, "FAIL", "the harness's own recording decides");
-	assert.match(judgeChecks(rec(bash("node probe.mjs", true)), ["node probe.mjs"]).reason ?? "", /exited non-zero/);
+	assert.equal(judgeChecks([], ["node check.mjs"]).result, "UNVERIFIED", "the command never ran, so the case is not proven");
+	assert.equal(judgeChecks(rec(bash("npm test", false)), ["node check.mjs"]).result, "UNVERIFIED", "a different command cannot answer for this case");
+	assert.equal(judgeChecks([], []).result, "UNVERIFIED", "no named command, no proof");
+	assert.equal(judgeChecks(rec(bash("node check.mjs", false)), ["node check.mjs"]).result, "PASS");
+	assert.equal(judgeChecks(rec(bash("node check.mjs", true)), ["node check.mjs"]).result, "FAIL", "the harness's own recording decides");
+	assert.match(judgeChecks(rec(bash("node check.mjs", true)), ["node check.mjs"]).reason ?? "", /exited non-zero/);
 });
 
 test("matching is exact after normalising whitespace, so no case can ride on a prefix or a lookalike", () => {
 	assert.equal(normalizeCommand("  npm   test \n -- x "), "npm test -- x");
 	const calls = rec(bash("npm   test", false));
-	assert.equal(judgeChecks(calls, ["npm test"]).verdict, "PASS", "whitespace differences are not a different command");
-	assert.equal(judgeChecks(calls, ["npm test -- --grep swarm"]).verdict, "UNVERIFIED", "a longer command is not what ran");
-	assert.equal(judgeChecks(calls, ["npm"]).verdict, "UNVERIFIED", "a prefix is not what ran");
-	assert.equal(judgeChecks(rec(bash("npm test", false)), ["npm test", "npm test"]).verdict, "PASS", "duplicates collapse");
+	assert.equal(judgeChecks(calls, ["npm test"]).result, "PASS", "whitespace differences are not a different command");
+	assert.equal(judgeChecks(calls, ["npm test -- --grep swarm"]).result, "UNVERIFIED", "a longer command is not what ran");
+	assert.equal(judgeChecks(calls, ["npm"]).result, "UNVERIFIED", "a prefix is not what ran");
+	assert.equal(judgeChecks(rec(bash("npm test", false)), ["npm test", "npm test"]).result, "PASS", "duplicates collapse");
 });
 
 test("a case with several named commands needs all of them, and the last status of each decides", () => {
 	let calls = rec(bash("node a.mjs", true), bash("node a.mjs", false), bash("node b.mjs", false));
-	assert.equal(judgeChecks(calls, ["node a.mjs"]).verdict, "PASS", "the re-run succeeded, so the case holds");
-	assert.equal(judgeChecks(calls, ["node a.mjs", "node b.mjs"]).verdict, "PASS");
-	assert.equal(judgeChecks(calls, ["node a.mjs", "node c.mjs"]).verdict, "UNVERIFIED", "one missing command is enough to leave it unproven");
+	assert.equal(judgeChecks(calls, ["node a.mjs"]).result, "PASS", "the re-run succeeded, so the case holds");
+	assert.equal(judgeChecks(calls, ["node a.mjs", "node b.mjs"]).result, "PASS");
+	assert.equal(judgeChecks(calls, ["node a.mjs", "node c.mjs"]).result, "UNVERIFIED", "one missing command is enough to leave it unproven");
 	calls = recordCall(calls, bash("node b.mjs", true));
-	assert.equal(judgeChecks(calls, ["node a.mjs", "node b.mjs"]).verdict, "FAIL", "a later failure still wins");
+	assert.equal(judgeChecks(calls, ["node a.mjs", "node b.mjs"]).result, "FAIL", "a later failure still wins");
 	assert.deepEqual(recordedFailures(calls).map((c) => c.command), ["node b.mjs"]);
 	assert.deepEqual([...finalStatus(calls)].sort(), [["node a.mjs", true], ["node b.mjs", false]], "the judgement is exactly the set of commands the harness watched");
 });

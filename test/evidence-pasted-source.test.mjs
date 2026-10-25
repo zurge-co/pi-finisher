@@ -7,7 +7,7 @@ import { anchoredCommand, extractCommands as extractRaw, judgeCase as judgeRaw, 
 const SRC = "extensions/finisher/src";
 const files = [...readdirSync(SRC).filter((f) => f.endsWith(".ts")).map((f) => join(SRC, f)), "extensions/finisher/index.ts"];
 
-const block = (body, verdict = "VERDICT: PASS") => `EVIDENCE:\n${body}${verdict ? `\n${verdict}` : ""}`;
+const block = (body, result = "RESULT: PASS") => `EVIDENCE:\n${body}${result ? `\n${result}` : ""}`;
 const extractCommands = (body) => extractRaw(block(body, ""));
 const judgeCase = (id, body) => judgeRaw(id, block(body));
 
@@ -18,7 +18,7 @@ test("no line of the real tree can become a status line while also being pasted 
 	for (const file of files) {
 		for (const line of readFileSync(file, "utf8").split("\n")) {
 			checked += 1;
-			assert.equal(/\bexit(?:ed)?(?:\s*(?:code|status))?\s*[:=]?\s*-?\d{1,3}\b/i.test(line) && !pastedSource(line) && !/VERDICT/.test(line), false, `${file}: ${line}`);
+			assert.equal(/\bexit(?:ed)?(?:\s*(?:code|status))?\s*[:=]?\s*-?\d{1,3}\b/i.test(line) && !pastedSource(line) && !/RESULT/.test(line), false, `${file}: ${line}`);
 		}
 	}
 	assert.ok(checked > 1000, `the property must hold over the whole tree, not a sample (checked ${checked})`);
@@ -29,7 +29,7 @@ test("a command in front of a pasted status report still counts as a command, so
 		const commands = extractCommands(text);
 		assert.equal(commands.length, 1, text);
 		assert.equal(commands[0].exitCode, 0, text);
-		assert.equal(judgeRaw("c1", block(text)).verdict, "PASS", text);
+		assert.equal(judgeRaw("c1", block(text)).result, "PASS", text);
 	}
 });
 
@@ -38,7 +38,7 @@ test("a dump line is inert even when it opens with a command name and carries it
 		assert.equal(pastedSource(dump), true, dump);
 		assert.equal(anchoredCommand(dump), false, dump);
 		assert.deepEqual(extractCommands(dump), [], dump);
-		assert.equal(judgeRaw("c1", block(dump)).verdict, "UNVERIFIED", dump);
+		assert.equal(judgeRaw("c1", block(dump)).result, "UNVERIFIED", dump);
 	}
 });
 
@@ -51,12 +51,12 @@ test("an indented status still belongs to the command above it, so the guard doe
 	}
 });
 
-test("no line of the real tree can make a verifier verdict fail", () => {
+test("no line of the real tree can make a verifier result fail", () => {
 	let checked = 0;
 	for (const file of files) {
 		for (const line of readFileSync(file, "utf8").split("\n")) {
 			checked += 1;
-			assert.notEqual(judgeRaw("c1", block(line)).verdict, "FAIL", `${file}: ${line}`);
+			assert.notEqual(judgeRaw("c1", block(line)).result, "FAIL", `${file}: ${line}`);
 		}
 	}
 	assert.ok(checked > 1000, `the property must hold over the whole tree, not a sample (checked ${checked})`);
@@ -77,25 +77,25 @@ test("a pasted source dump is never read as a failed command, in either dump for
 	for (const [format, dump] of Object.entries(dumps)) {
 		assert.equal(extractCommands(dump).filter((c) => c.command.startsWith("(unowned status)")).length, 0, format);
 		assert.equal(extractCommands(dump).filter((c) => typeof c.exitCode === "number").length, 0, format);
-		assert.notEqual(judgeCase("m2", `${dump}\nVERDICT: PASS`).verdict, "FAIL", format);
+		assert.notEqual(judgeCase("m2", `${dump}\nRESULT: PASS`).result, "FAIL", format);
 	}
 });
 
 test("a command never borrows the status printed inside a pasted dump a few lines below it", () => {
 	const texts = [
-		"`npm test`\n        const state = { exitCode: 1 };\nVERDICT: PASS",
-		"`npm test`\n        patch({ exitCode: 1 });\nVERDICT: PASS",
-		"`npm test`\n   134\t\t\tstate.exitCode = 1\nVERDICT: PASS",
-		"`npm test`\n    npm ci && exit 1\nVERDICT: PASS",
-		"`npm test`\n    npm test exit 1\nVERDICT: PASS",
-		"`npm test`\n    node --test a.test.mjs   exit 1\nVERDICT: PASS",
-		"`npm test`\n    go test ./... exit 1\nVERDICT: PASS",
+		"`npm test`\n        const state = { exitCode: 1 };\nRESULT: PASS",
+		"`npm test`\n        patch({ exitCode: 1 });\nRESULT: PASS",
+		"`npm test`\n   134\t\t\tstate.exitCode = 1\nRESULT: PASS",
+		"`npm test`\n    npm ci && exit 1\nRESULT: PASS",
+		"`npm test`\n    npm test exit 1\nRESULT: PASS",
+		"`npm test`\n    node --test a.test.mjs   exit 1\nRESULT: PASS",
+		"`npm test`\n    go test ./... exit 1\nRESULT: PASS",
 	];
 	for (const text of texts) {
 		assert.ok(extractCommands(text).every((c) => c.exitCode === undefined), text);
-		const verdict = judgeCase("c1", text).verdict;
-		assert.notEqual(verdict, "FAIL", text);
-		assert.equal(verdict, "UNVERIFIED", `a status nobody reported for this command proves nothing: ${text}`);
+		const result = judgeCase("c1", text).result;
+		assert.notEqual(result, "FAIL", text);
+		assert.equal(result, "UNVERIFIED", `a status nobody reported for this command proves nothing: ${text}`);
 	}
 });
 
@@ -104,6 +104,6 @@ test("a status on a line of its own still belongs to the command above it, inden
 		const commands = extractRaw(block(`npm test\n${status}`, ""));
 		assert.equal(commands.length, 1, status);
 		assert.notEqual(commands[0].exitCode, undefined, status);
-		assert.notEqual(judgeRaw("c1", block(`npm test\n${status}`)).verdict, "UNVERIFIED", status);
+		assert.notEqual(judgeRaw("c1", block(`npm test\n${status}`)).result, "UNVERIFIED", status);
 	}
 });

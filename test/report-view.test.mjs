@@ -58,7 +58,7 @@ const fresh = (body) => {
 
 test("the real report page draws the whole file at every width: nothing is cut, only wrapped", async () => {
 	const body = [
-		"verdict: ทุกเคสมีคำสั่งที่พิสูจน์แล้ว",
+		"result: ทุกเคสมีคำสั่งที่พิสูจน์แล้ว",
 		"",
 		"case one  npm test -- report-view.test.mjs  (exit 0)",
 		"บรรทัดภาษาไทยที่ยาวมากและต้องไม่ถูกตัดกลางคำ ".repeat(6),

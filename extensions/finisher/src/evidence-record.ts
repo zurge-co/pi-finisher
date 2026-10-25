@@ -1,4 +1,4 @@
-import { type CaseVerdict } from "./evidence.ts";
+import { type CaseResult } from "./evidence.ts";
 
 export interface RecordedCall {
 	command: string;
@@ -7,7 +7,7 @@ export interface RecordedCall {
 }
 
 export interface CaseJudgement {
-	verdict: CaseVerdict;
+	result: CaseResult;
 	reason?: string;
 }
 
@@ -32,12 +32,12 @@ export const normalizeCommand = (command: string): string => command.replace(/\s
 
 export const judgeChecks = (calls: RecordedCall[], required: string[]): CaseJudgement => {
 	const wanted = [...new Set(required.map(normalizeCommand).filter(Boolean))];
-	if (!wanted.length) return { verdict: "UNVERIFIED", reason: "no command was named for this case — a case with no executed check proves nothing" };
+	if (!wanted.length) return { result: "UNVERIFIED", reason: "no command was named for this case — a case with no executed check proves nothing" };
 	const status = new Map<string, boolean>();
 	for (const c of calls) status.set(normalizeCommand(c.command), c.ok);
 	const missing = wanted.filter((w) => !status.has(w));
-	if (missing.length) return { verdict: "UNVERIFIED", reason: `the harness never recorded \`${missing[0]}\` running — a case with no executed command is not proven` };
+	if (missing.length) return { result: "UNVERIFIED", reason: `the harness never recorded \`${missing[0]}\` running — a case with no executed command is not proven` };
 	const failed = wanted.filter((w) => status.get(w) === false);
-	if (failed.length) return { verdict: "FAIL", reason: `\`${failed[0]}\` exited non-zero in the harness recording` };
-	return { verdict: "PASS" };
+	if (failed.length) return { result: "FAIL", reason: `\`${failed[0]}\` exited non-zero in the harness recording` };
+	return { result: "PASS" };
 };

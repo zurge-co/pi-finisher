@@ -166,14 +166,14 @@ export const detectTestCommand = (readFile: (p: string) => string | undefined): 
 	}
 };
 
-export const parseWorkerTests = (out: string): { verdict: "PASS" | "FAIL" | "SKIP"; detail: string } | undefined => {
+export const parseWorkerTests = (out: string): { result: "PASS" | "FAIL" | "SKIP"; detail: string } | undefined => {
 	for (const line of out.split("\n")) {
 		const t = line.trim();
 		const i = t.indexOf(TEST_MARKER);
 		if (i < 0) continue;
 		const rest = t.slice(i + TEST_MARKER.length).trim();
-		const verdict = rest.toUpperCase().startsWith("PASS") ? "PASS" : rest.toUpperCase().startsWith("FAIL") ? "FAIL" : rest.toUpperCase().startsWith("SKIP") ? "SKIP" : undefined;
-		if (verdict) return { verdict, detail: rest.slice(verdict.length).replace(/^[\s—:-]+/, "").trim() };
+		const result = rest.toUpperCase().startsWith("PASS") ? "PASS" : rest.toUpperCase().startsWith("FAIL") ? "FAIL" : rest.toUpperCase().startsWith("SKIP") ? "SKIP" : undefined;
+		if (result) return { result, detail: rest.slice(result.length).replace(/^[\s—:-]+/, "").trim() };
 	}
 	return undefined;
 };

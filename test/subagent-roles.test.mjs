@@ -50,7 +50,7 @@ test("a coder cannot re-enter the harness — every finisher tool is excluded by
 	for (const harness of HARNESS_TOOLS) assert.ok(excluded.includes(harness), `${harness} must be excluded, or a coder could spawn coders or verify itself`);
 	assert.ok(!excluded.includes("bash"), "a coder must run commands — that is how it works");
 	assert.ok(!excluded.includes("write") && !excluded.includes("edit"), "a coder writes, or it cannot do its job");
-	assert.equal(excluded.includes("finisher_verdict"), false, "there is no verdict tool any more: verification is main's job");
+	assert.equal(excluded.includes("finisher_result"), false, "there is no result tool any more: verification is main's job");
 });
 
 test("the coder CAN write, because code mode works by editing files in its own worktree", () => {

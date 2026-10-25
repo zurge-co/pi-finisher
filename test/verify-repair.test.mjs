@@ -13,30 +13,30 @@ import {
 
 test("a report that says nothing usable is repaired, never read as a failed case", () => {
 	const unusable = [
-		judgeCase("c1", "I looked at the change and it seems fine.\nVERDICT: PASS"),
-		judgeCase("c2", "EVIDENCE:\nVERDICT: PASS"),
-		judgeCase("c3", "node probe.mjs\nVERDICT: PASS"),
-		judgeCase("c4", "EVIDENCE:\n$ node probe.mjs → exit 0\n$ node probe.mjs → exit 1\nVERDICT: PASS"),
+		judgeCase("c1", "I looked at the change and it seems fine.\nRESULT: PASS"),
+		judgeCase("c2", "EVIDENCE:\nRESULT: PASS"),
+		judgeCase("c3", "node check.mjs\nRESULT: PASS"),
+		judgeCase("c4", "EVIDENCE:\n$ node check.mjs → exit 0\n$ node check.mjs → exit 1\nRESULT: PASS"),
 	];
 	for (const c of unusable) assert.equal(unusableCase(c), true, `${c.caseId}: ${c.reason}`);
-	assert.equal(isDeclaredFailure(unusable[3]), false, "a self-contradictory verdict is a report problem, so it is asked for once more before it counts");
+	assert.equal(isDeclaredFailure(unusable[3]), false, "a self-contradictory result is a report problem, so it is asked for once more before it counts");
 	for (const c of unusable.slice(0, 3)) assert.equal(isDeclaredFailure(c), false, "a missing status must not be blamed on the code");
 	assert.deepEqual(unusableCases(buildReport(unusable)).map((c) => c.caseId), ["c1", "c2", "c3", "c4"]);
 });
 
-test("a real verdict is never repaired: pass, a declared failure, or an honestly unprovable case", () => {
-	const pass = judgeCase("c1", "EVIDENCE:\n$ node probe.mjs → exit 0\nVERDICT: PASS");
-	const fail = judgeCase("c2", "EVIDENCE:\n$ node probe.mjs → exit 1\nVERDICT: FAIL — the bound leaks");
-	const human = judgeCase("c3", "VERDICT: UNVERIFIED — only a human can see the animation");
+test("a real result is never repaired: pass, a declared failure, or an honestly unprovable case", () => {
+	const pass = judgeCase("c1", "EVIDENCE:\n$ node check.mjs → exit 0\nRESULT: PASS");
+	const fail = judgeCase("c2", "EVIDENCE:\n$ node check.mjs → exit 1\nRESULT: FAIL — the bound leaks");
+	const human = judgeCase("c3", "RESULT: UNVERIFIED — only a human can see the animation");
 	assert.deepEqual(unusableCases(buildReport([pass, fail, human])), []);
-	assert.equal(pass.verdict, "PASS");
-	assert.equal(fail.verdict, "FAIL");
-	assert.equal(human.verdict, "UNVERIFIED");
+	assert.equal(pass.result, "PASS");
+	assert.equal(fail.result, "FAIL");
+	assert.equal(human.result, "UNVERIFIED");
 	assert.equal(isDeclaredFailure(human), false, "a human-only case is not a failure to fix");
 });
 
 test("the repair note tells the verifier how to fix the report, and never asks it to change the repo", () => {
-	const note = repairNote([judgeCase("c1", "no evidence\nVERDICT: PASS")], "wrap it");
+	const note = repairNote([judgeCase("c1", "no evidence\nRESULT: PASS")], "wrap it");
 	assert.match(note, /FORMAT problem, not a code problem/);
 	assert.match(note, /EVIDENCE:/);
 	assert.match(note, /do not change the repo/);

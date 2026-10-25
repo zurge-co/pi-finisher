@@ -73,7 +73,7 @@ test("closing laps in order is what unlocks verification, exactly once", () => {
 test("a failing verify appends fix laps without reopening work that is already done", () => {
 	const plan = declarePlan(["one"], 0);
 	const closed = completeLap(plan, undefined, 2_000);
-	const report = { cases: [{ caseId: "c1", verdict: "FAIL", reason: "exit 1", commands: [] }], allPass: false, unverified: [], failed: ["c1"] };
+	const report = { cases: [{ caseId: "c1", result: "FAIL", reason: "exit 1", commands: [] }], allPass: false, unverified: [], failed: ["c1"] };
 	const grown = appendPhases(closed, fixPhases(report), 1, 3_000);
 	assert.equal(totalPhases(grown), 2, "the fix adds exactly one lap");
 	assert.equal(grown.lap, closed.lap, "appending never moves the lap pointer");
@@ -107,7 +107,7 @@ test("the phase tool refuses to close a lap that is not current, and says which 
 
 test("a plan that grows from a first-round failure is never left without a current lap", () => {
 	const opened = { goalDriver: freshGoalRun("ship it", 1_000) };
-	const failing = buildReport([judgeCase("c1", evidence('$ node -e "run()"\nexit code 1\nVERDICT: FAIL'))]);
+	const failing = buildReport([judgeCase("c1", evidence('$ node -e "run()"\nexit code 1\nRESULT: FAIL'))]);
 	const step = nextGoalDriverStep(opened.goalDriver, failing, 3, 5_000);
 	assert.equal(step.action, "replan");
 	opened.goalDriver = step.state;

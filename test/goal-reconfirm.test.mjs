@@ -30,7 +30,7 @@ const closedRun = (over = {}) => ({
 	...over,
 });
 
-const unproven = (caseId) => ({ caseId, verdict: "UNVERIFIED", commands: [], reason: "no command was named for this case — a case with no executed check is not proven" });
+const unproven = (caseId) => ({ caseId, result: "UNVERIFIED", commands: [], reason: "no command was named for this case — a case with no executed check is not proven" });
 
 test("an unchanged goal is resumed without a new confirmation, even after the run closed", () => {
 	const prev = closedRun();
@@ -84,14 +84,14 @@ test("a command named with a truncated case id still binds to its case, and an a
 	const cases = ["the lap clock ticks on every lap", "the pit split is exact to the millisecond", "the HUD shows the lap counter", "the HUD shows the pit timer"];
 	const claims = caseClaims([
 		{ id: "the lap clock ticks…", command: "npm test -- lap" },
-		{ id: "THE   PIT split is exact", command: "node probe.mjs" },
+		{ id: "THE   PIT split is exact", command: "node check.mjs" },
 		{ id: "the HUD shows…", command: "nonsense" },
 		{ id: "no such case anywhere", human: true },
 		{ id: "the HUD shows the lap counter", human: true, note: "look at the top border" },
 	]);
 	const bound = bindClaims(cases, claims);
 	assert.equal(bound.commands.get(cases[0]), "npm test -- lap", "a truncated id binds when exactly one case starts with it");
-	assert.equal(bound.commands.get(cases[1]), "node probe.mjs", "whitespace and case differences are not a different case");
+	assert.equal(bound.commands.get(cases[1]), "node check.mjs", "whitespace and case differences are not a different case");
 	assert.deepEqual([...bound.human.keys()], [cases[2]], "the human check binds to its own case");
 	assert.equal(bound.human.get(cases[2]), "look at the top border", "and carries what the human should look at");
 	assert.deepEqual(bound.unbound.map((u) => u.id), ["the HUD shows…", "no such case anywhere"], "an id that fits two cases, and an id that fits none, are never guessed");
@@ -144,7 +144,7 @@ test("an unproven case that only lacked a command becomes a fix lap, not a human
 test("a human check is reported apart and never counted as a failure", () => {
 	const passing = judgeDeterministic(["c1"], new Map([["c1", "npm test -- lap"]]), [{ command: "npm test -- lap", ok: true }], []);
 	const human = judgeDeterministic(["c2"], new Map(), [], [], undefined, new Map([["c2", "look at the top border"]]));
-	assert.equal(human[0].verdict, "HUMAN");
+	assert.equal(human[0].result, "HUMAN");
 	const report = buildReport([...passing, ...human]);
 	assert.deepEqual(report.humanChecks, ["c2"]);
 	assert.deepEqual(report.unverified, [], "a human check is not unproven");

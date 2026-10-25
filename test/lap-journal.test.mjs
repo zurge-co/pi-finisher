@@ -24,8 +24,8 @@ const gap = (extra = {}) =>
 		round: 1,
 		lap: 4,
 		laps: 5,
-		added: ["fix c1 FAIL — `node probe.mjs` exited 1"],
-		cases: [{ id: "c1", verdict: "FAIL", reason: "`node probe.mjs` exited 1" }],
+		added: ["fix c1 FAIL — `node check.mjs` exited 1"],
+		cases: [{ id: "c1", result: "FAIL", reason: "`node check.mjs` exited 1" }],
 		models: ["p/m", "p/m"],
 		...extra,
 	});
@@ -52,7 +52,7 @@ test("a record is bounded and carries no file contents, so the journal stays sma
 		goal: "g".repeat(2_000),
 		repo: "/r".repeat(500),
 		added: Array.from({ length: 40 }, (_, i) => `lap ${i}`),
-		cases: Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, verdict: "FAIL", reason: "x".repeat(2_000) })),
+		cases: Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, result: "FAIL", reason: "x".repeat(2_000) })),
 		models: Array.from({ length: 20 }, (_, i) => `m/${i}`),
 	});
 	const json = JSON.stringify(long);
@@ -71,9 +71,9 @@ test("junk lines are skipped and only real records count, so a truncated write c
 
 test("the digest names why laps were added: themes over every case, ranked, with the repeat reason", () => {
 	const records = [
-		gap({ cases: [{ id: "c1", verdict: "FAIL", reason: "`npm test` exited 1" }, { id: "c2", verdict: "UNVERIFIED", reason: "no command was run — a claim without executed evidence proves nothing" }] }),
-		gap({ cases: [{ id: "c3", verdict: "UNVERIFIED", reason: "no command was run — a claim without executed evidence proves nothing" }] }),
-		gap({ cases: [{ id: "c4", verdict: "BLOCKED", reason: "the verifier never produced a verdict — sub-agent rpc error" }] }),
+		gap({ cases: [{ id: "c1", result: "FAIL", reason: "`npm test` exited 1" }, { id: "c2", result: "UNVERIFIED", reason: "no command was run — a claim without executed evidence proves nothing" }] }),
+		gap({ cases: [{ id: "c3", result: "UNVERIFIED", reason: "no command was run — a claim without executed evidence proves nothing" }] }),
+		gap({ cases: [{ id: "c4", result: "BLOCKED", reason: "the verifier never produced a result — sub-agent rpc error" }] }),
 		doneRecord({ repo: "/repo/one", goal: "ship the race HUD", rounds: 2, laps: 6, outcome: "halted" }),
 	];
 	const summary = summarizeGaps(records);
@@ -94,9 +94,9 @@ test("every gap reason lands on a theme, so nothing is silently uncounted", () =
 		["the verifier could not exercise the change directly", "unproven (cannot exercise)"],
 		["the check never produced output — TIMEOUT 600s", "unrunnable check"],
 		["the harness never recorded `npm test` running — a case with no executed command is not proven", "unproven (no command)"],
-		["the verdict says PASS but `x` exited 1 — the report contradicts itself", "contradiction"],
+		["the result says PASS but `x` exited 1 — the report contradicts itself", "contradiction"],
 		["the run changed the working tree while proving it", "wrote the repo while proving it"],
-		["`node probe.mjs` exited 1", "real failure"],
+		["`node check.mjs` exited 1", "real failure"],
 		["something new", "other"],
 		[undefined, "no reason given"],
 	];
@@ -115,7 +115,7 @@ test("a record that is only half there is skipped, so a foreign or hand-edited l
 		'{"kind":"gap"}',
 		'{"kind":"gap","at":2,"goal":"g"}',
 		'{"kind":"gap","at":3,"repo":"r","goal":"g","round":1,"lap":2,"laps":3,"added":"not-an-array","cases":[]}',
-		'{"kind":"gap","at":4,"repo":"r","goal":"g","round":1,"lap":2,"laps":3,"added":[],"cases":[{"id":5,"verdict":null}]}',
+		'{"kind":"gap","at":4,"repo":"r","goal":"g","round":1,"lap":2,"laps":3,"added":[],"cases":[{"id":5,"result":null}]}',
 		'{"kind":"done","at":5,"repo":"r","goal":"g","rounds":1,"laps":3,"outcome":"verified"}',
 		'{"kind":"done"}',
 	];

@@ -216,26 +216,26 @@ export const judgeDeterministic = (
 		if (broke.length)
 			return {
 				caseId,
-				verdict: "FAIL" as const,
+				result: "FAIL" as const,
 				commands: [],
 				reason: `the deterministic check \`${broke[0].command}\` exited ${broke[0].exitCode} — a repo that does not pass its own checks cannot satisfy a case`,
 			};
 		if (human?.has(caseId))
 			return {
 				caseId,
-				verdict: "HUMAN" as const,
+				result: "HUMAN" as const,
 				commands: [],
 				reason: `${human.get(caseId) || "this one is the human's to check"} — reported at the end, never counted as a failure`,
 			};
 		const command = commands.get(caseId);
 		if (!command)
-			return { caseId, verdict: "UNVERIFIED" as const, commands: [], reason: "no command was named for this case — a case with no executed check is not proven" };
+			return { caseId, result: "UNVERIFIED" as const, commands: [], reason: "no command was named for this case — a case with no executed check is not proven" };
 		const recorded = judgeChecks(calls, [command]);
-		if (recorded.verdict !== "UNVERIFIED" || !run) return { caseId, verdict: recorded.verdict, commands: [], ...(recorded.reason ? { reason: recorded.reason } : {}) };
+		if (recorded.result !== "UNVERIFIED" || !run) return { caseId, result: recorded.result, commands: [], ...(recorded.reason ? { reason: recorded.reason } : {}) };
 		const ran = run(command);
 		return {
 			caseId,
-			verdict: ran.exitCode === 0 ? ("PASS" as const) : ("FAIL" as const),
+			result: ran.exitCode === 0 ? ("PASS" as const) : ("FAIL" as const),
 			commands: [],
 			reason: ran.exitCode === 0 ? undefined : `\`${command}\` exited ${ran.exitCode} when the harness ran it: ${ran.tail.split("\n").slice(-3).join(" ")}`,
 		};
@@ -265,7 +265,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			"Name one command per case (cases: [{ id, command }]) that actually exercises it. A case with no recorded command is UNVERIFIED — never claim PASS for it.",
 			"A case only the human can check is separated, not failed: pass { id, human: true, note } and it is listed in the report for them at the end.",
 			"If the deterministic stage fails, fix the cause and call it again: the failing check is quoted back to you.",
-			"A not-passing verdict hands the next loop back to you: fix it, use finisher_swarm to get coders working in parallel, then verify again.",
+			"A not-passing result hands the next loop back to you: fix it, use finisher_swarm to get coders working in parallel, then verify again.",
 			"Do not spawn a sub-agent to verify — you are the verifier, and the harness records what you actually ran.",
 		],
 		parameters: Type.Object({
@@ -346,7 +346,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 							lap: Math.min(plan.length, Math.max(1, state.goalDriver.lap ?? 1)),
 							laps: plan.length,
 							added: plan.slice((before.phases ?? []).length).map((ph) => ph.text),
-							cases: report.cases.map((c) => ({ id: c.caseId, verdict: c.verdict, ...(c.reason ? { reason: c.reason } : {}) })),
+							cases: report.cases.map((c) => ({ id: c.caseId, result: c.result, ...(c.reason ? { reason: c.reason } : {}) })),
 							models: [],
 							outcome: step.action,
 						}),

@@ -9,7 +9,7 @@ const freshCwd = () => mkdtempSync(join(tmpdir(), "finisher-report-"));
 
 const input = (body, over = {}) => ({ goal: "ship the race HUD", outcome: "verified", at: 1_700_000_000_000, laps: 3, round: 2, body, ...over });
 
-test("a written report always leads with its verdict and never grows past its byte ceiling", () => {
+test("a written report always leads with its result and never grows past its byte ceiling", () => {
 	const bodies = ["the whole run, short", "x".repeat(300 * 1024), "บรรทัดภาษาไทยที่ยาว\n".repeat(20_000), ""];
 	for (const body of bodies) {
 		const cwd = freshCwd();
@@ -20,7 +20,7 @@ test("a written report always leads with its verdict and never grows past its by
 		const text = readReportFile(meta.path);
 		assert.equal(meta.bytes, statSync(meta.path).size, "the byte count is the file on disk");
 		assert.ok(Buffer.byteLength(text, "utf8") <= REPORT_MAX_BYTES, `a body of ${body.length} chars still fits the ceiling`);
-		assert.match(text, /^# finisher report — verified\n/, "the verdict is the first line, never truncated away");
+		assert.match(text, /^# finisher report — verified\n/, "the result is the first line, never truncated away");
 		assert.match(text, /goal: ship the race HUD/);
 		assert.match(text, /laps: 3 · round: 2/);
 		assert.match(text, /written: 2023-11-14T22:13:20.000Z/);

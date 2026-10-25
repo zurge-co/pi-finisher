@@ -10,7 +10,7 @@ export interface EvidenceCommand {
 	ranAt?: number;
 }
 
-export type CaseVerdict = "PASS" | "FAIL" | "UNVERIFIED" | "BLOCKED" | "HUMAN";
+export type CaseResult = "PASS" | "FAIL" | "UNVERIFIED" | "BLOCKED" | "HUMAN";
 
 export const INFRA_MARKERS: ReadonlyArray<RegExp> = [
 	/sub-agent rpc error/i,
@@ -27,16 +27,16 @@ export const INFRA_MARKERS: ReadonlyArray<RegExp> = [
 export const infraFailure = (output: string): string | undefined => {
 	for (const line of output.split("\n")) {
 		if (!INFRA_MARKERS.some((m) => m.test(line))) continue;
-		if (/VERDICT:\s*(PASS|FAIL|UNVERIFIED)/i.test(line)) continue;
+		if (/RESULT:\s*(PASS|FAIL|UNVERIFIED)/i.test(line)) continue;
 		return line.trim().slice(0, 200);
 	}
 	return undefined;
 };
 
-export const declaredVerdict = (output: string): CaseVerdict | undefined => {
-	const matches = [...output.matchAll(/VERDICT:\s*(PASS|FAIL|UNVERIFIED)\b/gi)];
+export const declaredResult = (output: string): CaseResult | undefined => {
+	const matches = [...output.matchAll(/RESULT:\s*(PASS|FAIL|UNVERIFIED)\b/gi)];
 	if (!matches.length) return undefined;
-	return matches[matches.length - 1][1].toUpperCase() as CaseVerdict;
+	return matches[matches.length - 1][1].toUpperCase() as CaseResult;
 };
 
 export const COMMAND_BINARIES = ["npm", "npx", "pnpm", "yarn", "bun", "deno", "node", "python", "python3", "pytest", "go", "cargo", "make", "tsc", "vitest", "jest", "npx"] as const;
@@ -173,7 +173,7 @@ const exitFor = (lines: string[], index: number, cand: Candidate): number | unde
 };
 
 export const EVIDENCE_MARKER = /^[\s#>*_`\-]*EVIDENCE[\s*_`]*:?[\s*_`]*$/i;
-const VERDICT_LINE = /^\s*VERDICT\s*:/i;
+const RESULT_LINE = /^\s*RESULT\s*:/i;
 
 export const evidenceRegion = (output: string): string => {
 	const lines = output.split("\n");
@@ -181,7 +181,7 @@ export const evidenceRegion = (output: string): string => {
 	if (start < 0) return output;
 	let end = lines.length;
 	for (let i = start + 1; i < lines.length; i++)
-		if (VERDICT_LINE.test(lines[i])) {
+		if (RESULT_LINE.test(lines[i])) {
 			end = i;
 			break;
 		}
@@ -192,7 +192,7 @@ export const extractCommands = (output: string): EvidenceCommand[] => {
 	const named = new Map<string, EvidenceCommand>();
 	const region = evidenceRegion(output);
 	const declared = region !== output;
-	if (!declared && declaredVerdict(output)) return [];
+	if (!declared && declaredResult(output)) return [];
 	const lines = region.split("\n");
 	for (let i = 0; i < lines.length; i++) {
 		if (OUTPUT_INDENT.test(lines[i])) continue;

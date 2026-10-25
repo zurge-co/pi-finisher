@@ -57,7 +57,7 @@ export const HANDOFF_ASK_PROMPT = (from: string, text: string): string =>
 		text.slice(0, 4_000),
 	].join("\n");
 
-export const parseHandoffVerdict = (out: string): { keep: boolean; reason: string } | undefined => {
+export const parseHandoffResult = (out: string): { keep: boolean; reason: string } | undefined => {
 	const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
 	const head = lines[0]?.toUpperCase() ?? "";
 	if (head.startsWith("KEEP")) return { keep: true, reason: lines[1] ?? "" };
@@ -66,7 +66,7 @@ export const parseHandoffVerdict = (out: string): { keep: boolean; reason: strin
 };
 
 export const handoffAskLine = (from: string, keep: boolean): string =>
-	`handoff: ${keep ? "kept" : "dropped"} a ${from} note (chat model verdict)`;
+	`handoff: ${keep ? "kept" : "dropped"} a ${from} note (chat model result)`;
 
 export type HandoffRoute =
 	| { kind: "classifier"; provider: string; id: string }

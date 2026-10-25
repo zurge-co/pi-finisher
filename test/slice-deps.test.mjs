@@ -78,10 +78,10 @@ test("the test command is detected from package.json, and a project without one 
 	assert.equal(detectTestCommand(() => "{not json"), undefined);
 });
 
-test("a worker's test verdict is read, and an unclear line is not a verdict", () => {
-	assert.deepEqual(parseWorkerTests("TESTS: PASS all green"), { verdict: "PASS", detail: "all green" });
-	assert.deepEqual(parseWorkerTests("TESTS: FAIL scheduler bound broke"), { verdict: "FAIL", detail: "scheduler bound broke" });
-	assert.deepEqual(parseWorkerTests("TESTS: SKIP no test script"), { verdict: "SKIP", detail: "no test script" });
+test("a worker's test result is read, and an unclear line is not a result", () => {
+	assert.deepEqual(parseWorkerTests("TESTS: PASS all green"), { result: "PASS", detail: "all green" });
+	assert.deepEqual(parseWorkerTests("TESTS: FAIL scheduler bound broke"), { result: "FAIL", detail: "scheduler bound broke" });
+	assert.deepEqual(parseWorkerTests("TESTS: SKIP no test script"), { result: "SKIP", detail: "no test script" });
 	assert.equal(parseWorkerTests("TESTS: maybe"), undefined);
 	assert.equal(parseWorkerTests("no marker here"), undefined);
 });

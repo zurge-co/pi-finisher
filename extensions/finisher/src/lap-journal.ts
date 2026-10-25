@@ -12,7 +12,7 @@ export const journalPath = (home = homedir()): string => join(globalFinisherDir(
 
 export interface GapCase {
 	id: string;
-	verdict: string;
+	result: string;
 	reason?: string;
 }
 
@@ -66,7 +66,7 @@ export const gapRecord = (input: {
 	lap: input.lap,
 	laps: input.laps,
 	added: input.added.map((t) => clip(t)).slice(0, 12),
-	cases: input.cases.slice(0, 24).map((c) => ({ id: clip(c.id, 80), verdict: clip(c.verdict, 20), ...(c.reason ? { reason: clip(c.reason, 300) } : {}) })),
+	cases: input.cases.slice(0, 24).map((c) => ({ id: clip(c.id, 80), result: clip(c.result, 20), ...(c.reason ? { reason: clip(c.reason, 300) } : {}) })),
 	...(input.models?.filter((m): m is string => !!m)?.length ? { models: [...new Set(input.models.filter((m): m is string => !!m))].slice(0, 8) } : {}),
 	...(input.outcome ? { outcome: clip(input.outcome, 40) } : {}),
 });
@@ -103,7 +103,7 @@ export const isGap = (r: unknown): r is LapGap => {
 		typeof g.repo === "string" &&
 		Array.isArray(g.added) &&
 		Array.isArray(g.cases) &&
-		g.cases.every((c) => typeof c?.id === "string" && typeof c?.verdict === "string")
+		g.cases.every((c) => typeof c?.id === "string" && typeof c?.result === "string")
 	);
 };
 
@@ -137,9 +137,9 @@ export const readJournal = (home = homedir()): JournalRecord[] => {
 };
 
 export const GAP_THEMES: { theme: string; match: RegExp }[] = [
-	{ theme: "unproven (no command)", match: /\b(no command was run|never declared a verdict|no command reports|never recorded|no command was named)\b/i },
+	{ theme: "unproven (no command)", match: /\b(no command was run|never declared a result|no command reports|never recorded|no command was named)\b/i },
 	{ theme: "unproven (cannot exercise)", match: /\b(could not exercise|cannot be exercised|needs a human)\b/i },
-	{ theme: "unrunnable check", match: /\b(never produced a verdict|blocked|rpc error|timeout)\b/i },
+	{ theme: "unrunnable check", match: /\b(never produced a result|blocked|rpc error|timeout)\b/i },
 	{ theme: "contradiction", match: /\b(contradicts|contradiction)\b/i },
 	{ theme: "wrote the repo while proving it", match: /\bchanged the working tree\b/i },
 	{ theme: "real failure", match: /(exited [1-9]|exited with code [1-9])/i },

@@ -8,7 +8,7 @@ import { checkLine, detectChecks, failingChecks, judgeDeterministic, runCheck, r
 const repo = (scripts) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-checks-"));
 	mkdirSync(join(dir, "scripts"), { recursive: true });
-	writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "probe", scripts }));
+	writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "check", scripts }));
 	return dir;
 };
 
@@ -39,19 +39,19 @@ test("a check that hangs is cut by its deadline instead of holding the tool fore
 
 test("a broken check must fail every case even when the commands were recorded: a repo that does not pass its own checks cannot satisfy a case", () => {
 	const cases = ["c1", "c2"];
-	const calls = [{ command: "node probe.mjs", ok: true }];
-	const commands = new Map([["c1", "node probe.mjs"], ["c2", "node other.mjs"]]);
+	const calls = [{ command: "node check.mjs", ok: true }];
+	const commands = new Map([["c1", "node check.mjs"], ["c2", "node other.mjs"]]);
 	const green = judgeDeterministic(cases, commands, calls, [{ name: "test", command: "npm run --silent test", exitCode: 0, tail: "" }]);
-	assert.deepEqual(green.map((c) => c.verdict), ["PASS", "UNVERIFIED"], "with the checks green the recording decides each case on its own command");
+	assert.deepEqual(green.map((c) => c.result), ["PASS", "UNVERIFIED"], "with the checks green the recording decides each case on its own command");
 	const red = judgeDeterministic(cases, commands, calls, [{ name: "test", command: "npm run --silent test", exitCode: 1, tail: "1 failing" }]);
-	assert.deepEqual(red.map((c) => c.verdict), ["FAIL", "FAIL"], "a failing check fails every case, whatever the recording says");
+	assert.deepEqual(red.map((c) => c.result), ["FAIL", "FAIL"], "a failing check fails every case, whatever the recording says");
 	assert.match(red[0].reason ?? "", /exited 1/);
 	assert.equal(buildReport(red).allPass, false);
 });
 
 test("a case is never proven by a command it did not name, and an unnamed case stays unverified", () => {
 	const evidence = judgeDeterministic(["c1", "c2"], new Map([["c1", "node a.mjs"]]), [{ command: "node a.mjs", ok: true }], []);
-	assert.deepEqual(evidence.map((c) => [c.caseId, c.verdict]), [["c1", "PASS"], ["c2", "UNVERIFIED"]]);
+	assert.deepEqual(evidence.map((c) => [c.caseId, c.result]), [["c1", "PASS"], ["c2", "UNVERIFIED"]]);
 	assert.match(evidence[1].reason ?? "", /no command was named/);
 });
 
@@ -63,7 +63,7 @@ test("the case claims are read defensively: junk ids and empty claims are droppe
 });
 
 test("the summary says what the deterministic stage did and what each case came to", () => {
-	const report = buildReport([{ caseId: "c1", verdict: "PASS", commands: [] }, { caseId: "c2", verdict: "UNVERIFIED", commands: [], reason: "no recording" }]);
+	const report = buildReport([{ caseId: "c1", result: "PASS", commands: [] }, { caseId: "c2", result: "UNVERIFIED", commands: [], reason: "no recording" }]);
 	const text = verifySummaryLines([{ name: "typecheck", command: "npm run --silent typecheck", exitCode: 0, tail: "" }, { name: "test", command: "npm run --silent test", exitCode: 1, tail: "boom" }], report).join("\n");
 	assert.match(text, /typecheck ok/);
 	assert.match(text, /test FAILED \(1\)/);
@@ -99,24 +99,24 @@ const session = (opts = {}) => {
 };
 
 test("the goal loop survives on main alone: a failing verify re-arms the round, and a proven one finishes the goal", async () => {
-	const s = session({ cwd: repo({ test: "node -e \"process.exit(process.env.PROBE ? 0 : 1)\"" }) });
-	await s.run("finisher_goal", { goal: "ship it", cases: ["the probe passes"] });
+	const s = session({ cwd: repo({ test: "node -e \"process.exit(process.env.CHECK ? 0 : 1)\"" }) });
+	await s.run("finisher_goal", { goal: "ship it", cases: ["the check passes"] });
 	assert.equal(s.box.get().goalDriver.goal, "ship it");
-	await s.run("finisher_phase", { plan: ["make the probe pass"] });
+	await s.run("finisher_phase", { plan: ["make the check pass"] });
 
-	const blocked = await s.run("finisher_verify", { cases: [{ id: "the probe passes", command: "npm test" }] });
+	const blocked = await s.run("finisher_verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 	assert.equal(blocked.isError, true, "an open lap blocks verification, so a stale verify can never pass a goal early");
 	assert.deepEqual(s.rounds, [], "and it does not arm a round either");
 
 	await s.run("finisher_phase", { done: true });
-	const failing = await s.run("finisher_verify", { cases: [{ id: "the probe passes", command: "npm test" }] });
+	const failing = await s.run("finisher_verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 	assert.equal(failing.isError, true, "the deterministic check really failed in a real repo");
 	assert.equal(existsSync(join(s.ctx.cwd, ".finisher", "report.md")), false, "a goal that is still open leaves no report behind");
 	assert.equal(s.rounds.length, 1, "a failing verify hands the round back to main — the loop is alive");
 	assert.match(failing.content[0].text, /LAP/i, "and it tells main which lap to work next");
 	assert.ok((s.box.get().goalDriver.phases ?? []).length >= 2, "a fix lap was appended to the plan");
 
-	process.env.PROBE = "1";
+	process.env.CHECK = "1";
 	try {
 		for (let i = 0; i < 8 && !(s.box.get().goalDriver.phases ?? []).every((p) => p) === false; i++) {
 			const before = s.box.get().goalDriver.lap ?? 0;
@@ -124,24 +124,24 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 			if ((s.box.get().goalDriver.lap ?? 0) === before) break;
 		}
 		s.box.get().verifyCalls = [{ command: "npm test", ok: true }];
-		const passing = await s.run("finisher_verify", { cases: [{ id: "the probe passes", command: "npm test" }] });
+		const passing = await s.run("finisher_verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 		const driver = s.box.get().goalDriver;
 		assert.ok(driver.doneAt, "with the check green and the command recorded, the goal finishes — the loop is not dead");
 		assert.equal(driver.outcome, "verified");
 		assert.equal(passing.isError, undefined);
 		const written = readFileSync(join(s.ctx.cwd, ".finisher", "report.md"), "utf8");
 		assert.match(written, /^# finisher report — verified/, "closing the goal writes the report the HUD offers to open");
-		assert.match(written, /the probe passes/, "and it carries the case the run was proven against");
+		assert.match(written, /the check passes/, "and it carries the case the run was proven against");
 		assert.equal(s.box.get().lastReport.outcome, "verified", "the state keeps the meta the HUD reads");
 		assert.equal(s.box.get().lastReport.path, join(s.ctx.cwd, ".finisher", "report.md"));
 	} finally {
-		delete process.env.PROBE;
+		delete process.env.CHECK;
 	}
 });
 
 test("a case with no named command stays UNVERIFIED even on a green suite — a green suite is not proof of a case", async () => {
 	const s = session({ cwd: repo({ test: "node -e \"process.exit(0)\"" }) });
-	await s.run("finisher_goal", { goal: "ship it", cases: ["the probe passes"] });
+	await s.run("finisher_goal", { goal: "ship it", cases: ["the check passes"] });
 	await s.run("finisher_phase", { plan: ["make it pass"] });
 	await s.run("finisher_phase", { done: true });
 	const out = await s.run("finisher_verify", { cases: [] });
@@ -151,8 +151,8 @@ test("a case with no named command stays UNVERIFIED even on a green suite — a 
 	assert.notEqual(s.box.get().goalDriver.outcome, "verified", "an unproven case can never be recorded as a verified goal");
 	assert.equal(s.box.get().goalDriver.outcome, undefined, "an unproven case is a repair lap, not the end of the goal — the goal is never closed and never re-confirmed for it");
 	assert.equal(s.box.get().goalDriver.phases.length, 2, "the closed plan gains exactly one fix lap — the goal is not closed and not re-confirmed for it");
-	assert.match(s.box.get().goalDriver.phases[1].text, /the probe passes/, "and that lap names the case in the human's own words");
-	assert.ok(s.box.get().goalDriver.phases[1].text.startsWith("the probe passes"), "the lap leads with the case text the report will name, so it binds back");
+	assert.match(s.box.get().goalDriver.phases[1].text, /the check passes/, "and that lap names the case in the human's own words");
+	assert.ok(s.box.get().goalDriver.phases[1].text.startsWith("the check passes"), "the lap leads with the case text the report will name, so it binds back");
 
 	await s.run("finisher_phase", { done: true });
 	const again = await s.run("finisher_verify", { cases: [] });
@@ -160,7 +160,7 @@ test("a case with no named command stays UNVERIFIED even on a green suite — a 
 	assert.match(again.content[0].text, /no command was named/);
 	assert.equal(s.box.get().goalDriver.outcome, undefined, "the same gap twice is still a fix lap, never a halt: naming nothing changes nothing, but the round budget is what ends it");
 	assert.equal(s.box.get().goalDriver.phases.length, 3, "the second gap buys a second fix lap, aimed at the same case");
-	assert.ok(s.box.get().goalDriver.phases[2].text.startsWith("the probe passes"), "and it names that case the same way the first one did");
+	assert.ok(s.box.get().goalDriver.phases[2].text.startsWith("the check passes"), "and it names that case the same way the first one did");
 });
 
 test("a named command the harness has not recorded yet is RUN by the harness — the exit code is the evidence, never a claim", () => {
@@ -172,12 +172,12 @@ test("a named command the harness has not recorded yet is RUN by the harness —
 		return { name: command, command, exitCode: 0, tail: "" };
 	});
 	assert.deepEqual(ran, ["node -e \"process.exit(0)\""], "the harness ran exactly the command the case named");
-	assert.equal(pass[0].verdict, "PASS");
+	assert.equal(pass[0].result, "PASS");
 	const failed = judgeDeterministic(cases, commands, [], [], (command) => {
 		ran.push(command);
 		return { name: command, command, exitCode: 3, tail: "boom" };
 	});
-	assert.equal(failed[0].verdict, "FAIL", "a command that exits non-zero fails the case");
+	assert.equal(failed[0].result, "FAIL", "a command that exits non-zero fails the case");
 	assert.match(failed[0].reason ?? "", /exited 3/);
 });
 
@@ -189,9 +189,9 @@ test("a recorded command outranks running it again: the recording decides, and a
 		return { name: "x", command: "npm test", exitCode: 0, tail: "" };
 	});
 	assert.equal(ran, 0, "the harness already watched it fail, so it is not re-run and re-judged");
-	assert.equal(fromRecording[0].verdict, "FAIL");
+	assert.equal(fromRecording[0].result, "FAIL");
 	const ok = judgeDeterministic(["c1"], commands, [{ command: "npm test", ok: true }], []);
-	assert.equal(ok[0].verdict, "PASS");
+	assert.equal(ok[0].result, "PASS");
 });
 
 test("a check that hangs is cut when the harness runs a case command, so verify can never hang on a case", () => {

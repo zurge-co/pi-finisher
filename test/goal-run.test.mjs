@@ -70,13 +70,13 @@ test("a missing or broken config degrades to the plain surface instead of throwi
 
 test("the single end report names every case with the evidence that decided it", async () => {
 	const { buildReport, freshGoalRun, judgeCase, nextGoalDriverStep } = await import("../extensions/finisher/index.ts");
-	const cases = [judgeCase("c1", evidence("$ npm test\nexit code 0\nVERDICT: PASS")), judgeCase("c2", evidence("$ npx tsc --noEmit\nexit code 1\nVERDICT: FAIL")), judgeCase("c3", evidence("looks fine to me"))];
+	const cases = [judgeCase("c1", evidence("$ npm test\nexit code 0\nRESULT: PASS")), judgeCase("c2", evidence("$ npx tsc --noEmit\nexit code 1\nRESULT: FAIL")), judgeCase("c3", evidence("looks fine to me"))];
 	let state = freshGoalRun("ship it");
 	let step = nextGoalDriverStep(state, buildReport(cases));
 	const seen = [step];
 	for (let i = 0; i < 5 && step.action === "replan"; i++) {
-		const again = cases.map((c) => (c.caseId === "c2" ? judgeCase("c2", evidence("$ npx tsc --noEmit\nexit code 1\nVERDICT: FAIL")) : c));
-		step = nextGoalDriverStep(step.state, buildReport(again.map((c, n) => (c.verdict === "UNVERIFIED" ? judgeCase(c.caseId, evidence(`$ npm test -- --round${i}${n}\nexit code 0\nVERDICT: PASS`)) : c))));
+		const again = cases.map((c) => (c.caseId === "c2" ? judgeCase("c2", evidence("$ npx tsc --noEmit\nexit code 1\nRESULT: FAIL")) : c));
+		step = nextGoalDriverStep(step.state, buildReport(again.map((c, n) => (c.result === "UNVERIFIED" ? judgeCase(c.caseId, evidence(`$ npm test -- --round${i}${n}\nexit code 0\nRESULT: PASS`)) : c))));
 		seen.push(step);
 	}
 	const last = seen[seen.length - 1];
@@ -90,7 +90,7 @@ test("no code path can stop a run for cost: the only bounds are evidence and rou
 	const driverSrc = await import("node:fs").then((fs) => fs.readFileSync(new URL("../extensions/finisher/src/goal-driver.ts", import.meta.url), "utf8"));
 	assert.doesNotMatch(driverSrc, /maxTokens|costLimit|budget|tokenCeiling|maxCost/i, "the driver must not read a cost budget");
 	assert.doesNotMatch(driverSrc, /tokensUsed|tokensUsed\s*[<>]/, "the driver must not gate on tokens used");
-	const healthy = Array.from({ length: MAX_LOOP_BATCHES + 1 }, (_, i) => judgeCase("c1", evidence(`$ npm test -- --r${i}\nexit code 1\nVERDICT: FAIL`)));
+	const healthy = Array.from({ length: MAX_LOOP_BATCHES + 1 }, (_, i) => judgeCase("c1", evidence(`$ npm test -- --r${i}\nexit code 1\nRESULT: FAIL`)));
 	let state = freshGoalRun("expensive goal");
 	const actions = healthy.map((c) => {
 		const step = nextGoalDriverStep(state, buildReport([c]));

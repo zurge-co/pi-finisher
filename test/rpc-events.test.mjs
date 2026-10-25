@@ -42,7 +42,7 @@ test("the first terminal signal wins: a late settle cannot rewrite an outcome th
 
 test("a dead child ends the wait without waiting out the budget, and the reason names the exit", async () => {
 	let exited = false;
-	const wait = waitForRun(manual().subscribe, { deadlineMs: 60_000, probeMs: 5, probe: () => (exited ? childExitReason(1, null, "boom") : undefined) });
+	const wait = waitForRun(manual().subscribe, { deadlineMs: 60_000, pollMs: 5, poll: () => (exited ? childExitReason(1, null, "boom") : undefined) });
 	exited = true;
 	const t0 = Date.now();
 	const outcome = await wait.done;

@@ -138,10 +138,10 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 						return { ok: false, output: `your slice added tests that can never fail — delete them or assert a real law, then report FILES: again\n${formatTestFindings(weakTests)}` };
 					}
 					const tests = parseWorkerTests(r.output);
-					if (tests?.verdict === "FAIL")
-						return { ok: false, output: `your slice reports ${tests.verdict}: ${tests.detail || "(no reason given)"} — fix the failure in your checkout, re-run the tests, then report TESTS: and FILES: again` };
+					if (tests?.result === "FAIL")
+						return { ok: false, output: `your slice reports ${tests.result}: ${tests.detail || "(no reason given)"} — fix the failure in your checkout, re-run the tests, then report TESTS: and FILES: again` };
 					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
-					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output, ...(tests ? { tests: tests.verdict } : {}), ...(task.payload?.dependsOn?.length ? { dependsOn: task.payload.dependsOn } : {}) });
+					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output, ...(tests ? { tests: tests.result } : {}), ...(task.payload?.dependsOn?.length ? { dependsOn: task.payload.dependsOn } : {}) });
 					return { ok: true, output: r.output };
 				} finally {
 					dropWorkerWorktree(ctx.cwd, plan.worktreeDir, plan.branch);

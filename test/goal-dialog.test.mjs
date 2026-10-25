@@ -311,7 +311,7 @@ test("a verify run can never name, rename or re-case the goal it verifies", asyn
 		askGoalConfirm: async () => "confirmed",
 		runCodeSwarm: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
 		armGoalRound: () => {},
-		launchSubagent: async (_ctx, role) => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [{ command: "node x.mjs", ok: true }], ...(role === "verifier" ? { verdict: { verdict: "PASS", why: "it holds" } } : {}) }),
+		launchSubagent: async (_ctx, role) => ({ ok: true, output: "", logPath: "/tmp/x.log", calls: [{ command: "node x.mjs", ok: true }], ...(role === "verifier" ? { result: { result: "PASS", why: "it holds" } } : {}) }),
 	});
 	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-verify-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
 	const run = (name, params) => defs.find((d) => d.name === name).execute("1", params, undefined, undefined, ctx);

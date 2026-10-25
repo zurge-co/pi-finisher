@@ -7,7 +7,7 @@ const gateway = (prob, opts = {}) => ({
 	classify: async () => opts.throws ? Promise.reject(new Error("boom")) : { answers: { keep: { type: "bool", probability: prob } }, stopReason: opts.stopReason ?? "stop" },
 });
 
-test("a classifier verdict decides the handoff, and a low probability drops the note", async () => {
+test("a classifier result decides the handoff, and a low probability drops the note", async () => {
 	assert.equal((await decideKeep(gateway(0.92), { from: "swarm", text: "the merge refuses two slices on one path, so split by file" })).keep, true);
 	const dropped = await decideKeep(gateway(0.04), { from: "swarm", text: "the merge refuses two slices on one path, so split by file" });
 	assert.equal(dropped.keep, false);

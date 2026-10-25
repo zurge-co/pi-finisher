@@ -107,20 +107,20 @@ export const REMEDY_SEP = " — ";
 
 const remedyTail = (reason: string | undefined): string => (reason ? reason.replace(/\s+/g, " ").trim().slice(0, REMEDY_TAIL_MAX) : "");
 
-export const remedyFor = (verdict: string, reason?: string): string => {
+export const remedyFor = (result: string, reason?: string): string => {
 	const tail = remedyTail(reason);
-	if (verdict === "FAIL") return tail ? `fix this — ${tail}` : "fix this";
-	if (verdict === "BLOCKED") return "make this runnable — a case that never produced output proves nothing";
+	if (result === "FAIL") return tail ? `fix this — ${tail}` : "fix this";
+	if (result === "BLOCKED") return "make this runnable — a case that never produced output proves nothing";
 	return "name one command that exercises this case and make it exit 0";
 };
 
-export const fixLapText = (caseId: string, verdict: string, reason?: string): string => `${caseId}${REMEDY_SEP}${remedyFor(verdict, reason)}`;
+export const fixLapText = (caseId: string, result: string, reason?: string): string => `${caseId}${REMEDY_SEP}${remedyFor(result, reason)}`;
 
 export const fixPhases = (report: VerifyReport): string[] => {
 	const byId = new Map(report.cases.map((c) => [c.caseId, c]));
 	const lap = (caseId: string): string => {
 		const c = byId.get(caseId);
-		return fixLapText(caseId, c?.verdict ?? "UNVERIFIED", c?.reason);
+		return fixLapText(caseId, c?.result ?? "UNVERIFIED", c?.reason);
 	};
 	return [...report.failed, ...report.unverified, ...(report.blocked ?? [])].map(lap);
 };

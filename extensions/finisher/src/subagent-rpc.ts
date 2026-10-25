@@ -10,7 +10,7 @@ export type { RunEvent, WaitOutcome, WaitWatchers } from "./rpc-events.ts";
 
 const RPC_CALL_MS = 60_000;
 export const START_TIMEOUT_MS = 60_000;
-export const CHILD_PROBE_MS = 1_000;
+export const CHILD_POLL_MS = 1_000;
 
 const boundedCall = <T>(run: Promise<T>, label: string, ms: number, onTimeout: () => T): Promise<T> =>
 	settleWithTimeout(run, ms, label, onTimeout);
@@ -101,7 +101,7 @@ export const toolLineFromEvent = (ev: JsonAgentSessionEvent): string | undefined
 
 export const startRpcClient = async (client: RpcClient, timeoutMs: number = START_TIMEOUT_MS): Promise<TimeoutResult<void>> => withTimeout(client.start(), timeoutMs, "rpc start");
 
-export const childExitProbe = (client: RpcClient): string | undefined => {
+export const childExitPoll = (client: RpcClient): string | undefined => {
 	const proc = (client as unknown as { process?: { exitCode?: number | null; signalCode?: string | null } }).process;
 	const code = proc?.exitCode;
 	if (code === null || code === undefined) return undefined;
@@ -219,7 +219,7 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 						if (isSettledEvent(ev) || isChildExitEvent(ev)) onEvent(ev);
 					},
 				),
-			{ deadlineMs: opts.timeoutMs, signal: opts.signal, probe: () => childExitProbe(client), probeMs: CHILD_PROBE_MS },
+			{ deadlineMs: opts.timeoutMs, signal: opts.signal, poll: () => childExitPoll(client), pollMs: CHILD_POLL_MS },
 		);
 		const disposition = await boundedCall(client.prompt(opts.prompt), `rpc prompt (${opts.role})`, RPC_CALL_MS, () => "queued").catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
 		if (promptRefused(disposition)) {

@@ -29,7 +29,7 @@ const clipTo = (text, max) => {
 	return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
 };
 
-const VERDICTS = ["FAIL", "UNVERIFIED", "BLOCKED"];
+const RESULTS = ["FAIL", "UNVERIFIED", "BLOCKED"];
 
 const caselist = (n) => Array.from({ length: n }, (_, i) => `case ${i + 1}: the ${i + 1}${i === 0 ? "st" : i === 1 ? "nd" : i === 2 ? "rd" : "th"} thing the human asked for holds for every input`);
 
@@ -37,9 +37,9 @@ const mixReport = (cases) =>
 	buildReport(
 		cases.map((caseId, i) => ({
 			caseId,
-			verdict: VERDICTS[i % VERDICTS.length],
+			result: RESULTS[i % RESULTS.length],
 			commands: [],
-			reason: `${VERDICTS[i % VERDICTS.length]} because of ${i}`,
+			reason: `${RESULTS[i % RESULTS.length]} because of ${i}`,
 		})),
 	);
 
@@ -110,7 +110,7 @@ test("the tracker on disk keeps the human's goal and every case whole — only t
 });
 
 test("a report gap is a fix lap every round until the bound — only the round budget stops it", () => {
-	const report = buildReport([{ caseId: "c1", verdict: "UNVERIFIED", commands: [], reason: "no command was named for this case" }]);
+	const report = buildReport([{ caseId: "c1", result: "UNVERIFIED", commands: [], reason: "no command was named for this case" }]);
 	let attempts = freshAttempts();
 	for (let round = 0; round < MAX_LOOP_BATCHES; round++) {
 		assert.equal(decideOnce(report, attempts).kind, "replan", `round ${round + 1} keeps working`);
@@ -122,11 +122,11 @@ test("a report gap is a fix lap every round until the bound — only the round b
 test("a fix lap still names its case after the plan and the tracker clip it — at any case length, a two-letter id included", () => {
 	const cases = ["c1", "it stops", caselist(9)[8], "x".repeat(140) + " holds"];
 	for (const caseId of cases) {
-		const [lap] = fixPhases(buildReport([{ caseId, verdict: "FAIL", commands: [], reason: "`node probe.mjs` exited 1: boom" }]));
+		const [lap] = fixPhases(buildReport([{ caseId, result: "FAIL", commands: [], reason: "`node check.mjs` exited 1: boom" }]));
 		const plan = makePhases([lap], 1, 1_000);
 		for (const step of stepsOf({ phases: plan, lap: 1, lapAt: 0, lapMs: [] })) {
 			assert.ok(step.text.length <= TRACKER_STEP_MAX, "the tracker keeps its own bound");
-			const bound = bindClaims(cases, [{ id: step.text, command: "node probe.mjs", human: false }]);
+			const bound = bindClaims(cases, [{ id: step.text, command: "node check.mjs", human: false }]);
 			assert.deepEqual(bound.unbound, [], `the tracker's own lap line names a case: ${step.text}`);
 			assert.deepEqual([...bound.commands.keys()], [caseId], `and names exactly the case it was written for: ${step.text}`);
 		}
@@ -136,10 +136,10 @@ test("a fix lap still names its case after the plan and the tracker clip it — 
 test("a case that carries the harness's own separators is never cut before it is matched", () => {
 	const cases = ["ship it | the report is written", "ship it | the log is clean", "the run — every lap — is journaled", "the run — every lap — is counted"];
 	for (const caseId of cases) {
-		const [lap] = fixPhases(buildReport([{ caseId, verdict: "UNVERIFIED", commands: [], reason: "no command was named" }]));
-		const bound = bindClaims(cases, [{ id: lap, command: "node probe.mjs", human: false }]);
+		const [lap] = fixPhases(buildReport([{ caseId, result: "UNVERIFIED", commands: [], reason: "no command was named" }]));
+		const bound = bindClaims(cases, [{ id: lap, command: "node check.mjs", human: false }]);
 		assert.deepEqual([...bound.commands.keys()], [caseId], `a separator inside the case is the case's own text: ${lap}`);
 	}
-	const bare = bindClaims(["the clock ticks", "the clock ticks and the lap number moves"], [{ id: "clock", command: "node probe.mjs", human: false }]);
+	const bare = bindClaims(["the clock ticks", "the clock ticks and the lap number moves"], [{ id: "clock", command: "node check.mjs", human: false }]);
 	assert.deepEqual(bare.unbound.map((u) => u.id), ["clock"], "a fragment that is not a case is still never guessed");
 });

@@ -22,20 +22,20 @@ export interface WaitOutcome {
 export interface WaitWatchers {
 	deadlineMs: number;
 	signal?: AbortSignal;
-	probe?: () => string | undefined;
-	probeMs?: number;
+	poll?: () => string | undefined;
+	pollMs?: number;
 }
 
 export const waitForRun = (subscribe: (onEvent: (ev: JsonAgentSessionEvent) => void) => () => void, watchers: WaitWatchers): { done: Promise<WaitOutcome>; stop: () => void } => {
 	let unsubscribe: () => void = () => {};
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	let probeTimer: ReturnType<typeof setInterval> | undefined;
+	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	let onAbort: (() => void) | undefined;
 	let settle: (o: WaitOutcome) => void = () => {};
 	let finished = false;
 	const stop = (): void => {
 		if (timer) clearTimeout(timer);
-		if (probeTimer) clearInterval(probeTimer);
+		if (pollTimer) clearInterval(pollTimer);
 		if (onAbort && watchers.signal) watchers.signal.removeEventListener("abort", onAbort);
 		unsubscribe();
 	};
@@ -51,11 +51,11 @@ export const waitForRun = (subscribe: (onEvent: (ev: JsonAgentSessionEvent) => v
 			else if (isChildExitEvent(ev)) settle({ kind: "exited", why: (ev as { why?: string }).why ?? "the sub-agent process exited before it settled" });
 		});
 		timer = setTimeout(() => settle({ kind: "deadline" }), Math.max(1, watchers.deadlineMs));
-		if (watchers.probe) {
-			probeTimer = setInterval(() => {
-				const why = watchers.probe?.();
+		if (watchers.poll) {
+			pollTimer = setInterval(() => {
+				const why = watchers.poll?.();
 				if (why) settle({ kind: "exited", why });
-			}, Math.max(250, watchers.probeMs ?? 1_000));
+			}, Math.max(250, watchers.pollMs ?? 1_000));
 		}
 		if (watchers.signal) {
 			if (watchers.signal.aborted) settle({ kind: "cancelled" });

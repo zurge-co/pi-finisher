@@ -53,7 +53,7 @@ const stateWith = (meta) => {
 
 test("the report row opens the report page, and the goal row still opens the goal page", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "finisher-report-click-"));
-	const meta = writeReportFile(cwd, { goal: "ship the race HUD", outcome: "verified", at: 62_000, laps: 1, round: 1, body: "# verdict\n✓ every case" });
+	const meta = writeReportFile(cwd, { goal: "ship the race HUD", outcome: "verified", at: 62_000, laps: 1, round: 1, body: "# result\n✓ every case" });
 	const box = stateWith(meta);
 	const opened = [];
 	const { component, click } = harness(box, opened);

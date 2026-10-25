@@ -188,7 +188,7 @@ export const GOAL_DECLINED_NOTE =
 
 export const unconfirmedGoalNote = (allPass: boolean): string =>
 	[
-		`no goal was confirmed, so this run did not drive one — the verdict below is the evidence, and nothing was recorded as the goal:`,
+		`no goal was confirmed, so this run did not drive one — the result below is the evidence, and nothing was recorded as the goal:`,
 		allPass
 			? `every case passed on its own evidence. Present this to the human and call finisher_goal with the goal they want; that dialog is the only thing that turns a case list into a goal.`
 			: `at least one case did not pass. Fix the real cause, verify again, and only call finisher_goal once the human is there to confirm the goal.`,

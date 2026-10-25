@@ -64,7 +64,7 @@ export const registerCommands = (ctx: HarnessContext) => {
 				const records = readJournal();
 				const summary = summarizeGaps(records);
 				const path = journalPath();
-				ctx.ui.notify([`▚ extra-lap journal — ${path}`, ...summaryLines(summary), summary.lastAt ? `last recorded: ${new Date(summary.lastAt).toISOString()}` : "", "every replan is appended as one JSON line there: goal, round, lap n/n, the added fix laps, and each case verdict with its reason."].filter(Boolean).join("\n"), "info");
+				ctx.ui.notify([`▚ extra-lap journal — ${path}`, ...summaryLines(summary), summary.lastAt ? `last recorded: ${new Date(summary.lastAt).toISOString()}` : "", "every replan is appended as one JSON line there: goal, round, lap n/n, the added fix laps, and each case result with its reason."].filter(Boolean).join("\n"), "info");
 				return;
 			}
 			if (sub !== "models") return ctx.ui.notify("usage: /finisher models | /finisher gaps", "info");

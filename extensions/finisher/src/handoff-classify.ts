@@ -30,8 +30,8 @@ export const preferenceRefs = (preference: readonly string[] = CLASSIFIER_PREFER
 export const decideKeep = async (gateway: ClassifierGateway | undefined, opts: { from: string; text: string; preference?: readonly string[]; threshold?: number; chatAsk?: ChatAsk }): Promise<KeepDecision> => {
 	if (!isWorthKeeping(opts.text)) return { keep: false, why: "too-thin" };
 	if (opts.chatAsk) {
-		const verdict = await opts.chatAsk(opts.from, opts.text).catch(() => undefined);
-		return verdict ? { keep: verdict.keep, why: "chat" } : { keep: false, why: "classifier-error" };
+		const result = await opts.chatAsk(opts.from, opts.text).catch(() => undefined);
+		return result ? { keep: result.keep, why: "chat" } : { keep: false, why: "classifier-error" };
 	}
 	if (!gateway) return { keep: false, why: "no-classifier" };
 	const model = await gateway.available(opts.preference ?? CLASSIFIER_PREFERENCE);
@@ -50,11 +50,11 @@ export const decideKeep = async (gateway: ClassifierGateway | undefined, opts: {
 
 export const describeDecision = (d: KeepDecision, from: string): string => {
 	if (d.why === "too-thin") return `handoff: dropped a ${from} note (too thin to carry)`;
-	if (d.why === "no-classifier") return `handoff: dropped a ${from} note (no classifier with credentials — nothing is kept without a verdict)`;
+	if (d.why === "no-classifier") return `handoff: dropped a ${from} note (no classifier with credentials — nothing is kept without a result)`;
 	if (d.why === "classifier-error") return `handoff: dropped a ${from} note (the handoff model failed, so the note stays unvetted)`;
-	if (d.why === "chat") return `handoff: ${d.keep ? "kept" : "dropped"} a ${from} note (chat model verdict)`;
-	const verdict = d.keep ? "kept" : "dropped";
-	return `handoff: ${verdict} a ${from} note (classifier p=${d.probability?.toFixed(2) ?? "?"})`;
+	if (d.why === "chat") return `handoff: ${d.keep ? "kept" : "dropped"} a ${from} note (chat model result)`;
+	const result = d.keep ? "kept" : "dropped";
+	return `handoff: ${result} a ${from} note (classifier p=${d.probability?.toFixed(2) ?? "?"})`;
 };
 
 export interface ClassifierRegistryLike {

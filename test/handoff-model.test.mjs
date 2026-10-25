@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	HANDOFF_KEY,
-	parseHandoffVerdict,
+	parseHandoffResult,
 	readHandoffModel,
 	routeHandoffModel,
 	splitHandoffPattern,
@@ -65,12 +65,12 @@ test("no configured slot routes to none — the caller then falls back to a pi c
 	assert.match(handoffRouteNote({ kind: "none", why: "unset" }), /no model configured/);
 });
 
-test("the chat verdict is read from the first line, and anything else is not a verdict", () => {
-	assert.deepEqual(parseHandoffVerdict("KEEP\nit changes what the next task does"), { keep: true, reason: "it changes what the next task does" });
-	assert.deepEqual(parseHandoffVerdict("drop"), { keep: false, reason: "" });
-	assert.equal(parseHandoffVerdict("maybe?"), undefined, "an ambiguous answer is not a keep");
-	assert.equal(parseHandoffVerdict(""), undefined);
-	assert.equal(parseHandoffVerdict("  \n  "), undefined);
+test("the chat result is read from the first line, and anything else is not a result", () => {
+	assert.deepEqual(parseHandoffResult("KEEP\nit changes what the next task does"), { keep: true, reason: "it changes what the next task does" });
+	assert.deepEqual(parseHandoffResult("drop"), { keep: false, reason: "" });
+	assert.equal(parseHandoffResult("maybe?"), undefined, "an ambiguous answer is not a keep");
+	assert.equal(parseHandoffResult(""), undefined);
+	assert.equal(parseHandoffResult("  \n  "), undefined);
 });
 
 test("the ask prompt forbids statistics and is bounded", () => {
