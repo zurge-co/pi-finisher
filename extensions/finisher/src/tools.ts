@@ -17,6 +17,7 @@ import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
 import { liveByRole, steerLive, followUpLive } from "./subagent-rpc.ts";
 import { recordSteerOnRun } from "./agent-session.ts";
+import { countSuite } from "./suite-budget.ts";
 import { registerPhaseTool } from "./phase-tool.ts";
 import { verifyToolDefinition, VERIFY_TOOL } from "./verify-tool.ts";
 
@@ -227,6 +228,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const started = gate === "reopen" ? reopenGoal(previous as GoalRunState, cases, state.humanAt ?? 0) : resumeOrStart(previous, goal, Date.now(), cases);
 			const adopted = casesForGate(gate, cases, confirmed, started.cases ?? before);
 			state.goalDriver = adopted.length ? { ...started, cases: adopted } : started;
+			if (gate !== "resume" || !state.suiteAtStart) state.suiteAtStart = countSuite(ctx.cwd);
 			state.goalConsent = undefined;
 			state.goalStop = undefined;
 			if (adopted.length && !state.spec) {

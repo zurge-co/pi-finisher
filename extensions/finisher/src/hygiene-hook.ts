@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildFileReviewReport, commandWritePaths, reviewWrittenFile, scriptWrites, stdinTargets, type FileReview } from "./review-file.ts";
+import { suiteWriteGate } from "./suite-budget.ts";
 import { type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { type State } from "./types.ts";
 
@@ -19,6 +20,14 @@ export const createHygieneHook = (ctx: HarnessContext) => {
 		}
 		const path = (ev.input as { path?: string })?.path;
 		return typeof path === "string" && path ? [path] : [];
+	};
+
+	const suiteRefusalFor = (ev: any, ctx: ExtensionContext): string | undefined => {
+		if (ev.toolName !== "write" && ev.toolName !== "edit") return undefined;
+		const path = (ev.input as { path?: string })?.path;
+		if (typeof path !== "string" || !path) return undefined;
+		const abs = resolve(ctx.cwd, path);
+		return suiteWriteGate(state.suiteAtStart, ctx.cwd, relative(ctx.cwd, abs) || abs, existsSync(abs));
 	};
 
 	const applyHygieneCheck = (ev: any, ctx: ExtensionContext): { content?: any[]; isError?: boolean } | undefined => {
@@ -51,7 +60,13 @@ export const createHygieneHook = (ctx: HarnessContext) => {
 		return { content, isError: true };
 	};
 
+	const blockedBySuiteBudget = (ev: any, ctx: ExtensionContext): { block: true; reason: string } | undefined => {
+		const reason = suiteRefusalFor(ev, ctx);
+		return reason ? { block: true, reason } : undefined;
+	};
+
+	pi.on("tool_call", async (ev, ctx) => blockedBySuiteBudget(ev, ctx));
 	pi.on("tool_result", async (ev, ctx) => applyHygieneCheck(ev, ctx));
 
-	return { applyHygieneCheck };
+	return { applyHygieneCheck, blockedBySuiteBudget, suiteRefusalFor };
 };
