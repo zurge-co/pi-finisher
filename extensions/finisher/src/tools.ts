@@ -231,6 +231,8 @@ export const registerTools = (ctx: HarnessContext) => {
 			if (gate !== "resume" || !state.suiteAtStart) state.suiteAtStart = countSuite(ctx.cwd);
 			state.goalConsent = undefined;
 			state.goalStop = undefined;
+			state.preGoalCalls = 0;
+			state.lastModifiedAt = Date.now();
 			if (adopted.length && !state.spec) {
 				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: adopted, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
 				state.phase = "implementation";
@@ -253,7 +255,7 @@ export const registerTools = (ctx: HarnessContext) => {
 								"the goal is confirmed — work until every case holds, then call finisher_verify ONCE at the end:",
 								...next.map((c, i) => `  ${i + 1}. ${c}`),
 								"",
-								"verification runs once, reading the change and exercising the changed code directly (never the test suite as proof).",
+								"verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from a command the harness recorded, and each case's result lands in .finisher/checks — never in a new test file.",
 								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",
 								"a case only a human can check is separated, never failed: declare it in finisher_verify as { id, human: true, note } and it is listed for them in the final report.",
 							].join("\n"),

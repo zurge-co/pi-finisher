@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLine, detectChecks, failingChecks, judgeDeterministic, runCheck, runChecks, runCommand, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
+import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, runCheck, runChecks, runCommand, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
 
 const repo = (scripts) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-checks-"));
@@ -202,4 +202,22 @@ test("a check that hangs is cut when the harness runs a case command, so verify 
 	assert.ok(Date.now() - started < 20_000, "the deadline ends it");
 	assert.equal(runCommand("exit 0", dir, 5_000).exitCode, 0, "a command that succeeds is a pass");
 	assert.equal(runCommand("exit 7", dir, 5_000).exitCode, 7, "and a command's own status is what is reported");
+});
+
+test("verify runs the repo's checks through the plan and writes its evidence to .finisher/checks", async () => {
+	const dir = repo({ test: `node -e "require('node:fs').appendFileSync('runs.log','x')"` });
+	const s = session({ cwd: dir });
+	clearCheckCache();
+	await s.run("finisher_goal", { goal: "ship it", cases: ["the suite passes"] });
+	await s.run("finisher_phase", { plan: ["make it pass"] });
+	await s.run("finisher_phase", { done: true });
+	s.box.get().verifyCalls = [{ command: "node check.mjs", ok: true, at: Date.now() }];
+	const runs = () => (existsSync(join(dir, "runs.log")) ? readFileSync(join(dir, "runs.log"), "utf8").trim().split("\n").length : 0);
+	const first = await s.run("finisher_verify", { cases: [{ id: "the suite passes", command: "node check.mjs" }] });
+	assert.equal(first.isError, undefined, "the recorded command plus the green check close the goal");
+	assert.equal(runs(), 1, "the check stage really ran the repo's own test script");
+	assert.deepEqual(readChecks(dir).map((e) => [e.case, e.status]), [["the suite passes", "pass"]], "one line per case, and a pass only for a pass");
+	assert.match(first.content[0].text, /evidence: \.finisher\/checks/);
+	await s.run("finisher_verify", { cases: [] });
+	assert.equal(runs(), 1, "a second pass over the same edit state is answered from the plan cache — the suite is not re-run");
 });

@@ -7,6 +7,8 @@ import { consentLifts, humanResumes } from "./src/goal-confirm.ts";
 import { claimGoalStopAbort, clearGoalStop, goalStopGate, stopLanguage } from "./src/goal-stop.ts";
 import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
 import { harnessSystemPrompt } from "./src/system-prompt.ts";
+import { intakeDirective, intakeGate, intakeOpen, isExploreTool } from "./src/intake.ts";
+import { writesFiles } from "./src/verify-checks.ts";
 import { appendCommand } from "./src/command-record.ts";
 import { gitOk } from "./src/worktree.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
@@ -84,6 +86,7 @@ export * from "./src/subagent-rpc.ts";
 export * from "./src/rpc-events.ts";
 export * from "./src/command-record.ts";
 export * from "./src/verify-tool.ts";
+export * from "./src/verify-checks.ts";
 export * from "./src/tool-log.ts";
 export * from "./src/handoff-gate.ts";
 export * from "./src/ladder-model.ts";
@@ -206,6 +209,17 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", async () => goalStopGate(box.get(), stopLanguage(box.get())));
 
+	pi.on("tool_call", async (ev) => {
+		const live = box.get();
+		const refusal = intakeGate(live.goalDriver, ev.toolName, live.preGoalCalls ?? 0, live.humanLang);
+		if (!intakeOpen(live.goalDriver) && isExploreTool(ev.toolName)) {
+			live.preGoalCalls = (live.preGoalCalls ?? 0) + 1;
+			persist();
+		}
+		if (!refusal.block) return undefined;
+		return { block: true, reason: refusal.reason ?? "a goal must be confirmed before the code is explored" };
+	});
+
 	pi.on("turn_end", async (_ev, ctx) => {
 		if (!claimGoalStopAbort(box.get())) return;
 		try {
@@ -220,6 +234,10 @@ export default function (pi: ExtensionAPI) {
 		live.humanAt = Date.now();
 		humanResumes(live, live.humanAt);
 		if (clearGoalStop(live)) persist();
+		if (live.preGoalCalls) {
+			live.preGoalCalls = 0;
+			persist();
+		}
 		const lang = humanLanguage(live.humanLang, event.prompt);
 		if (lang !== live.humanLang) {
 			live.humanLang = lang;
@@ -244,8 +262,11 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => {
 		const bulletin = takeContextBulletin(box.get());
 		if (bulletin) persist();
-		const extra = [bulletin, liveTrackerText()].filter(Boolean).join("\n\n");
-		const sp = harnessSystemPrompt(event.systemPrompt, box.get().humanLang ?? DEFAULT_GOAL_LANG, extra);
+		const live = box.get();
+		const prompt = event.messageType === "user" && typeof event.prompt === "string" ? event.prompt.trim() : "";
+		const intake = !intakeOpen(live.goalDriver) && prompt ? intakeDirective(prompt, live.humanLang) : "";
+		const extra = [intake, bulletin, liveTrackerText()].filter(Boolean).join("\n\n");
+		const sp = harnessSystemPrompt(event.systemPrompt, live.humanLang ?? DEFAULT_GOAL_LANG, extra);
 		if (sp === event.systemPrompt) return;
 		return { systemPrompt: sp };
 	});
@@ -253,6 +274,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_result", async (ev) => {
 		const live = box.get();
 		live.verifyCalls = appendCommand(live.verifyCalls ?? [], { toolName: ev.toolName, input: ev.input as { command?: unknown }, isError: ev.isError });
+		if (ev.isError !== true && writesFiles(ev.toolName, ev.input as { command?: unknown; path?: unknown })) live.lastModifiedAt = Date.now();
 	});
 
 	pi.on("turn_end", async (ev, ctx) => {

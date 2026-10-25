@@ -18,8 +18,10 @@ goal (confirmed once)
 
 Nothing verifies itself from prose: the harness **records** every shell command you run and the
 status it really got, and a case is proven only by the command you named for it. Verification is
-deterministic first — your repo's own `typecheck`, `lint` and `test` scripts run before any case is
-judged, and a failing check fails every case immediately.
+deterministic first — the repo's own `typecheck`, `lint` and `test` scripts run before any case is
+judged, scoped to the paths they own, in parallel, and cached by change set; a real failure fails
+every case immediately, while a check that cannot run here or was cut by its deadline is reported as
+`SKIP` and never fakes a failure. Each case's outcome lands in `.finisher/checks`, one line per case.
 Every extra lap is journaled to `~/.pi/finisher/laps.jsonl`; `/finisher gaps` ranks what was
 missing most often, so the plan can be made better instead of guessed.
 
@@ -78,7 +80,7 @@ and long lines are wrapped between graphemes so a Thai or Devanagari mark is nev
 | `finisher_goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` make the dialog the human's language. |
 | `finisher_steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
 | `finisher_swarm` | **coders only**: one git worktree + branch per slice, merged back in dependency order, overlapping declared files never merged silently. Every slice names the `files` it owns and the `depends_on` slices it waits for. |
-| `finisher_verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts, then judges each case from the commands the harness recorded. No sub-agent is spawned to grade your work. |
+| `finisher_verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts through a scoped, parallel, cached plan, then judges each case from the commands the harness recorded, and writes one `PASS`/`FAIL` line per case to `.finisher/checks`. No sub-agent is spawned to grade your work. |
 
 Explore and planning are yours alone: read the files yourself and decide the slices, the files each
 one owns and the interface they share (`shared_contract`). A plan that overlaps files, names an

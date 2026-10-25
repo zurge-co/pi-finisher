@@ -2,10 +2,18 @@ import { CODE_HYGIENE_GUIDELINE } from "./code-hygiene.ts";
 import { SWARM_ROUTING_GUIDELINE } from "./swarm.ts";
 import { TIMEOUT_RULE } from "./timeout.ts";
 import { DEFAULT_GOAL_LANG, languageGuideline } from "./human-language.ts";
+import { INTAKE_GRACE_CALLS } from "./intake.ts";
+
+export const GOAL_FIRST_GUIDELINE = `Confirm the goal before you explore: call finisher_goal with the goal and the cases it stands on as soon as the human's message gives you enough to draft them. Reading the code yourself is the main agent's job, but only after the goal is confirmed — the intake budget is ${INTAKE_GRACE_CALLS} exploratory calls per human turn, and code exploration is blocked once it is spent.`;
+
+export const CHECK_PROOF_GUIDELINE =
+	"Proof is a recorded check, not another test: a case is proven by a command the harness watched run, and finisher_verify writes one PASS/FAIL line per case to .finisher/checks/checks.jsonl — never add a test file to prove a case, and never re-run a suite that already ran green after the last edit.";
 
 export const HARNESS_GUIDELINES = (lang?: string): string[] => [
+	GOAL_FIRST_GUIDELINE,
 	CODE_HYGIENE_GUIDELINE,
 	SWARM_ROUTING_GUIDELINE,
+	CHECK_PROOF_GUIDELINE,
 	TIMEOUT_RULE,
 	languageGuideline(lang ?? DEFAULT_GOAL_LANG),
 ];

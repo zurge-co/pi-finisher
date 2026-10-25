@@ -1,6 +1,3 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { Type, type TSchema } from "typebox";
 import { type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { buildGoalToolText, goalDriverDone, nextGoalDriverStep, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
@@ -14,81 +11,13 @@ import { readToolTimeout } from "./timeout.ts";
 import { type HarnessContext } from "./kit.ts";
 import { writeReportFile } from "./report-file.ts";
 import { appendCommand } from "./command-record.ts";
+import { appendCheck, checkFileLines, type CheckEntry, type CheckStatus } from "./check-file.ts";
+import { changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, readPackage, runCheckStage, runCommand, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
+import { type CaseResult } from "./evidence.ts";
 
 export const VERIFY_TOOL = "finisher_verify";
 
 export const VERIFY_STAGE_TIMEOUT_MS = 600_000;
-
-export interface DeterministicCheck {
-	name: string;
-	command: string;
-	args: string[];
-}
-
-export const CHECK_ORDER = ["typecheck", "lint", "test"] as const;
-
-export const detectChecks = (pkg: { scripts?: Record<string, unknown> } | undefined): DeterministicCheck[] => {
-	const scripts = pkg?.scripts ?? {};
-	const found: DeterministicCheck[] = [];
-	for (const name of CHECK_ORDER) {
-		const body = scripts[name];
-		if (typeof body !== "string" || !body.trim()) continue;
-		found.push({ name, command: "npm", args: ["run", "--silent", name] });
-	}
-	return found;
-};
-
-export const readPackage = (cwd: string): { scripts?: Record<string, unknown> } | undefined => {
-	const path = join(cwd, "package.json");
-	if (!existsSync(path)) return undefined;
-	try {
-		return JSON.parse(readFileSync(path, "utf8")) as { scripts?: Record<string, unknown> };
-	} catch {
-		return undefined;
-	}
-};
-
-export interface CheckResult {
-	name: string;
-	command: string;
-	exitCode: number;
-	tail: string;
-}
-
-export const checkLine = (r: CheckResult): string => `$ ${r.command}\n   exit ${r.exitCode}${r.tail ? `\n   ${r.tail.split("\n").slice(-6).join("\n   ")}` : ""}`;
-
-export const failingChecks = (results: CheckResult[]): CheckResult[] => results.filter((r) => r.exitCode !== 0);
-
-export const runCheck = (check: DeterministicCheck, cwd: string, timeoutMs: number): CheckResult => {
-	const label = `${check.command} ${check.args.join(" ")}`;
-	try {
-		const out = execFileSync(check.command, check.args, { cwd, timeout: Math.max(1_000, timeoutMs), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 });
-		return { name: check.name, command: label, exitCode: 0, tail: String(out ?? "").trim() };
-	} catch (err) {
-		const e = err as { status?: number | null; signal?: string | null; stdout?: unknown; stderr?: unknown; message?: string };
-		const stdout = typeof e.stdout === "string" ? e.stdout : "";
-		const stderr = typeof e.stderr === "string" ? e.stderr : "";
-		const exitCode = typeof e.status === "number" ? e.status : e.signal ? 124 : 1;
-		const tail = `${stdout}\n${stderr}`.trim() || (e.message ?? "the check produced no output");
-		return { name: check.name, command: label, exitCode, tail };
-	}
-};
-
-export const runChecks = (checks: DeterministicCheck[], cwd: string, timeoutMs: number): CheckResult[] => checks.map((check) => runCheck(check, cwd, timeoutMs));
-
-export const runCommand = (command: string, cwd: string, timeoutMs: number): CheckResult => {
-	const label = command;
-	try {
-		const out = execFileSync("bash", ["-lc", command], { cwd, timeout: Math.max(1_000, timeoutMs), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 });
-		return { name: command, command: label, exitCode: 0, tail: String(out ?? "").trim() };
-	} catch (err) {
-		const e = err as { status?: number | null; signal?: string | null; stdout?: unknown; stderr?: unknown; message?: string };
-		const stdout = typeof e.stdout === "string" ? e.stdout : "";
-		const stderr = typeof e.stderr === "string" ? e.stderr : "";
-		const exitCode = typeof e.status === "number" ? e.status : e.signal ? 124 : 1;
-		return { name: command, command: label, exitCode, tail: `${stdout}\n${stderr}`.trim() || (e.message ?? "the command produced no output") };
-	}
-};
 
 export interface CaseCommand {
 	id: string;
@@ -243,10 +172,39 @@ export const judgeDeterministic = (
 };
 
 export const verifySummaryLines = (checks: CheckResult[], report: VerifyReport): string[] => {
-	const lines = checks.length ? [`deterministic stage: ${checks.map((c) => `${c.name} ${c.exitCode === 0 ? "ok" : `FAILED (${c.exitCode})`}`).join(" · ")}`] : ["deterministic stage: no typecheck/lint/test script found in package.json"];
+	const lines = checks.length ? [`deterministic stage: ${checks.map((c) => checkSummaryMark(c)).join(" · ")}`] : ["deterministic stage: no typecheck/lint/test script found in package.json"];
 	for (const r of failingChecks(checks)) lines.push("", checkLine(r));
 	return [...lines, "", renderVerifyReport(report)];
 };
+
+const CHECK_MARK: Record<CheckOutcome, string> = {
+	pass: "ok",
+	fail: "FAILED",
+	infra: "skipped (it could not run here)",
+	deadline: "TIMEOUT (it hit its deadline)",
+	scoped: "not run (no change can affect it)",
+};
+
+export const checkSummaryMark = (check: CheckResult): string => {
+	const status = checkStatusOf(check);
+	if (status === "fail") return `${check.name} FAILED (${check.exitCode})`;
+	return `${check.name} ${CHECK_MARK[status] ?? status}`;
+};
+
+export const CHECK_RESULT_STATUS: Record<CaseResult, CheckStatus> = { PASS: "pass", FAIL: "fail", UNVERIFIED: "unverified", BLOCKED: "infra", HUMAN: "unverified" };
+
+export const caseCheckEntries = (evidence: CaseEvidence[], commands: Map<string, string>, goal?: string, at = Date.now()): CheckEntry[] =>
+	evidence.map((c) => {
+		const command = commands.get(c.caseId);
+		return {
+			at,
+			case: c.caseId,
+			status: CHECK_RESULT_STATUS[c.result] ?? "unverified",
+			...(goal ? { goal } : {}),
+			...(command ? { command } : {}),
+			...(c.reason ? { output: c.reason } : {}),
+		};
+	});
 
 export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchema, Record<string, unknown>> => {
 	const persist = ctx.persist;
@@ -258,11 +216,12 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 		name: VERIFY_TOOL,
 		label: "finisher · verify",
 		description:
-			"Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own deterministic checks (typecheck, lint, test scripts from package.json) and a failing check fails every case immediately. Stage 2 judges each case from the commands the harness itself watched you run: name one command per case, and a case whose command was never recorded stays UNVERIFIED. Passing every case ends the goal; a failure hands the next loop back to you.",
+			"Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own checks (typecheck, lint, test scripts) through a scoped, parallel, cached plan: a check whose changed paths cannot affect it is skipped, a green recording made after the last edit is not re-run, and a toolchain that cannot run here is reported as skipped instead of failing every case. Stage 2 judges each case from the commands the harness itself watched you run: name one command per case, and a case whose command was never recorded stays UNVERIFIED. Every case outcome is written to .finisher/checks.",
 		promptSnippet: "Verify the goal deterministically first, from commands the harness recorded",
 		promptGuidelines: [
 			`Call ${VERIFY_TOOL} once after every lap is closed with finisher_phase done — it is refused while a lap is still open.`,
 			"Name one command per case (cases: [{ id, command }]) that actually exercises it. A case with no recorded command is UNVERIFIED — never claim PASS for it.",
+			"Proof is a recorded check, not another test: verify writes one line per case to .finisher/checks (PASS/FAIL/SKIP/UNVERIFIED) — never add a test file to prove a case.",
 			"A case only the human can check is separated, not failed: pass { id, human: true, note } and it is listed in the report for them at the end.",
 			"If the deterministic stage fails, fix the cause and call it again: the failing check is quoted back to you.",
 			"A not-passing result hands the next loop back to you: fix it, use finisher_swarm to get coders working in parallel, then verify again.",
@@ -290,12 +249,16 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 
 			const cwd = toolCtx.cwd;
 			const timeoutMs = Math.min(readToolTimeout(cwd, VERIFY_TOOL), VERIFY_STAGE_TIMEOUT_MS);
-			const checks = p.skipDeterministic ? [] : runChecks(detectChecks(readPackage(cwd)), cwd, timeoutMs);
+			const pkg = readPackage(cwd);
+			const stage = p.skipDeterministic
+				? { results: [] as CheckResult[], ran: [], recorded: [], scoped: [] }
+				: await runCheckStage(detectChecks(pkg), { cwd, timeoutMs, pkg, lastModifiedAt: state.lastModifiedAt, changed: changedPaths(cwd), calls: state.verifyCalls ?? [] });
+			const checks = stage.results;
 
 			const openGoal = !!active && !goalDriverDone(active);
 			const cases = openGoal ? (active.cases ?? []) : (p.goal ? [p.goal] : []);
 			const named = bindClaims(cases, caseClaims(p.cases));
-			const calls = (state.verifyCalls ?? []) as { command: string; ok: boolean }[];
+			const calls = freshCalls((state.verifyCalls ?? []) as { command: string; ok: boolean; at?: number }[], state.lastModifiedAt);
 			const evidence = judgeDeterministic(cases, named.commands, calls, checks, (command) => {
 				const result = runCommand(command, cwd, timeoutMs);
 				state.verifyCalls = appendCommand(state.verifyCalls ?? [], { toolName: "bash", input: { command }, isError: result.exitCode !== 0 });
@@ -305,7 +268,9 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const verified = `${NON_GOAL_PREFIX}${evidence.map((c) => c.caseId).join(", ") || "run"}`;
 			const driver = openGoal ? active : { ...resumeOrStart(undefined, p.goal?.trim() || verified, Date.now(), cases), attempts: freshAttempts() };
 			const step = nextGoalDriverStep(driver, report);
-			const summary = [verifySummaryLines(checks, report).join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
+			const entries = caseCheckEntries(evidence, named.commands, openGoal ? active.goal : p.goal?.trim());
+			for (const entry of entries) appendCheck(cwd, entry);
+			const summary = [verifySummaryLines(checks, report).join("\n"), ["evidence: .finisher/checks/checks.jsonl", ...checkFileLines(entries, cases)].join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
 
 			if (!openGoal) {
 				persist();
