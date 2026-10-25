@@ -140,7 +140,7 @@ A plan longer than the terminal pages instead of clipping: no lap text is ever c
 ### The report page
 
 The moment a goal closes, `finisher_verify` writes the report it just gave you to
-**`.finisher/report.md`** — verdict first, then the goal, the lap count, the round, when it was written,
+**`.finisher/report.md`** — the result first, then the goal, the lap count, the round, when it was written,
 and every case with the command that proved it. The HUD always advertises it: a `📄 report` row while a
 closed goal is still boxed, and a tail on the idle line otherwise.
 
@@ -211,6 +211,28 @@ steer count and log path.
 
 There is nothing else to switch: fresh context, handoff and verification are automatic.
 
+## Nothing to configure
+
+Install it and the fast path is already on — no key, no flag, no dialog:
+
+- **The goal comes before the code.** The human's message is drafted into a goal plus its cases, and
+  `finisher_goal` is asked for before exploration: two pre-goal calls of grace, then the harness
+  refuses to read or grep until the goal is confirmed. Nothing is explored on a guess.
+- **Verify runs checks, not the whole suite every time.** The repo's own `typecheck`/`lint`/`test`
+  scripts are scoped to what changed, run in parallel, and cached by fingerprint — a repeat round
+  with the same change set reads the recorded result instead of paying for it again. A missing
+  toolchain (`infra`) or a check cut off by its deadline (`deadline`) is reported as `SKIP` and never
+  fails a case.
+- **The evidence is a check file, not a new test.** Every case's result is recorded in
+  `.finisher/checks/checks.jsonl` — `PASS` / `FAIL` / `SKIP` / `UNVERIFIED` per case, newest record
+  wins — so proving a goal never means growing the repo's test suite.
+- **The suite has a growth ceiling.** A baseline is taken when the goal starts: one more test file and
+  a few more cases at most. Past that, a new test file is refused and the evidence goes to the check
+  file instead.
+- **Two skills ship with it.** `goal-intake` covers the confirm-before-exploring rule, `verify-checks`
+  covers scoped checks and the check file. They load themselves; there is nothing to enable.
+- **The human's words are `check` and `result`.** What runs is a check, what it came to is its result.
+
 ## Configuration
 
 `.finisher/models.json` — the priority ladder. Rung 1 is what a sub-agent runs; later rungs are
@@ -238,11 +260,14 @@ reported as ignored, never obeyed.
 `finisher_verify` is not a loop. After the implementation loops are done, it runs **once**, in two
 stages:
 
-1. **deterministic** — the repo's own `typecheck`, `lint` and `test` scripts run with a real
-   deadline and a real exit code. A failing check fails every case straight away, so no model is
-   spent re-reading what the exit code already said.
+1. **deterministic** — the repo's own `typecheck`, `lint` and `test` scripts run scoped to what
+   changed, in parallel, with a real deadline and a real exit code (and cached, so a repeat round with
+   the same change set costs nothing). A failing check fails every case straight away, so no model is
+   spent re-reading what the exit code already said; a missing toolchain or a cut-off check is `SKIP`,
+   never a failure of the case.
 2. **evidence** — each case must name the command that exercises it. A case whose command the
    harness never watched succeed is `UNVERIFIED`, never `PASS`. A green suite alone proves nothing.
+   Every result is recorded in `.finisher/checks/checks.jsonl`, one line per case.
 
 | outcome | what happens |
 |---|---|
@@ -359,9 +384,13 @@ pi-finisher/
 ├── package.json                     # pi manifest
 ├── extensions/finisher/
 │   ├── index.ts                     # pi wiring: hooks, tools, commands, TUI
-│   └── src/                         # pure helpers (goal driver, swarm, verify loop, panel, …)
+│   └── src/                         # pure helpers (goal driver, swarm, check runner, check file, panel, …)
+├── skills/                          # goal-intake + verify-checks, loaded with the package
 ├── test/                            # node:test suites
 └── themes/                          # finisher dark theme (violet / cyan / mint on graphite)
 ```
+
+A run's own state lives in `.finisher/`: `checks/checks.jsonl` (the evidence), `report.md` (the
+report), `tracker.json` (the lap tracker) and `models.json` (the ladder).
 
 Theme (optional): `/settings` → theme → `finisher`.
