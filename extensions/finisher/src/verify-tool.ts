@@ -15,7 +15,7 @@ import { appendCheck, checkFileLines, type CheckEntry, type CheckStatus } from "
 import { changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, readPackage, runCheckStage, runCommand, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
 import { type CaseResult } from "./evidence.ts";
 
-export const VERIFY_TOOL = "finisher_verify";
+export const VERIFY_TOOL = "verify";
 
 export const VERIFY_STAGE_TIMEOUT_MS = 600_000;
 
@@ -219,12 +219,12 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			"Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own checks (typecheck, lint, test scripts) through a scoped, parallel, cached plan: a check whose changed paths cannot affect it is skipped, a green recording made after the last edit is not re-run, and a toolchain that cannot run here is reported as skipped instead of failing every case. Stage 2 judges each case from the commands the harness itself watched you run: name one command per case, and a case whose command was never recorded stays UNVERIFIED. Every case outcome is written to .finisher/checks.",
 		promptSnippet: "Verify the goal deterministically first, from commands the harness recorded",
 		promptGuidelines: [
-			`Call ${VERIFY_TOOL} once after every lap is closed with finisher_phase done — it is refused while a lap is still open.`,
+			`Call ${VERIFY_TOOL} once after every lap is closed with lap done — it is refused while a lap is still open.`,
 			"Name one command per case (cases: [{ id, command }]) that actually exercises it. A case with no recorded command is UNVERIFIED — never claim PASS for it.",
 			"Proof is a recorded check, not another test: verify writes one line per case to .finisher/checks (PASS/FAIL/SKIP/UNVERIFIED) — never add a test file to prove a case.",
 			"A case only the human can check is separated, not failed: pass { id, human: true, note } and it is listed in the report for them at the end.",
 			"If the deterministic stage fails, fix the cause and call it again: the failing check is quoted back to you.",
-			"A not-passing result hands the next loop back to you: fix it, use finisher_swarm to get coders working in parallel, then verify again.",
+			"A not-passing result hands the next loop back to you: fix it, use code to get coders working in parallel, then verify again.",
 			"Do not spawn a sub-agent to verify — you are the verifier, and the harness records what you actually ran.",
 		],
 		parameters: Type.Object({

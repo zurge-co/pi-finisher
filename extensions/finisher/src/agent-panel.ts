@@ -32,6 +32,10 @@ export interface PanelOptions {
 
 const ROLE_WIDTH = 18;
 
+const ROLE_TAG: Record<string, string> = { coder: "CODER", swarm: "CODER" };
+
+export const roleTag = (role: string): string => ROLE_TAG[role] ?? role.slice(0, 3).toUpperCase();
+
 export const elapsedLabel = (ms: number): string => {
 	const s = Math.max(0, Math.round(ms / 1000));
 	if (s < 60) return `${s}s`;
@@ -65,7 +69,7 @@ export const panelRowEntries = (runs: PanelRun[], opts: PanelOptions = {}): Pane
 		const key = `${r.role}:${r.model ?? ""}`;
 		const n = (seen.get(key) ?? 0) + 1;
 		seen.set(key, n);
-		const tag = `${r.role.slice(0, 3).toUpperCase()}${n > 1 ? n : ""}`;
+		const tag = `${roleTag(r.role)}${n > 1 ? n : ""}`;
 		const liveRow = r.status === "running";
 		return {
 			index,

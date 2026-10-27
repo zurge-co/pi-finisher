@@ -116,7 +116,7 @@ export const goalConfirmLines = (goal: string, cases: string[], lang?: string, c
 };
 
 export const tooManyCasesNote = (n: number): string =>
-	`finisher_goal: ${n} cases is too many for one confirmation to be honest — the human cannot weigh that list. Group them into at most ${GOAL_TOO_MANY_CASES} cases the human can read, then ask once. Nothing was started.`;
+	`goal: ${n} cases is too many for one confirmation to be honest — the human cannot weigh that list. Group them into at most ${GOAL_TOO_MANY_CASES} cases the human can read, then ask once. Nothing was started.`;
 
 export const caseKey = (c: string): string => c.replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -190,8 +190,8 @@ export const unconfirmedGoalNote = (allPass: boolean): string =>
 	[
 		`no goal was confirmed, so this run did not drive one — the result below is the evidence, and nothing was recorded as the goal:`,
 		allPass
-			? `every case passed on its own evidence. Present this to the human and call finisher_goal with the goal they want; that dialog is the only thing that turns a case list into a goal.`
-			: `at least one case did not pass. Fix the real cause, verify again, and only call finisher_goal once the human is there to confirm the goal.`,
+			? `every case passed on its own evidence. Present this to the human and call goal with the goal they want; that dialog is the only thing that turns a case list into a goal.`
+			: `at least one case did not pass. Fix the real cause, verify again, and only call goal once the human is there to confirm the goal.`,
 		`(the run is named "verify: …" in the widget because there is no goal to name)`,
 	].join("\n");
 

@@ -90,13 +90,13 @@ test("the goal-first gate opens exactly below the grace budget and closes at it"
 		assert.equal(gate.remaining, Math.max(0, INTAKE_GRACE_CALLS - used));
 		assert.equal(gate.remaining >= 0, true);
 	}
-	assert.match(intakeGate(undefined, "bash", INTAKE_GRACE_CALLS).reason, /finisher_goal/);
+	assert.match(intakeGate(undefined, "bash", INTAKE_GRACE_CALLS).reason, /goal/);
 	assert.equal(intakeGate(undefined, "read", Number.NaN).block, false, "an unknown count is not a refusal");
 	assert.equal(intakeGate(undefined, "read", -5).block, false);
 });
 
 test("no gate ever stands between the harness and the goal tools, and no gate survives a confirmed goal", () => {
-	for (const tool of ["finisher_goal", "finisher_phase", "finisher_verify", "finisher_steer", "web_search", ""])
+	for (const tool of ["goal", "lap", "verify", "steer", "web_search", ""])
 		for (const used of [0, INTAKE_GRACE_CALLS, 999]) assert.equal(intakeGate(undefined, tool, used).block, false, `${tool} must stay callable`);
 	for (const tool of INTAKE_EXPLORE_TOOLS) assert.equal(intakeGate({ goal: "x", confirmedAt: 1 }, tool, 999).block, false);
 	for (const tool of ["READ", " Bash "]) assert.equal(isExploreTool(tool), true);
@@ -105,7 +105,7 @@ test("no gate ever stands between the harness and the goal tools, and no gate su
 	assert.equal(intakeOpen({ goal: "x", confirmedAt: Date.now() }), true);
 });
 
-test("the refusal note speaks the human's language, stays one line, and always names finisher_goal", () => {
+test("the refusal note speaks the human's language, stays one line, and always names goal", () => {
 	const thai = intakeBlockNote("th", 0);
 	const english = intakeBlockNote("en", 0);
 	assert.match(thai, /[\u0E00-\u0E7F]/, "Thai must reach the Thai human");
@@ -113,14 +113,14 @@ test("the refusal note speaks the human's language, stays one line, and always n
 	assert.match(intakeBlockNote("th-TH", 0), /[\u0E00-\u0E7F]/);
 	for (const note of [thai, english, intakeBlockNote(undefined, 3)]) {
 		assert.ok(!note.includes("\n") && !note.includes("\t"), "a note is one painted line");
-		assert.match(note, /finisher_goal/);
+		assert.match(note, /goal/);
 	}
 });
 
-test("the directive carries every drafted case and points at finisher_goal before exploration", () => {
+test("the directive carries every drafted case and points at goal before exploration", () => {
 	const thai = ["เพิ่มหน้า login", "แก้บั๊กตอน logout"].join("\n");
 	const directive = intakeDirective(thai);
-	assert.match(directive, /finisher_goal/);
+	assert.match(directive, /goal/);
 	assert.ok(directive.includes("เพิ่มหน้า login"));
 	assert.ok(directive.includes("แก้บั๊กตอน logout"));
 	assert.match(intakeDirective(thai, "th"), /[\u0E00-\u0E7F]/);

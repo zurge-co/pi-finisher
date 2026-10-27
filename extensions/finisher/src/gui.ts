@@ -3,6 +3,7 @@ import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-
 import { createEscGuard } from "./esc-guard.ts";
 import { CLARIFY_PICK_HINT } from "./clarify-dialog.ts";
 import { panelize } from "./models.ts";
+import { scrollKeyAction as scrollKeys } from "./scroll-page.ts";
 import { type AskClarify, type AskRejectReason, type FinisherCustom, type FinisherPick, type ScrollKeyAction, type HarnessContext } from "./kit.ts";
 
 export const createGui = (ctx: HarnessContext) => {
@@ -51,17 +52,7 @@ export const createGui = (ctx: HarnessContext) => {
 
 	const OVERLAY_XL = { overlay: true, overlayOptions: { width: "95%", minWidth: 60, maxHeight: "90%" } } as const;
 
-	type ScrollAction = { dir: 1 | -1; page: boolean } | "top" | "bottom" | null;
-
-	const scrollKeyAction = (data: string): ScrollAction => {
-		if (matchesKey(data, Key.up)) return { dir: -1, page: false };
-		if (matchesKey(data, Key.down)) return { dir: 1, page: false };
-		if (matchesKey(data, Key.left)) return { dir: -1, page: true };
-		if (matchesKey(data, Key.right)) return { dir: 1, page: true };
-		if (data === "g") return "top";
-		if (data === "G") return "bottom";
-		return null;
-	};
+	const scrollKeyAction = scrollKeys;
 
 	const REJECT_WITH_REASON = "__finisher_reject_reason__";
 

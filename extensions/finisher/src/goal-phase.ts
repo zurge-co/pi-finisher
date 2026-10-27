@@ -145,7 +145,7 @@ export const verifyGate = (plan: PhasePlan): PhaseGate => {
 		allowed: false,
 		note: [
 			`verify is gated: ${lapLabel(plan)} is still open${next ? ` — ${next.text}` : ""}.`,
-			"finish every lap with finisher_phase done=<id> (or bare `done` for the current lap), then call finisher_verify exactly once — you are the verifier, no sub-agent judges your work.",
+			"finish every lap with lap done=<id> (or bare `done` for the current lap), then call verify exactly once — you are the verifier, no sub-agent judges your work.",
 			"verification is one shot at the end of the plan, never per lap.",
 		].join("\n"),
 	};

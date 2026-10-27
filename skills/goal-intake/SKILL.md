@@ -1,11 +1,11 @@
 ---
 name: goal-intake
-description: Confirm the goal with finisher_goal before exploring any code, drafting the goal and its cases from the human's own words. Use at the start of a pi-finisher run, before the first read, grep or bash call.
+description: Confirm the goal with goal before exploring any code, drafting the goal and its cases from the human's own words. Use at the start of a pi-finisher run, before the first read, grep or bash call.
 ---
 
 # Goal intake
 
-The human's message **is** the goal. Confirm it with `finisher_goal` before you read, grep, or
+The human's message **is** the goal. Confirm it with `goal` before you read, grep, or
 explore anything. The harness allows two pre-goal calls to reach that dialog; after that every
 exploration call is refused with a note that says so, and the only way forward is the dialog.
 
@@ -24,7 +24,7 @@ Nothing has to be configured for this. It is on from install, in every session.
 ## When the human's own words are vague
 
 Some messages carry no checkable outcome: "make it faster", "clean this up", "ปรับปรุงหน่อย".
-Reading more code cannot answer what they meant, so `finisher_goal` asks — once, before the dialog.
+Reading more code cannot answer what they meant, so `goal` asks — once, before the dialog.
 
 - At most 3 questions, one per gap it names: what should change (`target`), how the result is
   checked (`observable`), how far the change may reach (`scope`).
@@ -50,6 +50,6 @@ between you and the result: pick the approach, prove the cases, and report once 
 
 ## Before the goal is confirmed
 
-Call `finisher_goal` with the draft goal and the draft cases, then start the work. Exploration that
+Call `goal` with the draft goal and the draft cases, then start the work. Exploration that
 would have told you what the human wanted is paid for twice: once by you, once by the human reading
 a plan built on a guess.

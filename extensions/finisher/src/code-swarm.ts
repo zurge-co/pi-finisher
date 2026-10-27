@@ -72,7 +72,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		try {
 			plans = planSlices(slices, join(finisherDir(ctx.cwd), "worktree", "swarm"), new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
 		} catch (e) {
-			return { content: [{ type: "text", text: `finisher_swarm code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
+			return { content: [{ type: "text", text: `code code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
 		}
 		const outcomes: SliceOutcome[] = [];
 		const byPlan = new Map(plans.map((pl) => [pl.id, pl]));
@@ -81,7 +81,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		const results = await runSwarm(tasks, {
 			slots: opts.slots,
 			concurrency: opts.concurrency,
-			attemptMs: attemptDeadlineMs(subagentTimeout("swarm", ctx.cwd)),
+			attemptMs: attemptDeadlineMs(subagentTimeout("coder", ctx.cwd)),
 			maxAttempts: opts.maxAttempts,
 			run: async (task, slot, attempt) => {
 				const plan = byPlan.get(task.id)!;
@@ -104,7 +104,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 					...(slice.acceptance?.length ? { acceptance: slice.acceptance } : {}),
 				});
 				const before = state.subagentRuns.length;
-				const pending = launchSubagent(ctx, "swarm", prompt, undefined, opts.sig, slot.model);
+				const pending = launchSubagent(ctx, "coder", prompt, undefined, opts.sig, slot.model);
 				const started = state.subagentRuns[before];
 				if (started) started.slotId = `${slot.id}·${plan.id}`;
 				const r = await pending;
@@ -161,7 +161,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		const failed = results.filter((r) => !r.ok);
 		const metrics = swarmMetrics(results, Date.now() - swarmStart);
 		const lines = [
-			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ code swarm finished with issues" : "✅ code swarm merged"}: ${applied.length}/${results.length} slice(s) applied`,
+			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ CODERS finished with issues" : "✅ CODERS merged"}: ${applied.length}/${results.length} slice(s) applied`,
 			mergeReport(mergePlan, outcomes),
 		];
 		if (failed.length) lines.push(`failed coder(s): ${failed.map((f) => f.id).join(", ")}`);
@@ -169,6 +169,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		if (mergePlan.overlaps.length) lines.push("overlapping slices were NOT merged — split the work so each file has one owner, or merge those by hand");
 		lines.push(metricsLine(metrics));
 		lines.push("leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under .finisher/worktree/swarm/");
+		lines.push("keep working: the coders are done, so the next lap is yours — do not sit idle waiting for them");
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
 			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, metrics, results },

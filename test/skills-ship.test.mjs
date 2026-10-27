@@ -35,7 +35,7 @@ test("every shipped skill is discoverable by pi: its own directory, its own name
 });
 
 test("the shipped skills carry the rules they are named for, not a title alone", () => {
-	assert.match(read("skills", "goal-intake", "SKILL.md"), /finisher_goal/);
+	assert.match(read("skills", "goal-intake", "SKILL.md"), /goal/);
 	assert.match(read("skills", "goal-intake", "SKILL.md"), /before/);
 	assert.match(read("skills", "verify-checks", "SKILL.md"), /\.finisher\/checks/);
 	assert.match(read("skills", "verify-checks", "SKILL.md"), /UNVERIFIED/);

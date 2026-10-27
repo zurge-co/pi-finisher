@@ -20,7 +20,7 @@ import {
 const here = new URL("..", import.meta.url).pathname;
 
 test("every role boots with the harness tools excluded by name, so a sub-agent can never spawn the harness", () => {
-	for (const [role, tools] of Object.entries({ swarm: [] })) {
+	for (const [role, tools] of Object.entries({ coder: [] })) {
 		const args = buildRpcSubagentArgs(tools, role);
 		const at = args.indexOf("--exclude-tools");
 		assert.ok(at >= 0, `${role} must exclude tools`);
@@ -31,11 +31,11 @@ test("every role boots with the harness tools excluded by name, so a sub-agent c
 	}
 });
 
-test("a coder can never call finisher_verify: a child that verified its own work would grade itself", () => {
-	const coder = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
+test("a coder can never call verify: a child that verified its own work would grade itself", () => {
+	const coder = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.coder, "coder");
 	const list = coder[coder.indexOf("--exclude-tools") + 1].split(",");
-	assert.ok(list.includes("finisher_verify"), "verify belongs to main — a coder must not be able to prove its own work");
-	assert.ok(list.includes("finisher_swarm") && list.includes("finisher_goal") && list.includes("finisher_phase"), "and it cannot re-enter any other harness tool");
+	assert.ok(list.includes("verify"), "verify belongs to main — a coder must not be able to prove its own work");
+	assert.ok(list.includes("code") && list.includes("goal") && list.includes("lap"), "and it cannot re-enter any other harness tool");
 });
 
 test("adding the harness exclusions is idempotent and never drops a role's own exclusions", () => {
@@ -49,7 +49,7 @@ test("adding the harness exclusions is idempotent and never drops a role's own e
 });
 
 test("the rpc boot keeps a session so the run can be revisited, and never a hand-rolled spawn", () => {
-	const args = buildRpcSubagentArgs(["write"], "swarm");
+	const args = buildRpcSubagentArgs(["write"], "coder");
 	assert.ok(!args.includes("--no-session"), "a sub-agent keeps its own session, so it can be resumed later");
 	const src = readFileSync(join(here, "extensions/finisher/src/subagent-rpc.ts"), "utf8");
 	assert.match(src, /RpcClient/, "the runner must go through RpcClient, not a hand-rolled spawn");

@@ -7,7 +7,7 @@ import { DEFAULT_GOAL_LANG, goalLanguageNote, languageTag, readableIn, resolveGo
 import { armGoalStop, goalStopMessage } from "./goal-stop.ts";
 import { type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots } from "./swarm.ts";
-import { planRefusalText, planRefusals, readPlanSlices } from "./swarm-plan.ts";
+import { coderFloor, coderFloorNote, CODER_FLOOR, planRefusalText, planRefusals, readPlanSlices } from "./swarm-plan.ts";
 import { clearOtherGoals } from "./handoff-stack.ts";
 import { handoffOff } from "./handoff-gate.ts";
 import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
@@ -27,7 +27,7 @@ import { caseKey } from "./goal-confirm.ts";
 export const SWARM_MODES = ["code"] as const;
 export const RETIRED_MODES = ["explore", "verify"] as const;
 export const retiredModeNote = (mode: string): string =>
-	`finisher_swarm mode=${mode} is gone: explore and plan are yours alone (read the files yourself), and verification is ${"finisher_verify"} — the harness records what you actually run, so no sub-agent judges your work. This tool now spawns coders in worktrees and nothing else.`;
+	`code mode=${mode} is gone: explore and plan are yours alone (read the files yourself), and verification is ${"verify"} — the harness records what you actually run, so no sub-agent judges your work. This tool now spawns coders in worktrees and nothing else.`;
 
 const humanTurnsNow = (ctx: ExtensionContext): number => {
 	try {
@@ -57,7 +57,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		const tasks = Array.isArray(p?.subtasks) ? p.subtasks.length : 0;
 		const { ladder } = effectiveLadder(cwd);
 		const spread = concurrencyFor(cwd, swarmSlots(ladder).length, tasks);
-		const needed = capNeededFor({ subagentMs: subagentTimeout("swarm", cwd), attempts: effortFor(p?.maxAttempts), waves: wavesFor(tasks, spread.concurrency) });
+		const needed = capNeededFor({ subagentMs: subagentTimeout("coder", cwd), attempts: effortFor(p?.maxAttempts), waves: wavesFor(tasks, spread.concurrency) });
 		return Math.max(configured, needed);
 	};
 
@@ -75,16 +75,17 @@ export const registerTools = (ctx: HarnessContext) => {
 	pi.registerTool(boundedTool(verifyToolDefinition(ctx)));
 
 	pi.registerTool(boundedTool({
-		name: "finisher_swarm",
-		label: "finisher · swarm",
+		name: "code",
+		label: "finisher · code",
 		description:
-			"Run coder sub-agents in parallel on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then merges the slices back in deterministic order and refuses to merge silently when two slices touched the same path. Explore, plan and verify are NOT this tool — you do those yourself, and verification is finisher_verify.",
+			"Run CODER sub-agents in parallel on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then merges the slices back in deterministic order and refuses to merge silently when two slices touched the same path. Explore, plan and verify are NOT this tool — you do those yourself, and verification is verify.",
 		promptSnippet: "Fan out parallel CODERS across the model priority ladder (one worktree per slice)",
 		promptGuidelines: [
 			"This tool only codes. Do the exploring and the planning yourself first — decide the slices, the files each one owns and the interface they share — because every slice you add is paid for by a coder reading context you already have.",
 			"Give every slice its scope (repo-relative paths): two slices sharing a path are a conflict, so split differently. Keep slices independent — they run concurrently, so a slice that needs another's interface must have that interface decided in your plan, not discovered by the coder.",
+			`A CODER is never spawned alone: at least ${CODER_FLOOR} coders must run side by side, and main keeps working its own lap while they do. If the work is one slice, do it yourself instead of calling this tool.`,
 			"Use as many slices as the work genuinely splits into and no more: fewer coders is faster when the work serialises. Do not spend the whole ladder because it is there.",
-			"Verification is finisher_verify, not this tool: you run the deterministic checks and name the command that proves each case, so no sub-agent grades your work.",
+			"Verification is verify, not this tool: you run the deterministic checks and name the command that proves each case, so no sub-agent grades your work.",
 			"Treat a worker's report as the evidence: do not re-read the files it read or re-run the commands it ran.",
 			"Decide library/layout/approach yourself — do not ask the human.",
 		],
@@ -100,15 +101,17 @@ export const registerTools = (ctx: HarnessContext) => {
 					acceptance: Type.Optional(Type.Array(Type.String(), { description: "what makes this slice done, checkable by the coder itself" })),
 					depends_on: Type.Optional(Type.Array(Type.String(), { description: "ids of slices that must succeed before this one starts. The interface they share belongs in shared_contract, not in a coder's guesswork" })),
 				}),
-				{ description: "1–8 slices — files must not overlap; depends_on is refused if it names an unknown id or forms a cycle" },
+				{ description: `2–8 slices — files must not overlap; depends_on is refused if it names an unknown id or forms a cycle. A single slice is refused: ${CODER_FLOOR} is the floor` },
 			),
 			maxAttempts: Type.Optional(Type.Integer({ description: "attempts per slice before it counts as failed (default 2)" })),
 		}),
 		async execute(_id, p, sig, _on, ctx) {
 			const mode = (p.mode ?? "code").trim();
 			if (mode !== "code") return { content: [{ type: "text", text: retiredModeNote(mode) }], details: { refused: true, mode }, isError: true };
-			if (!p.subtasks.length) return { content: [{ type: "text", text: "finisher_swarm: subtasks must contain at least one slice" }], details: {}, isError: true };
-			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `finisher_swarm: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
+			if (!p.subtasks.length) return { content: [{ type: "text", text: "code: subtasks must contain at least one slice" }], details: {}, isError: true };
+			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `code: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
+			const floor = coderFloor(p.subtasks.length);
+			if (!floor.spawn) return { content: [{ type: "text", text: coderFloorNote(floor.coders) }], details: { refused: true, coders: floor.coders, floor: CODER_FLOOR }, isError: true };
 			const plan = readPlanSlices(p.subtasks as never[]);
 			const refusals = planRefusals(plan);
 			if (refusals.length) return { content: [{ type: "text", text: planRefusalText(refusals, "no worktree, no coder, no command was run") }], details: { refused: true, refusals }, isError: true };
@@ -126,7 +129,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const slots = swarmSlots(ladder);
 			if (!slots.length)
 				return {
-					content: [{ type: "text", text: "finisher_swarm: no model to run — set priority1..priority5 in .finisher/models.json (each a pi model pattern like \"provider/model\"), or run the swarm from a session whose model resolves; it uses as many slots as are set" }],
+					content: [{ type: "text", text: "code: no model to run — set priority1..priority5 in .finisher/models.json (each a pi model pattern like \"provider/model\"), or run the CODERS from a session whose model resolves; it uses as many slots as are set" }],
 					details: { missingLadder: true },
 					isError: true,
 				};
@@ -134,7 +137,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const effort = effortFor(p.maxAttempts);
 			const budget = budgetNote({
 				toolCapMs: readToolTimeout(ctx.cwd, SWARM_TOOL),
-				subagentMs: subagentTimeout("swarm", ctx.cwd),
+				subagentMs: subagentTimeout("coder", ctx.cwd),
 				attempts: effort,
 				waves: wavesFor(p.subtasks.length, spread.concurrency),
 			});
@@ -144,17 +147,17 @@ export const registerTools = (ctx: HarnessContext) => {
 	}));
 
 	pi.registerTool(boundedTool({
-		name: "finisher_goal",
+		name: "goal",
 		label: "finisher · goal",
 		description:
-			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with finisher_verify, the harness judges each case from the commands it watched you run, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. The goal is the human's decision and the cases are yours: an unchanged goal is never re-confirmed, and only a changed goal opens the dialog again. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
+			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with verify, the harness judges each case from the commands it watched you run, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. The goal is the human's decision and the cases are yours: an unchanged goal is never re-confirmed, and only a changed goal opens the dialog again. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
 		promptGuidelines: [
-			"Call finisher_goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
+			"Call goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
 			"The same goal is never confirmed twice: calling it again with an unchanged goal resumes the run without a dialog, even if the cases changed or the goal was closed by a verify round.",
 			"Write the goal and every case in the language the human writes in, and pass that language as lang: the dialog they confirm is in their language, never yours. Paths, identifiers and commands stay verbatim.",
-			"After a 'fix' step, fix the real cause and call finisher_goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
-			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or declare it { human: true } in finisher_verify when only the human can check it.",
+			"After a 'fix' step, fix the real cause and call goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
+			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or declare it { human: true } in verify when only the human can check it.",
 		],
 		parameters: Type.Object({
 			goal: Type.String({ description: "the outcome, in the human's words — one goal per run" }),
@@ -172,7 +175,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		}),
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
-			if (!goal) return { content: [{ type: "text", text: "finisher_goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
+			if (!goal) return { content: [{ type: "text", text: "goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
 			const lang = resolveGoalLang(languageTag(p.lang), state.humanLang);
 			state.goalLang = lang;
 			const chrome = cleanChrome(p.chrome as GoalChromeOverrides | undefined);
@@ -278,13 +281,13 @@ export const registerTools = (ctx: HarnessContext) => {
 							state: started,
 							text: [
 								...(gate === "reopen" ? [GOAL_UNCHANGED_NOTE, ""] : []),
-								"the goal is confirmed — work until every case holds, then call finisher_verify ONCE at the end:",
+								"the goal is confirmed — work until every case holds, then call verify ONCE at the end:",
 								...next.map((c, i) => `  ${i + 1}. ${c}`),
 								...(clarifyNotes.length ? ["", "kept from the human's own answer, so they are never guessed again:", ...clarifyNotes.map((note) => `  ${note}`)] : []),
 								"",
 								"verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from a command the harness recorded, and each case's result lands in .finisher/checks — never in a new test file.",
 								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",
-								"a case only a human can check is separated, never failed: declare it in finisher_verify as { id, human: true, note } and it is listed for them in the final report.",
+								"a case only a human can check is separated, never failed: declare it in verify as { id, human: true, note } and it is listed for them in the final report.",
 							].join("\n"),
 						}),
 					},
@@ -294,7 +297,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		},
 	}));
 	pi.registerTool(boundedTool({
-		name: "finisher_steer",
+		name: "steer",
 		label: "finisher · steer",
 		description:
 			"Push a finding into a sub-agent THAT IS STILL RUNNING, so it corrects course without being restarted. Call it with no arguments to list who is working right now. You decide when this matters — the harness never guesses on your behalf. steer lands after the current turn's tool calls, before the next model request; followUp lands after the agent finishes its current work.",
@@ -306,7 +309,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			"Never use it to restart a worker or undo its work — steer only adds information.",
 		],
 		parameters: Type.Object({
-			role: Type.Optional(Type.String({ description: "which live sub-agent to reach: swarm. Omit to list who is running" })),
+			role: Type.Optional(Type.String({ description: "which live sub-agent to reach: coder. Omit to list who is running" })),
 			message: Type.Optional(Type.String({ description: "the finding to inject — self-contained, no references to context the sub-agent cannot see" })),
 			mode: Type.Optional(Type.Union([Type.Literal("steer"), Type.Literal("followUp")] as const)),
 		}),
@@ -315,7 +318,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const now = Date.now();
 			if (!pp.role || !pp.message?.trim()) {
 				return {
-					content: [{ type: "text", text: live.length ? `live sub-agents (pass role + message to reach one):\n${live.map((r) => `  ${r.role} — running ${Math.round((now - r.startedAt) / 1000)}s`).join("\n")}` : "no sub-agent is running — there is nothing to steer. Start one with finisher_swarm, or do the work yourself." }],
+					content: [{ type: "text", text: live.length ? `live sub-agents (pass role + message to reach one):\n${live.map((r) => `  ${r.role} — running ${Math.round((now - r.startedAt) / 1000)}s`).join("\n")}` : "no sub-agent is running — there is nothing to steer. Start one with code, or do the work yourself." }],
 					details: { live: live.map((r) => ({ role: r.role, aliveMs: now - r.startedAt })) },
 					...(live.length ? { isError: true } : {}),
 				};

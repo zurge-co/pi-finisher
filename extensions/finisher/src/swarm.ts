@@ -305,10 +305,12 @@ export const swarmSummaryLine = (results: SwarmResult[]): string => {
 };
 
 export const SWARM_ROUTING_GUIDELINE = [
-	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call finisher_swarm instead of serialising the work through yourself.",
+	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call code instead of serialising the work through yourself.",
 	"A fan-out report IS the evidence: act on its findings instead of re-reading what a worker already read or re-running what it already ran, and open a file yourself only when the report names a gap.",
-	"The swarm runs the configured model ladder (priority1..priority5 in .finisher/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
-	"A goal is only done when finisher_verify proves every case from commands the harness recorded; on FAIL work the fix laps the harness appends, then verify again, reporting only at the end.",
-	"The workflow is fixed: finisher_goal confirms once, finisher_phase declares the plan, one finisher_phase done per lap in order, then finisher_verify exactly once — verify is gated on every lap being closed.",
-	"finisher_swarm is coders only: you explore and plan yourself, and you verify with finisher_verify. Never spawn a sub-agent to read or to judge for you.",
+	"The CODERS run the configured model ladder (priority1..priority5 in .finisher/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
+	"Never spawn a lone CODER: a CODER is only worth its cost when at least two run side by side, and main keeps working its own lap while they do. If the work does not split into two independent slices, do it yourself instead of calling code.",
+	"When a command already proves a case, name that command and never run an equivalent again: a script that already passed is evidence, not work to repeat.",
+	"A goal is only done when verify proves every case from commands the harness recorded; on FAIL work the fix laps the harness appends, then verify again, reporting only at the end.",
+	"The workflow is fixed: goal confirms once, lap declares the plan, one lap done per lap in order, then verify exactly once — verify is gated on every lap being closed.",
+	"code is coders only: you explore and plan yourself, and you verify with verify. Never spawn a sub-agent to read or to judge for you.",
 ].join("\n");

@@ -36,7 +36,7 @@ test("a case with several named commands needs all of them, and the last status 
 
 test("only real shell calls are recorded, so a tool call can never masquerade as evidence", () => {
 	let calls = [];
-	for (const ev of [bash("  ", false), bash("npm test", false), { name: "read", args: { path: "x" }, isError: true }, { name: "finisher_verify", args: {}, isError: false }, { name: "bash", args: {} }])
+	for (const ev of [bash("  ", false), bash("npm test", false), { name: "read", args: { path: "x" }, isError: true }, { name: "verify", args: {}, isError: false }, { name: "bash", args: {} }])
 		calls = recordCall(calls, ev);
 	assert.deepEqual(calls.map((c) => c.command), ["npm test"]);
 	assert.equal(recordCall(calls, { name: "read", args: { path: "x" }, isError: false }), calls, "a non-shell call returns the same array, so a caller never has to clear it");

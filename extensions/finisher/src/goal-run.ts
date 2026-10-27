@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { finisherDir } from "./types.ts";
 
-export const SURFACE_TOOLS = ["finisher_goal", "finisher_phase", "finisher_swarm", "finisher_verify", "finisher_steer"] as const;
+export const SURFACE_TOOLS = ["goal", "lap", "code", "verify", "steer"] as const;
 export const RETIRED_TOOLS = ["zense_spec", "zense_adr", "zense_eval", "zense_review", "zense_accept", "zense_discard", "zense_longrun", "zense_ask"] as const;
 export const SURFACE_COMMANDS = ["models", "gaps"] as const;
 export const RETIRED_COMMANDS = ["approve", "gate", "longrun", "memory", "ext-config-show", "distill", "resume", "status", "accept", "discard", "agents", "fresh-context", "surface"] as const;

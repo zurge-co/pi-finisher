@@ -180,7 +180,7 @@ export const languageGuideline = (lang: HumanLang | undefined): string => {
 	const name = languageName(code);
 	return [
 		`human language: ${name} (${code}).`,
-		`The human writes and reads ${name}: write the finisher_goal goal text and every case in ${name}, and report to them in ${name}.`,
+		`The human writes and reads ${name}: write the goal goal text and every case in ${name}, and report to them in ${name}.`,
 		"Keep file paths, identifiers, commands, code and quoted output exactly as they are — never translate those.",
 	].join(" ");
 };
@@ -188,8 +188,8 @@ export const languageGuideline = (lang: HumanLang | undefined): string => {
 export const goalLanguageNote = (lang: HumanLang | undefined): string => {
 	const name = languageName(lang);
 	return [
-		`finisher_goal: the human reads ${name}, and this goal text is not ${name} — so the dialog would ask them to confirm something they cannot read, and nothing was started.`,
-		`State the goal and every case in ${name}, keeping file paths, identifiers and commands verbatim, then call finisher_goal again.`,
+		`goal: the human reads ${name}, and this goal text is not ${name} — so the dialog would ask them to confirm something they cannot read, and nothing was started.`,
+		`State the goal and every case in ${name}, keeping file paths, identifiers and commands verbatim, then call goal again.`,
 	].join(" ");
 };
 

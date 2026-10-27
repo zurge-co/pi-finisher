@@ -100,16 +100,16 @@ const session = (opts = {}) => {
 
 test("the goal loop survives on main alone: a failing verify re-arms the round, and a proven one finishes the goal", async () => {
 	const s = session({ cwd: repo({ test: "node -e \"process.exit(process.env.CHECK ? 0 : 1)\"" }) });
-	await s.run("finisher_goal", { goal: "ship it", cases: ["the check passes"] });
+	await s.run("goal", { goal: "ship it", cases: ["the check passes"] });
 	assert.equal(s.box.get().goalDriver.goal, "ship it");
-	await s.run("finisher_phase", { plan: ["make the check pass"] });
+	await s.run("lap", { plan: ["make the check pass"] });
 
-	const blocked = await s.run("finisher_verify", { cases: [{ id: "the check passes", command: "npm test" }] });
+	const blocked = await s.run("verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 	assert.equal(blocked.isError, true, "an open lap blocks verification, so a stale verify can never pass a goal early");
 	assert.deepEqual(s.rounds, [], "and it does not arm a round either");
 
-	await s.run("finisher_phase", { done: true });
-	const failing = await s.run("finisher_verify", { cases: [{ id: "the check passes", command: "npm test" }] });
+	await s.run("lap", { done: true });
+	const failing = await s.run("verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 	assert.equal(failing.isError, true, "the deterministic check really failed in a real repo");
 	assert.equal(existsSync(join(s.ctx.cwd, ".finisher", "report.md")), false, "a goal that is still open leaves no report behind");
 	assert.equal(s.rounds.length, 1, "a failing verify hands the round back to main — the loop is alive");
@@ -120,11 +120,11 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 	try {
 		for (let i = 0; i < 8 && !(s.box.get().goalDriver.phases ?? []).every((p) => p) === false; i++) {
 			const before = s.box.get().goalDriver.lap ?? 0;
-			await s.run("finisher_phase", { done: true });
+			await s.run("lap", { done: true });
 			if ((s.box.get().goalDriver.lap ?? 0) === before) break;
 		}
 		s.box.get().verifyCalls = [{ command: "npm test", ok: true }];
-		const passing = await s.run("finisher_verify", { cases: [{ id: "the check passes", command: "npm test" }] });
+		const passing = await s.run("verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 		const driver = s.box.get().goalDriver;
 		assert.ok(driver.doneAt, "with the check green and the command recorded, the goal finishes — the loop is not dead");
 		assert.equal(driver.outcome, "verified");
@@ -141,10 +141,10 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 
 test("a case with no named command stays UNVERIFIED even on a green suite — a green suite is not proof of a case", async () => {
 	const s = session({ cwd: repo({ test: "node -e \"process.exit(0)\"" }) });
-	await s.run("finisher_goal", { goal: "ship it", cases: ["the check passes"] });
-	await s.run("finisher_phase", { plan: ["make it pass"] });
-	await s.run("finisher_phase", { done: true });
-	const out = await s.run("finisher_verify", { cases: [] });
+	await s.run("goal", { goal: "ship it", cases: ["the check passes"] });
+	await s.run("lap", { plan: ["make it pass"] });
+	await s.run("lap", { done: true });
+	const out = await s.run("verify", { cases: [] });
 	assert.equal(out.isError, true);
 	assert.match(out.content[0].text, /UNVERIFIED/);
 	assert.match(out.content[0].text, /no command was named/);
@@ -154,8 +154,8 @@ test("a case with no named command stays UNVERIFIED even on a green suite — a 
 	assert.match(s.box.get().goalDriver.phases[1].text, /the check passes/, "and that lap names the case in the human's own words");
 	assert.ok(s.box.get().goalDriver.phases[1].text.startsWith("the check passes"), "the lap leads with the case text the report will name, so it binds back");
 
-	await s.run("finisher_phase", { done: true });
-	const again = await s.run("finisher_verify", { cases: [] });
+	await s.run("lap", { done: true });
+	const again = await s.run("verify", { cases: [] });
 	assert.equal(again.isError, true);
 	assert.match(again.content[0].text, /no command was named/);
 	assert.equal(s.box.get().goalDriver.outcome, undefined, "the same gap twice is still a fix lap, never a halt: naming nothing changes nothing, but the round budget is what ends it");
@@ -208,16 +208,16 @@ test("verify runs the repo's checks through the plan and writes its evidence to 
 	const dir = repo({ test: `node -e "require('node:fs').appendFileSync('runs.log','x')"` });
 	const s = session({ cwd: dir });
 	clearCheckCache();
-	await s.run("finisher_goal", { goal: "ship it", cases: ["the suite passes"] });
-	await s.run("finisher_phase", { plan: ["make it pass"] });
-	await s.run("finisher_phase", { done: true });
+	await s.run("goal", { goal: "ship it", cases: ["the suite passes"] });
+	await s.run("lap", { plan: ["make it pass"] });
+	await s.run("lap", { done: true });
 	s.box.get().verifyCalls = [{ command: "node check.mjs", ok: true, at: Date.now() }];
 	const runs = () => (existsSync(join(dir, "runs.log")) ? readFileSync(join(dir, "runs.log"), "utf8").trim().split("\n").length : 0);
-	const first = await s.run("finisher_verify", { cases: [{ id: "the suite passes", command: "node check.mjs" }] });
+	const first = await s.run("verify", { cases: [{ id: "the suite passes", command: "node check.mjs" }] });
 	assert.equal(first.isError, undefined, "the recorded command plus the green check close the goal");
 	assert.equal(runs(), 1, "the check stage really ran the repo's own test script");
 	assert.deepEqual(readChecks(dir).map((e) => [e.case, e.status]), [["the suite passes", "pass"]], "one line per case, and a pass only for a pass");
 	assert.match(first.content[0].text, /evidence: \.finisher\/checks/);
-	await s.run("finisher_verify", { cases: [] });
+	await s.run("verify", { cases: [] });
 	assert.equal(runs(), 1, "a second pass over the same edit state is answered from the plan cache — the suite is not re-run");
 });

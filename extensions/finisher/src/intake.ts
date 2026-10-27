@@ -33,8 +33,8 @@ export const intakeGate = (goal: IntakeGoal | undefined, toolName: string, preGo
 export const intakeBlockNote = (lang: string | undefined, remaining: number): string => {
 	const left = callCount(remaining);
 	return thaiLang(lang)
-		? `ยังไม่มีการยืนยัน goal: การสำรวจโค้ดถูกปิดแล้ว (เหลือ ${left} ครั้ง) — goal และ case ฉบับร่างเตรียมไว้จากข้อความของมนุษย์แล้ว ให้เรียก finisher_goal ก่อน แล้วค่อยสำรวจโค้ด`
-		: `no goal is confirmed yet: code exploration is closed (${left} call(s) left) — the draft goal and its cases are already prepared from the human's message, so call finisher_goal first and explore only after that`;
+		? `ยังไม่มีการยืนยัน goal: การสำรวจโค้ดถูกปิดแล้ว (เหลือ ${left} ครั้ง) — goal และ case ฉบับร่างเตรียมไว้จากข้อความของมนุษย์แล้ว ให้เรียก goal ก่อน แล้วค่อยสำรวจโค้ด`
+		: `no goal is confirmed yet: code exploration is closed (${left} call(s) left) — the draft goal and its cases are already prepared from the human's message, so call goal first and explore only after that`;
 };
 
 export const DRAFT_GOAL_MAX = 200;
@@ -97,9 +97,9 @@ export const intakeDirective = (prompt: string, lang?: string): string => {
 	const numbered = draft.cases.map((c, i) => `${i + 1}. ${c}`).join("  ");
 	if (!draft.goal)
 		return thaiLang(lang)
-			? "ยังไม่มี goal: ถามมนุษย์ว่า goal คืออะไรด้วยคำพูดของเขาเอง แล้วเรียก finisher_goal ก่อนสำรวจโค้ดใด ๆ"
-			: "no goal yet: ask the human for the goal in their own words, then call finisher_goal before any code exploration";
+			? "ยังไม่มี goal: ถามมนุษย์ว่า goal คืออะไรด้วยคำพูดของเขาเอง แล้วเรียก goal ก่อนสำรวจโค้ดใด ๆ"
+			: "no goal yet: ask the human for the goal in their own words, then call goal before any code exploration";
 	if (thaiLang(lang))
-		return `goal ยังไม่ถูกยืนยัน — ฉบับร่างจากข้อความของมนุษย์: goal = ${draft.goal} | case = ${numbered}. เรียก finisher_goal ด้วย goal และ case ชุดนี้ก่อนอ่าน/grep/bash ใด ๆ (สำรวจโค้ดได้อีก ${INTAKE_GRACE_CALLS} ครั้งก่อนถูกปิด) มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
-	return `no goal is confirmed yet — the draft from the human's own message: goal = ${draft.goal} | cases = ${numbered}. Call finisher_goal with this goal and these cases before any read/grep/bash (exploration is closed after ${INTAKE_GRACE_CALLS} calls); the human confirms once and the same goal is never asked again`;
+		return `goal ยังไม่ถูกยืนยัน — ฉบับร่างจากข้อความของมนุษย์: goal = ${draft.goal} | case = ${numbered}. เรียก goal ด้วย goal และ case ชุดนี้ก่อนอ่าน/grep/bash ใด ๆ (สำรวจโค้ดได้อีก ${INTAKE_GRACE_CALLS} ครั้งก่อนถูกปิด) มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
+	return `no goal is confirmed yet — the draft from the human's own message: goal = ${draft.goal} | cases = ${numbered}. Call goal with this goal and these cases before any read/grep/bash (exploration is closed after ${INTAKE_GRACE_CALLS} calls); the human confirms once and the same goal is never asked again`;
 };

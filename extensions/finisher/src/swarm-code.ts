@@ -180,7 +180,8 @@ export const parseWorkerTests = (out: string): { result: "PASS" | "FAIL" | "SKIP
 
 export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string; sharedContract?: string; acceptance?: string[] }): string =>
 	[
-		`You are swarm coder ${slice.id}. GOAL: ${opts.goal ?? "(goal supplied by the main agent)"}`,
+		`You are CODER ${slice.id}. GOAL: ${opts.goal ?? "(goal supplied by the main agent)"}`,
+		`The main agent is working on the same goal right now, in parallel with you and the other coders — stay inside your slice and do not wait for it.`,
 		...((opts.sharedContract ?? "").trim() ? ["SHARED CONTRACT (decided before you started — follow it exactly, do not redesign it):", (opts.sharedContract ?? "").trim(), ""] : []),
 		...((opts.acceptance ?? []).length ? ["Your slice is done when these hold:", ...(opts.acceptance ?? []).map((a) => `  - ${a}`), ""] : []),
 		`You work ALONE in your own checkout: ${opts.worktreeDir}. Other coders are editing other checkouts of the same repo at the same time.`,

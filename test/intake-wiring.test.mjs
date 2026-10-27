@@ -47,8 +47,8 @@ test("the running extension closes code exploration once the pre-goal budget is 
 	for (let used = 0; used < INTAKE_GRACE_CALLS; used++) assert.equal(await harness.call("read", { path: "src/a.ts" }), undefined, `exploratory call ${used + 1} is still inside the budget`);
 	const blocked = await harness.call("bash", { command: "grep -rn x ." });
 	assert.equal(blocked?.block, true, "the budget is spent, so the next exploration is refused by the real hook");
-	assert.match(blocked.reason, /finisher_goal/, "the refusal names the tool that opens the gate");
-	assert.equal(await harness.call("finisher_goal", { goal: "ship it" }), undefined, "the gate can never stand between the agent and the goal tool");
+	assert.match(blocked.reason, /goal/, "the refusal names the tool that opens the gate");
+	assert.equal(await harness.call("goal", { goal: "ship it" }), undefined, "the gate can never stand between the agent and the goal tool");
 });
 
 test("a new human turn gives the intake budget back, so no goal is stonewalled across turns", async () => {
@@ -64,7 +64,7 @@ test("the pre-goal system prompt carries the draft goal and every drafted case, 
 	const human = "Ship the report page. It must open from the HUD row";
 	const text = await harness.prompt(human);
 	assert.ok(text.includes(intakeDirective(human)), "the whole draft directive rides in the real prompt, not a paraphrase");
-	assert.match(text, /finisher_goal/);
+	assert.match(text, /goal/);
 	assert.ok(text.includes("Ship the report page"), "the drafted goal is the human's own words");
 	assert.ok(text.includes("It must open from the HUD row"), "and so is every drafted case");
 });
@@ -80,7 +80,7 @@ test("the goal tool asks its bounded clarify round before the confirm dialog, an
 
 test("a session with no dialog refuses the goal instead of waiting on a clarify question", async () => {
 	const harness = liveHarness();
-	const result = await harness.run("finisher_goal", { goal: "make it better", cases: [], lang: "en" });
+	const result = await harness.run("goal", { goal: "make it better", cases: [], lang: "en" });
 	assert.equal(result.details.outcome, "unavailable", "no UI means no dialog, and no invented confirmation");
 	assert.match(result.content[0].text, /no dialog/, "the refusal says why");
 });
@@ -114,7 +114,7 @@ const humanUi = (seen) => ({
 
 test("the real goal tool asks its bounded round first, and the confirm dialog is handed what the human sharpened", async () => {
 	const seen = [];
-	const vague = await liveHarness(humanUi(seen)).run("finisher_goal", { goal: "make it better", cases: ["it works"], lang: "en" });
+	const vague = await liveHarness(humanUi(seen)).run("goal", { goal: "make it better", cases: ["it works"], lang: "en" });
 	assert.equal(vague.isError, undefined, "a vague goal is still confirmable: the ask sharpens it, it never gates it");
 	const questions = seen.slice(0, -1);
 	assert.ok(questions.length >= 1 && questions.length <= CLARIFY_MAX, `asked ${questions.length} questions, never more than the bound`);
@@ -125,7 +125,7 @@ test("the real goal tool asks its bounded round first, and the confirm dialog is
 	assert.match(dialog, /npm test exits 0/, "the observable the human picked reaches the dialog as a case the harness can check");
 
 	const quiet = [];
-	const sharp = await liveHarness(humanUi(quiet)).run("finisher_goal", { goal: "make the HUD ticker 20% faster in src/hud.ts", cases: ["npm test exits 0"], lang: "en" });
+	const sharp = await liveHarness(humanUi(quiet)).run("goal", { goal: "make the HUD ticker 20% faster in src/hud.ts", cases: ["npm test exits 0"], lang: "en" });
 	assert.equal(sharp.isError, undefined);
 	assert.equal(quiet.length, 1, "a goal that is already specific goes straight to the confirm dialog, asking nothing");
 	assert.match(quiet[0], /src\/hud\.ts/, "and that dialog shows the goal it was given");

@@ -1,4 +1,4 @@
-export const SWARM_TOOL = "finisher_swarm";
+export const SWARM_TOOL = "code";
 
 export interface BudgetInput {
 	toolCapMs: number;

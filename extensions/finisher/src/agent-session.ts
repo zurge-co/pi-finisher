@@ -1,6 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { clip, elapsedLabel } from "./agent-panel.ts";
+import { clip, elapsedLabel, roleTag } from "./agent-panel.ts";
 import { parseLogItems, renderLogItems, toolItemCount, toolToggleHint, TOOL_TOGGLE_KEY } from "./tool-log.ts";
+import { scrollKeysLine } from "./scroll-page.ts";
 import { type State, type SubagentRun } from "./types.ts";
 
 export const SESSION_MIN_BODY_ROWS = 4;
@@ -50,7 +51,7 @@ export const sessionStatus = (run: SubagentRun, now = Date.now()): string =>
 	run.status === "running" ? `▶ ${elapsedLabel(now - (run.startedAt ?? run.at))}` : run.ok ? "✓ done" : "✗ failed";
 
 export const sessionLabel = (run: SubagentRun, index: number, total: number, width = 100, now = Date.now()): string => {
-	const head = `${index + 1}/${total} · ${run.role.toUpperCase()} · ${sessionStatus(run, now)}`;
+	const head = `${index + 1}/${total} · ${roleTag(run.role)} · ${sessionStatus(run, now)}`;
 	const meta = [run.slotId, run.model ?? "(ladder)", `${(run.steers ?? []).length} steer`].filter(Boolean).join(" · ");
 	return clip(`${head} · ${meta}`, Math.max(20, width));
 };
@@ -60,7 +61,7 @@ export const sessionTitle = (run: SubagentRun, index: number, total: number, wid
 
 export const sessionTab = (run: SubagentRun, index: number): string => {
 	const state = run.status === "running" ? "▶" : run.ok ? "✓" : "✗";
-	const name = [run.role.toUpperCase(), run.slotId, run.model].filter(Boolean).join(" ");
+	const name = [roleTag(run.role), run.slotId, run.model].filter(Boolean).join(" ");
 	return `${index + 1}:${name} ${state}`;
 };
 
@@ -101,10 +102,9 @@ export const sessionTabs = (runs: SubagentRun[], current: number, width = 100): 
 };
 
 export const sessionKeyLine = (total: number, toolTools = 0, expanded = false): string => {
-	const tools = toolTools > 0 ? ` • ${TOOL_TOGGLE_KEY} = ${expanded ? "hide" : "show"} tool output (${toolTools})` : "";
-	return total > 1
-		? `←/→ another sub-agent (live first, then finished) • 1-9 jump to one • ↑↓ scroll • PgUp/PgDn page • g/G top/bottom • space = read chat • Esc close (the agent keeps running)${tools}`
-		: `↑↓ scroll • PgUp/PgDn page • g/G top/bottom • space = read chat • Esc close (the agent keeps running)${tools}`;
+	const lead = total > 1 ? ["←/→ another sub-agent (live first, then finished)", "1-9 jump to one"] : [];
+	const tail = ["space = read chat", `Esc close (the agent keeps running)${toolTools > 0 ? ` • ${TOOL_TOGGLE_KEY} = ${expanded ? "hide" : "show"} tool output (${toolTools})` : ""}`];
+	return scrollKeysLine({ close: [], lead, tail });
 };
 
 export const toolToggleKeys = (): string[] => [TOOL_TOGGLE_KEY];

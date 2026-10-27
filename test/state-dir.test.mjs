@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { finisherDir, RETIRED_TOOLS, SURFACE_TOOLS, SURFACE_COMMANDS } from "../extensions/finisher/index.ts";
+import { finisherDir, isLiveTool, RETIRED_TOOLS, SURFACE_TOOLS, SURFACE_COMMANDS } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const read = (p) => readFileSync(join(here, p), "utf8");
@@ -30,11 +30,13 @@ test("session state is persisted under the new name only", () => {
 	assert.ok(!index.includes(`${retiredPrefix}-state`), "the retired state key must not be persisted or restored");
 });
 
-test("the live surface carries no retired prefix: every live name is a finisher name", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["finisher_goal", "finisher_phase", "finisher_swarm", "finisher_verify", "finisher_steer"]);
+test("the live surface carries no prefix at all: no retired name, no finisher_ wrapper", () => {
+	assert.deepEqual([...SURFACE_TOOLS], ["goal", "lap", "code", "verify", "steer"]);
 	assert.deepEqual([...SURFACE_COMMANDS], ["models", "gaps"]);
-	const prefix = `${retiredPrefix}_`;
-	for (const t of SURFACE_TOOLS) assert.ok(!t.startsWith(prefix), `${t} still carries the retired prefix`);
-	for (const t of RETIRED_TOOLS) assert.ok(!(SURFACE_TOOLS).includes(t), `${t} is retired but still live`);
-	for (const t of SURFACE_TOOLS) assert.ok(t.startsWith("finisher_"), `${t} must be a finisher tool`);
+	for (const t of SURFACE_TOOLS) {
+		assert.ok(!t.startsWith(`${retiredPrefix}_`), `${t} still carries the retired prefix`);
+		assert.ok(!t.includes("_"), `${t} must be a bare tool name, so a call is goal, not finisher_goal`);
+	}
+	for (const t of RETIRED_TOOLS) assert.ok(!SURFACE_TOOLS.includes(t), `${t} is retired but still live`);
+	for (const t of SURFACE_TOOLS) assert.equal(isLiveTool(t), true, `${t} is on the surface, so it must be live`);
 });

@@ -8,10 +8,10 @@
 
 ```
 goal (confirmed once)
-   └─ finisher_goal        confirm the goal + its cases, once
-   └─ finisher_phase       declare the plan, then close one lap at a time: LAP 1/n → LAP n/n
-   └─ finisher_swarm       code             (N coders at once, one git worktree each)
-   └─ finisher_verify      verify           (ONE shot, refused while a lap is still open; main verifies)
+   └─ goal        confirm the goal + its cases, once
+   └─ lap         declare the plan, then close one lap at a time: LAP 1/n → LAP n/n
+   └─ code        2+ CODER sub-agents at once, one git worktree each
+   └─ verify      ONE shot, refused while a lap is still open; main verifies itself
    └─ a failing verify appends fix laps, never a fresh plan: the work and time already spent stay
    └─► ONE report: every case + its evidence, or an honest "not proven"
 ```
@@ -36,14 +36,14 @@ missing most often, so the plan can be made better instead of guessed.
 - **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
 - **Nobody answers, nothing starts.** Every goal dialog has a deadline
   (`confirmTimeoutMs` in `.finisher/config.json`, `FINISHER_CONFIRM_TIMEOUT_MS`, default 120s, `0` = wait
-  forever). A timeout is a refusal: the run stops, complains once, and refuses any further `finisher_goal`
+  forever). A timeout is a refusal: the run stops, complains once, and refuses any further `goal`
   until the human writes again — it never starts on a guess and never re-opens the dialog by itself.
 - **The goal is the human's.** A goal and its case list can only change through the confirm dialog:
   the same goal with the same cases resumes silently, a new case list re-opens the dialog, and a
   declined or unavailable dialog leaves the confirmed goal byte-identical. A verify run can never
   name or re-case a goal, and an open plan is never replaced behind your back.
 - **A vague goal is asked once, not guessed.** When the human's words cannot yield a checkable case,
-  `finisher_goal` asks at most 3 questions — each with options to pick (drawn from the repo's own
+  `goal` asks at most 3 questions — each with options to pick (drawn from the repo's own
   module names) and an "as I said is enough" escape — and folds the answers into the cases before the
   same confirm dialog opens. One round per goal, never a question that reading the code would answer.
 - **Evidence or it did not happen.** A case with no executed command is `UNVERIFIED`, never `PASS`.
@@ -81,10 +81,10 @@ and long lines are wrapped between graphemes so a Thai or Devanagari mark is nev
 
 | Tool | What it does |
 |---|---|
-| `finisher_goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` make the dialog the human's language. |
-| `finisher_steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
-| `finisher_swarm` | **coders only**: one git worktree + branch per slice, merged back in dependency order, overlapping declared files never merged silently. Every slice names the `files` it owns and the `depends_on` slices it waits for. |
-| `finisher_verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts through a scoped, parallel, cached plan, then judges each case from the commands the harness recorded, and writes one `PASS`/`FAIL` line per case to `.finisher/checks`. No sub-agent is spawned to grade your work. |
+| `goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` make the dialog the human's language. |
+| `steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
+| `code` | **coders only**: one git worktree + branch per slice, merged back in dependency order, overlapping declared files never merged silently. Every slice names the `files` it owns and the `depends_on` slices it waits for. |
+| `verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts through a scoped, parallel, cached plan, then judges each case from the commands the harness recorded, and writes one `PASS`/`FAIL` line per case to `.finisher/checks`. No sub-agent is spawned to grade your work. |
 
 Explore and planning are yours alone: read the files yourself and decide the slices, the files each
 one owns and the interface they share (`shared_contract`). A plan that overlaps files, names an
@@ -100,8 +100,8 @@ nothing is running it collapses to a single idle line, so a quiet session costs 
 ```
 ╭─ ▚ ●●○○○ LAP 4/5 4:12 ─ 2 live · click a row · ctrl+_ pages                 ─╮
 │ ▸ make the scheduler prove its bound, not assert it                          │
-│ SWA   ▶ swarm slot1 provider/a 42s fixing the scheduler bound                │
-│ SWA   ▶ swarm slot2 provider/b 41s reading src/swarm.ts                      │
+│ CODER ▶ coder slot1 provider/a 42s fixing the scheduler bound                │
+│ CODER ▶ coder slot2 provider/b 41s reading src/swarm.ts                      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -145,7 +145,7 @@ A plan longer than the terminal pages instead of clipping: no lap text is ever c
 
 ### The report page
 
-The moment a goal closes, `finisher_verify` writes the report it just gave you to
+The moment a goal closes, `verify` writes the report it just gave you to
 **`.finisher/report.md`** — the result first, then the goal, the lap count, the round, when it was written,
 and every case with the command that proved it. The HUD always advertises it: a `📄 report` row while a
 closed goal is still boxed, and a tail on the idle line otherwise.
@@ -222,7 +222,7 @@ There is nothing else to switch: fresh context, handoff and verification are aut
 Install it and the fast path is already on — no key, no flag, no dialog:
 
 - **The goal comes before the code.** The human's message is drafted into a goal plus its cases, and
-  `finisher_goal` is asked for before exploration: two pre-goal calls of grace, then the harness
+  `goal` is asked for before exploration: two pre-goal calls of grace, then the harness
   refuses to read or grep until the goal is confirmed. Nothing is explored on a guess.
 - **Verify runs checks, not the whole suite every time.** The repo's own `typecheck`/`lint`/`test`
   scripts are scoped to what changed, run in parallel, and cached by fingerprint — a repeat round
@@ -248,9 +248,9 @@ failover, and a gap is skipped:
 { "priority1": "anthropic/claude-sonnet", "priority2": "openai/gpt-5", "priority3": "google/gemini-pro" }
 ```
 
-An explicit slot model (a swarm slot) outranks the ladder; with no ladder at all a sub-agent falls
-back to the main session model. A leftover per-role key (`swarm`, `verifier`, …) never selects a
-model any more — it is reported as ignored.
+An explicit slot model (a coder slot) outranks the ladder; with no ladder at all a sub-agent falls
+back to the main session model. A leftover per-role key (`swarm`, `coder`, …) never selects a model any
+more — it is reported as ignored.
 
 `.finisher/config.json`
 
@@ -263,7 +263,7 @@ reported as ignored, never obeyed.
 
 ## Verification runs once, at the end
 
-`finisher_verify` is not a loop. After the implementation loops are done, it runs **once**, in two
+`verify` is not a loop. After the implementation loops are done, it runs **once**, in two
 stages:
 
 1. **deterministic** — the repo's own `typecheck`, `lint` and `test` scripts run scoped to what
@@ -278,7 +278,7 @@ stages:
 | outcome | what happens |
 |---|---|
 | every case holds | one report, done |
-| a case failed | the main agent gets the next loop back: fix it, use `finisher_swarm` to get coders working in parallel, then verify again (bounded, then it halts) |
+| a case failed | the main agent gets the next loop back: fix it, use `code` to get coders working in parallel, then verify again (bounded, then it halts) |
 | no command can prove a case | it says so and hands that case to you instead of guessing |
 
 A verify run **never creates a goal**. If no confirmed goal is open, it reports its evidence and
@@ -306,11 +306,11 @@ with it off the context simply keeps growing, and goal close stays untouched eit
 The handoff stack is **parked** (`HANDOFF_ENABLED = false`): nothing is classified into it, no handoff
 model is called, and it injects nothing. Sub-agents still run under `RpcClient`, so a finding can be
 pushed into a **run that is already working** with `steer()` instead of restarting it, and every role
-boots with `--exclude-tools finisher_*`, so a sub-agent can never re-enter the harness.
+boots with `--exclude-tools goal,lap,code,verify,steer`, so a sub-agent can never re-enter the harness.
 
 ## Coders prove their own slice
 
-Each `finisher_swarm mode=code` slice gets its own git worktree **with your dependencies linked in**
+Each `code` slice gets its own git worktree **with your dependencies linked in**
 (`node_modules` is symlinked from the repo and excluded from the slice's diff), so a coder runs your
 test command immediately instead of installing anything. A coder must end with two lines:
 
@@ -351,7 +351,7 @@ The `handoff` slot is never counted as a fan-out rung.
 
 The agent writes **in your repo**. There is no shadow checkout to get lost in: what `finisher` edits is
 what `git status` shows, so a review always looks at the same tree the agent worked in. The only
-worktrees left are the per-slice ones that `finisher_swarm mode=code` gives each parallel coder, so
+worktrees left are the per-slice ones that `code` gives each parallel coder, so
 two coders can never overwrite each other; they are merged back deterministically by slice id.
 
 Undo: There is no accept/discard command: when you want a change undone, ask the agent to undo it (or use
@@ -366,12 +366,12 @@ whenever one is missing or invalid.
 | call | bound |
 |---|---|
 | `bash` | injected if absent (default 900 s, override with `toolTimeoutMs` in `.finisher/config.json`) |
-| `finisher_goal` / `finisher_swarm` / `finisher_steer` | wrapped, reports `⏱ … exceeded its Ns limit` instead of hanging |
+| `goal` / `code` / `steer` | wrapped, reports `⏱ … exceeded its Ns limit` instead of hanging |
 | every RPC call to a sub-agent (`start`, `promptAndWait`, `steer`, `getMessages`, …) | its own deadline |
 | every `git` subprocess | 120 s, `SIGKILL` on expiry |
 
 ```json
-{ "toolTimeoutMs": { "bash": 900000, "finisher_swarm": 1800000 } }
+{ "toolTimeoutMs": { "bash": 900000, "code": 1800000 } }
 ```
 
 A broken config falls back to the default rather than failing a tool call.

@@ -94,9 +94,23 @@ export const planRefusals = (slices: PlanSlice[]): Refusal[] => {
 	return out;
 };
 
+export const CODER_FLOOR = 2;
+
+export const coderFloor = (slices: number): { spawn: boolean; coders: number } => {
+	const n = Number.isFinite(slices) ? Math.max(0, Math.floor(slices)) : 0;
+	return { spawn: n >= CODER_FLOOR, coders: n };
+};
+
+export const coderFloorNote = (slices: number): string =>
+	[
+		`code refused: ${slices} slice(s) is a lone CODER, and one CODER is slower than doing it yourself.`,
+		`A fan-out only pays off when at least ${CODER_FLOOR} coders run side by side while the main agent keeps working its own lap.`,
+		"Do this slice yourself in the main agent instead. If the work really splits into independent slices, call code again with the slices as separate items in one call — never several one-slice calls.",
+	].join("\n");
+
 export const planRefusalText = (refusals: Refusal[], spawned: string): string =>
 	[
-		`finisher_swarm refused the plan before spawning anything (${spawned}):`,
+		`code refused the plan before spawning anything (${spawned}):`,
 		...refusals.map((r) => `  ✗ ${r.detail}`),
 		"Fix the plan and call it again: every slice needs its own files and its dependencies named. Nothing was started.",
 	].join("\n");

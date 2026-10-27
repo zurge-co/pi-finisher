@@ -1,10 +1,12 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { goalPageMaxOffset, goalPageWindow } from "./goal-page.ts";
+import { SCROLL_CLOSE, SCROLL_MIN_ROWS, scrollKeysLine, scrollMaxOffset, type ScrollCloseKey } from "./scroll-page.ts";
 
 export const REPORT_HIT = -2;
 export const REPORT_MARK = "📄";
-export const REPORT_PAGE_KEYS = "Esc close · ↑↓ scroll · PgUp/PgDn page · g/G top/bottom";
-export const REPORT_PAGE_MIN_ROWS = 4;
+export const REPORT_PAGE_CLOSE: readonly ScrollCloseKey[] = SCROLL_CLOSE;
+export const REPORT_PAGE_KEYS = scrollKeysLine({ close: REPORT_PAGE_CLOSE });
+export const REPORT_PAGE_MIN_ROWS = SCROLL_MIN_ROWS;
 
 export interface HudReport {
 	outcome?: string;
@@ -48,4 +50,4 @@ export const reportPageLines = (text: string): string[] => {
 export const reportPageWindow = (total: number, rows: number, offset: number, size = REPORT_PAGE_MIN_ROWS): { from: number; to: number } =>
 	goalPageWindow(total, rows, offset, size);
 
-export const reportPageMaxOffset = (total: number, rows: number): number => goalPageMaxOffset(total, rows);
+export const reportPageMaxOffset = (total: number, rows: number): number => scrollMaxOffset(total, Math.max(REPORT_PAGE_MIN_ROWS, rows));

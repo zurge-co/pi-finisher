@@ -108,9 +108,9 @@ export const nextGoalDriverStep = (state: GoalRunState, report: VerifyReport, ma
 				...phaseListLines(grown),
 				"",
 				`next: LAP ${Math.min(grown.lap, totalPhases(grown))}/${totalPhases(grown)} — ${currentLap(grown)?.text ?? "no lap"}`,
-				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — declare it { id, human: true } in finisher_verify and it is reported to the human at the end instead of failing the run.`] : []),
+				...(human.length ? ["", buildHumanTestNote(report), "", `do not invent a way to prove ${human.join(", ")} — declare it { id, human: true } in verify and it is reported to the human at the end instead of failing the run.`] : []),
 				"",
-				`this is verify round ${round} of ${maxBatches} — close every lap with finisher_phase done, then call finisher_verify once`,
+				`this is verify round ${round} of ${maxBatches} — close every lap with lap done, then call verify once`,
 			].join("\n"),
 		};
 	}

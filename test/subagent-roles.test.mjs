@@ -29,7 +29,7 @@ const repo = (cfg) => {
 const here = new URL("..", import.meta.url).pathname;
 
 test("there is exactly one role left — coders — and every table agrees on it", () => {
-	assert.deepEqual([...SUBAGENT_ROLES], ["swarm"], "explore and verify are main's own work, so only coders are spawned");
+	assert.deepEqual([...SUBAGENT_ROLES], ["coder"], "explore and verify are main's own work, so only coders are spawned");
 	for (const role of SUBAGENT_ROLES) {
 		assert.ok(role in SUBAGENT_EXCLUDE_TOOLS, `${role} must declare its tool exclusions`);
 		assert.ok(role in SUBAGENT_STRIP_FLAGS, `${role} must declare its boot flags`);
@@ -41,11 +41,11 @@ test("there is exactly one role left — coders — and every table agrees on it
 	assert.equal(isSubagentRole("reviewer"), false);
 	assert.equal(isSubagentRole("distiller"), false);
 	assert.equal(isSubagentRole("verifier"), false, "the verifier role is gone: main verifies, no child is spawned to judge");
-	assert.equal(isSubagentRole("swarm"), true, "coders are the only role left");
+	assert.equal(isSubagentRole("coder"), true, "coders are the only role left");
 });
 
 test("a coder cannot re-enter the harness — every finisher tool is excluded by name, and no verifier exception is left", () => {
-	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
+	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.coder, "coder");
 	const excluded = args[args.indexOf("--exclude-tools") + 1].split(",");
 	for (const harness of HARNESS_TOOLS) assert.ok(excluded.includes(harness), `${harness} must be excluded, or a coder could spawn coders or verify itself`);
 	assert.ok(!excluded.includes("bash"), "a coder must run commands — that is how it works");
@@ -54,18 +54,18 @@ test("a coder cannot re-enter the harness — every finisher tool is excluded by
 });
 
 test("the coder CAN write, because code mode works by editing files in its own worktree", () => {
-	const excluded = (SUBAGENT_EXCLUDE_TOOLS.swarm ?? []).filter((t) => t !== FINISHER_TOOL_GLOB);
+	const excluded = (SUBAGENT_EXCLUDE_TOOLS.coder ?? []).filter((t) => t !== FINISHER_TOOL_GLOB);
 	assert.ok(!excluded.includes("write"), "a coder that cannot write cannot do its job");
 	assert.ok(!excluded.includes("edit"));
-	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
+	const args = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.coder, "coder");
 	const list = args[args.indexOf("--exclude-tools") + 1].split(",");
 	assert.deepEqual(list.slice(0, HARNESS_TOOLS.length), [...HARNESS_TOOLS], "the harness tools are the exclusions, and nothing else");
 	assert.equal(list.length, HARNESS_TOOLS.length, "a coder gets exactly the harness tools as its exclusions, and nothing else");
 });
 
 test("a coder keeps its provider extension — a bare boot made the child unable to reach any extension-provided model", () => {
-	assert.ok(!SUBAGENT_STRIP_FLAGS.swarm.includes("--no-extensions"), "a coder needs the provider extension to reach its model");
-	assert.ok(SUBAGENT_TIMEOUT_MS.swarm >= 300_000, "a coder runs real work, so it needs real time");
+	assert.ok(!SUBAGENT_STRIP_FLAGS.coder.includes("--no-extensions"), "a coder needs the provider extension to reach its model");
+	assert.ok(SUBAGENT_TIMEOUT_MS.coder >= 300_000, "a coder runs real work, so it needs real time");
 });
 
 test("every role boots with the harness env guard, so a sub-agent never loads this extension again", () => {
@@ -131,7 +131,7 @@ test("a legacy priority array is read and migrated on the next write, so no rung
 
 test("the model-facing surface offers steering, so the main agent can act on another worker's finding", () => {
 	const toolsSrc = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
-	assert.match(toolsSrc, /name: "finisher_steer"/);
+	assert.match(toolsSrc, /name: "steer"/);
 	assert.match(toolsSrc, /steerLive/, "it must reach the live registry");
 	assert.match(toolsSrc, /followUpLive/);
 });
@@ -144,7 +144,7 @@ test("no role's boot flags can strip extensions — that is what broke provider 
 	}
 });
 
-test("finisher_swarm refuses explore and verify, naming where each of those jobs went", async () => {
+test("code refuses explore and verify, naming where each of those jobs went", async () => {
 	const { registerTools } = await import("../extensions/finisher/src/tools.ts");
 	const { createStateBox } = await import("../extensions/finisher/index.ts");
 	const cwd = repo({ priority1: "stub/one" });
@@ -165,16 +165,16 @@ test("finisher_swarm refuses explore and verify, naming where each of those jobs
 			return { ok: true, output: "done", logPath: `/tmp/${role}.log` };
 		},
 	});
-	const swarm = defs.find((d) => d.name === "finisher_swarm");
+	const swarm = defs.find((d) => d.name === "code");
 	const ctx = { cwd, model: { provider: "p", id: "m" }, hasUI: false, ui: { notify: () => {} } };
 	for (const mode of ["explore", "verify"]) {
 		const out = await swarm.execute(`call-${mode}`, { mode, goal: "g", subtasks: [{ id: "s1", instruction: "x" }] }, undefined, undefined, ctx);
 		assert.equal(out.isError, true, `mode=${mode} must be refused`);
-		assert.match(out.content[0].text, /finisher_verify/, `mode=${mode} must point at the tool that does that job now`);
+		assert.match(out.content[0].text, /verify/, `mode=${mode} must point at the tool that does that job now`);
 		assert.match(out.content[0].text, new RegExp(mode), "it must name the mode it refused");
 	}
 	assert.deepEqual(launched, [], "a refused mode spawns nothing — no verifier, no reader");
-	const code = await swarm.execute("call-code", { subtasks: [{ id: "s1", instruction: "write it", files: ["src/a.ts"] }] }, undefined, undefined, ctx);
+	const code = await swarm.execute("call-code", { subtasks: [{ id: "s1", instruction: "write it", files: ["src/a.ts"] }, { id: "s2", instruction: "write the rest", files: ["src/b.ts"] }] }, undefined, undefined, ctx);
 	assert.equal(code.isError, undefined, "code is still accepted without naming the mode");
 	assert.match(code.content[0].text, /ran coders/);
 });

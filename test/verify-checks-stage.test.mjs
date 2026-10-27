@@ -114,7 +114,7 @@ test("an edit is what changes the tree: a search never invalidates the checks, a
 	for (const command of ["sed -i s/a/b/ src/a.ts", "printf x > src/a.ts", "mv a b", "rm -rf dist", "npm install"])
 		assert.equal(writesFiles("bash", { command }), true, `${command} writes, so the next verify must not trust an older green`);
 	for (const tool of ["write", "edit", "apply_patch"]) assert.equal(writesFiles(tool, {}), true);
-	for (const tool of ["read", "grep", "finisher_verify"]) assert.equal(writesFiles(tool, {}), false);
+	for (const tool of ["read", "grep", "verify"]) assert.equal(writesFiles(tool, {}), false);
 });
 
 test("the check cache is keyed by the tree, not by the clock: the same edit state spawns nothing, a newer edit runs again", async () => {

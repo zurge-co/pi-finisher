@@ -72,7 +72,7 @@ test("the budget is configurable, and a broken config still yields a safe defaul
 	assert.equal(readToolTimeout(cwd, "bash"), DEFAULT_TOOL_TIMEOUT_MS, "no config → default");
 	writeCfg(cwd, { toolTimeoutMs: { bash: 45_000 } });
 	assert.equal(readToolTimeout(cwd, "bash"), 45_000, "per-tool wins");
-	assert.equal(readToolTimeout(cwd, "finisher_swarm"), DEFAULT_TOOL_TIMEOUT_MS, "an unlisted tool keeps the default");
+	assert.equal(readToolTimeout(cwd, "code"), DEFAULT_TOOL_TIMEOUT_MS, "an unlisted tool keeps the default");
 	writeCfg(cwd, { toolTimeoutMs: 60_000 });
 	assert.equal(readToolTimeout(cwd, "anything"), 60_000, "a single number applies to everything");
 	for (const junk of [{ toolTimeoutMs: { bash: 0 } }, { toolTimeoutMs: { bash: -1 } }, { toolTimeoutMs: { bash: "60s" } }, { toolTimeoutMs: { bash: MIN_TIMEOUT_MS - 1 } }]) {
@@ -87,10 +87,10 @@ test("the budget is configurable, and a broken config still yields a safe defaul
 test("a call that never answers is cut off and reported, instead of holding the turn", async () => {
 	const never = new Promise(() => {});
 	const t0 = Date.now();
-	const r = await withTimeout(never, 120, "tool finisher_swarm");
+	const r = await withTimeout(never, 120, "tool code");
 	assert.equal(r.timedOut, true, "an unbounded await must resolve as a timeout");
 	assert.ok(Date.now() - t0 < 5_000);
-	assert.match(timeoutNote(r), /tool finisher_swarm exceeded its/);
+	assert.match(timeoutNote(r), /tool code exceeded its/);
 });
 
 test("a normal result passes through untouched, and a rejection still propagates as an error", async () => {

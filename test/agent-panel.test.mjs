@@ -5,7 +5,7 @@ import { clip, elapsedLabel, formatPanelRow, liveRuns, panelLines, panelRows, pa
 const run = (role, extra = {}) => ({ role, status: "running", startedAt: 1_000, at: 1_000, ...extra });
 
 test("every running agent gets its own row at the same time — none is hidden behind a picker", () => {
-	const runs = [run("swarm", { model: "m/one", slotId: "s1" }), run("swarm", { model: "m/two", slotId: "s2" }), run("grader")];
+	const runs = [run("coder", { model: "m/one", slotId: "s1" }), run("coder", { model: "m/two", slotId: "s2" }), run("grader")];
 	const rows = panelRows(runs, { now: 3_000 });
 	assert.equal(rows.length, 3);
 	assert.deepEqual(rows.map((r) => r.slot).filter(Boolean), ["s1", "s2"]);
@@ -15,8 +15,8 @@ test("every running agent gets its own row at the same time — none is hidden b
 });
 
 test("identical role and model still produce distinguishable row tags", () => {
-	const rows = panelRows([run("swarm", { model: "m/one" }), run("swarm", { model: "m/one" }), run("swarm", { model: "m/one" })]);
-	assert.deepEqual(rows.map((r) => r.tag), ["SWA", "SWA2", "SWA3"]);
+	const rows = panelRows([run("coder", { model: "m/one" }), run("coder", { model: "m/one" }), run("coder", { model: "m/one" })]);
+	assert.deepEqual(rows.map((r) => r.tag), ["CODER", "CODER2", "CODER3"]);
 });
 
 test("a live row carries elapsed time, a finished row carries its summary", () => {
@@ -37,9 +37,9 @@ test("the panel keeps only a bounded tail of finished runs and can hide them", (
 });
 
 test("a row never exceeds the terminal width, and the tail is what gets clipped", () => {
-	const row = formatPanelRow({ tag: "SWA", role: "swarm", state: "▶", slot: "s1", model: "provider/a-long-model-name", elapsed: "12s", tail: "x".repeat(200) }, 60, 80);
+	const row = formatPanelRow({ tag: "CODER", role: "coder", state: "▶", slot: "s1", model: "provider/a-long-model-name", elapsed: "12s", tail: "x".repeat(200) }, 60, 80);
 	assert.ok(row.length <= 60, `row is ${row.length} chars`);
-	assert.match(row, /^SWA +▶ swarm/);
+	assert.match(row, /^CODER +▶ coder/);
 	assert.match(row, /provider\/a-long-model-name/);
 });
 

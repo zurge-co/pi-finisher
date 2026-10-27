@@ -19,21 +19,21 @@ test("coder attempts are clamped to a real bound, whatever the caller asks for",
 test("one wave of coders fits the default cap, and both a second attempt and a serialised ladder are what break it", () => {
 	for (let cases = 1; cases <= 8; cases++) {
 		const waves = wavesFor(cases, Math.max(cases, 1));
-		assert.equal(budgetFits(cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, waves, 1)), true, `cases=${cases} at full concurrency must fit`);
+		assert.equal(budgetFits(cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.coder, waves, 1)), true, `cases=${cases} at full concurrency must fit`);
 	}
-	const twoAttempts = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 1, 2);
+	const twoAttempts = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.coder, 1, 2);
 	assert.equal(budgetFits(twoAttempts), false, "a failover attempt is exactly what cannot fit for a long run");
 	assert.match(budgetNote(twoAttempts), /1200s/);
-	const serialised = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 4, 1);
+	const serialised = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.coder, 4, 1);
 	assert.equal(budgetFits(serialised), false, "many waves at low concurrency still do not fit, and the note must say so");
 	assert.match(budgetNote(serialised), /2400s/);
 });
 
 test("the budget note fires exactly when the worst case exceeds the cap, and never for a fitting fan-out", () => {
-	const fits = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 1);
+	const fits = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.coder, 1);
 	assert.equal(budgetFits(fits), true);
 	assert.equal(budgetNote(fits), undefined);
-	const blown = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.swarm, 2, 2);
+	const blown = cap(DEFAULT_TOOL_TIMEOUT_MS, SUBAGENT_TIMEOUT_MS.coder, 2, 2);
 	assert.equal(budgetFits(blown), false);
 	const note = budgetNote(blown);
 	assert.match(note, /budget:/);
@@ -96,9 +96,9 @@ test("the outer cap is widened to what the fan-out needs, never narrowed below t
 	for (let cases = 1; cases <= 8; cases++) {
 		for (const concurrency of [1, 2, 5, 8]) {
 			const waves = wavesFor(cases, concurrency);
-			const needed = capNeededFor({ subagentMs: SUBAGENT_TIMEOUT_MS.swarm, attempts: 1, waves });
-			assert.equal(budgetFits({ toolCapMs: needed, subagentMs: SUBAGENT_TIMEOUT_MS.swarm, attempts: 1, waves }), true, `the widened cap must cover ${cases} slices at concurrency ${concurrency}`);
-			assert.ok(needed >= waves * SUBAGENT_TIMEOUT_MS.swarm, "the widened cap covers the worst case, not a fraction of it");
+			const needed = capNeededFor({ subagentMs: SUBAGENT_TIMEOUT_MS.coder, attempts: 1, waves });
+			assert.equal(budgetFits({ toolCapMs: needed, subagentMs: SUBAGENT_TIMEOUT_MS.coder, attempts: 1, waves }), true, `the widened cap must cover ${cases} slices at concurrency ${concurrency}`);
+			assert.ok(needed >= waves * SUBAGENT_TIMEOUT_MS.coder, "the widened cap covers the worst case, not a fraction of it");
 		}
 	}
 });

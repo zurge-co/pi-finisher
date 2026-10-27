@@ -1,6 +1,7 @@
 import { type OverlayHandle, type OverlayOptions, type SelectItem } from "@earendil-works/pi-tui";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type State } from "./types.ts";
+import { type ScrollKeyAction } from "./scroll-page.ts";
 
 export type GetState = () => State;
 
@@ -59,8 +60,7 @@ export type FinisherPick = (ctx: ExtensionContext, title: string, items: SelectI
 export type AskClarify = (ctx: ExtensionContext, q: { question: string; choices?: string[]; freeText?: boolean }) => Promise<string | undefined>;
 export type AskGoalConfirm = (ctx: ExtensionContext, goal: string, cases: string[]) => Promise<"confirmed" | "declined" | "unavailable" | "timeout">;
 export type AcceptPending = (ctx: ExtensionContext, commitIfStaged: boolean, notifyViaBulletin?: boolean) => { ok: boolean; text: string; specVersion?: number };
-export type ScrollAction = { dir: 1 | -1; page: boolean } | "top" | "bottom" | null;
-export type ScrollKeyAction = (data: string) => ScrollAction;
+export type { ScrollKeyAction, ScrollMove } from "./scroll-page.ts";
 export type EscGuard = ReturnType<typeof import("./esc-guard.ts").createEscGuard>;
 
 export interface HarnessContext {

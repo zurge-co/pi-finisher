@@ -135,8 +135,8 @@ const goalAttempt = async (outcome, config, params = { goal: "ship the stop", ca
 	const answer = { yes: outcome === "confirmed" };
 	const { ctx, aborts, notices } = session(tmpRepo(config), outcome === "timeout" ? () => new Promise(() => {}) : async () => answer.yes);
 	await fire(harness.hooks, "session_start", {}, ctx);
-	const goal = harness.tools.get("finisher_goal");
-	assert.ok(goal, "finisher_goal must be registered by the harness itself, not by this test");
+	const goal = harness.tools.get("goal");
+	assert.ok(goal, "goal must be registered by the harness itself, not by this test");
 	const result = await goal.execute("c1", params, undefined, undefined, ctx);
 	return { ...harness, ctx, aborts, notices, result, answer };
 };
@@ -152,7 +152,7 @@ test("a declined goal is armed on the state, every later tool call is blocked, t
 	assert.ok(run.result.content[0].text.includes(goalStopHeadline(stop)), "the agent is told exactly what the human is");
 	assert.match(run.result.content[0].text, /declined|NOT confirmed/, "and it is told the human said no");
 
-	for (const name of ["bash", "edit", "finisher_verify", "finisher_swarm"])
+	for (const name of ["bash", "edit", "verify", "code"])
 		assert.equal(blocked(await toolCall(run.hooks, run.ctx, name))?.terminate, true, `${name} is blocked after the refusal`);
 
 	await turnEnd(run.hooks, run.ctx);
@@ -169,7 +169,7 @@ test("a declined goal is armed on the state, every later tool call is blocked, t
 	assert.equal(run.aborts.length, 1, "a lifted stop never aborts a live turn");
 
 	run.answer.yes = true;
-	const again = await run.tools.get("finisher_goal").execute("c2", { goal: "ship the stop", cases: ["it stops"] }, undefined, undefined, run.ctx);
+	const again = await run.tools.get("goal").execute("c2", { goal: "ship the stop", cases: ["it stops"] }, undefined, undefined, run.ctx);
 	assert.notEqual(again.isError, true, "after the new message the human is asked again, not stonewalled");
 	assert.equal(run.state().goalDriver?.goal, "ship the stop", "and a yes on that new dialog really starts the work");
 	assert.equal(goalStopOf(run.state()), undefined, "a fresh confirmation arms no stop");
@@ -192,7 +192,7 @@ test("a confirmed goal is never stopped: tools pass, the turn is not aborted, an
 	const state = run.state();
 	assert.equal(state.goalDriver?.goal, "ship the stop", "the goal really was confirmed");
 	assert.equal(goalStopOf(state), undefined, "a yes arms no stop");
-	for (const name of ["bash", "edit", "finisher_verify"]) assert.equal(blocked(await toolCall(run.hooks, run.ctx, name)), undefined, `${name} runs on a confirmed goal`);
+	for (const name of ["bash", "edit", "verify"]) assert.equal(blocked(await toolCall(run.hooks, run.ctx, name)), undefined, `${name} runs on a confirmed goal`);
 	await turnEnd(run.hooks, run.ctx);
 	assert.equal(run.aborts.length, 0, "a confirmed goal keeps running");
 });

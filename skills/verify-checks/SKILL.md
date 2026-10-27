@@ -1,6 +1,6 @@
 ---
 name: verify-checks
-description: Prove a confirmed goal's cases with scoped, parallel, cached checks and the .finisher/checks check file instead of adding tests. Use before calling finisher_verify, and whenever a case needs evidence.
+description: Prove a confirmed goal's cases with scoped, parallel, cached checks and the .finisher/checks check file instead of adding tests. Use before calling verify, and whenever a case needs evidence.
 ---
 
 # Verify with checks, not with more tests
@@ -45,8 +45,8 @@ test suite stays the size the repo wants.
 
 ## Order of work
 
-1. Close every lap with `finisher_phase done` — `finisher_verify` is refused while a lap is open.
+1. Close every lap with `lap done` — `verify` is refused while a lap is open.
 2. Run the checks once, scoped, and read the results.
-3. Call `finisher_verify` with one command per case. A case left out stays `UNVERIFIED`.
+3. Call `verify` with one command per case. A case left out stays `UNVERIFIED`.
 4. If it comes back failing, fix the real cause and verify again — the round is bounded, and the same
    evidence twice stops the loop instead of spinning.

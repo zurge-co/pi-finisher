@@ -2,18 +2,25 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
 	GOAL_HIT,
+	GOAL_PAGE_CHROME_ROWS,
 	completeLap,
 	createPanelWidget,
 	createStateBox,
+	createViewers,
 	declarePlan,
+	goalPageBody,
+	goalPageCeiling,
 	goalPageLines,
 	goalPageLinesText,
 	goalPageMaxOffset,
+	goalPageStep,
 	goalPageTitle,
+	goalPageViewport,
 	goalPageWindow,
 	hudFrames,
 	hudHitMap,
 } from "../extensions/finisher/index.ts";
+import { createGui } from "../extensions/finisher/src/gui.ts";
 
 const plan3 = () => {
 	let p = declarePlan(["survey the parser", "rewrite the retry policy", "prove it with a command"], 1_000);
@@ -71,6 +78,92 @@ test("the goal page window is a bounded, total view of the laps: every offset sh
 		}
 	}
 	assert.equal(goalPageMaxOffset(3, 9), 0, "a plan that fits needs no scrolling at all");
+});
+
+const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text };
+
+const openPlanPage = (lapCount, columns, rows) => {
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	const plan = declarePlan(Array.from({ length: lapCount }, (_, i) => `lap ${i + 1} of ${lapCount} proves something with a tail long enough to wrap`), 1_000);
+	box.get().goalDriver = { goal: "scroll the plan", confirmedAt: 1_000, attempts: { rounds: 0, verifies: 0 }, phases: plan.phases, lap: 1, lapAt: 1_000, lapMs: plan.lapMs };
+	const gui = createGui({ pi: {} });
+	const viewers = createViewers({ get state() { return box.get(); }, finisherCustom: gui.finisherCustom, OVERLAY_XL: gui.OVERLAY_XL, scrollKeyAction: gui.scrollKeyAction, persist: () => {}, pi: {} });
+	let component;
+	let result;
+	const tui = { terminal: { columns, rows }, requestRender: () => {} };
+	viewers.openGoalPage({ cwd: "/tmp", mode: "tui", hasUI: true, ui: { notify: () => {}, custom: (factory) => { component = factory(tui, theme, {}, (value) => { result = value; }); return new Promise(() => {}); } } });
+	const render = () => component.render(columns).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+	return { rows, render, key: (data) => component.handleInput(data), closed: () => result === null, dispose: () => component.dispose() };
+};
+
+test("the plan page reaches every lap of a long plan by scrolling, at every terminal size, and never draws taller than its ceiling", async () => {
+	for (const [rows, columns] of [[10, 40], [12, 60], [24, 100], [40, 160]]) {
+		const page = openPlanPage(24, columns, rows);
+		const drawn = new Set();
+		const sweep = (out) => {
+			assert.ok(out.length <= goalPageCeiling(rows), `${rows}x${columns}: the page draws ${out.length} rows in a ${goalPageCeiling(rows)}-row ceiling`);
+			for (const hit of out.join("\n").matchAll(/lap (\d+) of \d+/g)) drawn.add(Number(hit[1]));
+		};
+		sweep(page.render());
+		for (let i = 0; i < 80; i++) {
+			page.key("\x1b[6~");
+			sweep(page.render());
+		}
+		assert.equal(drawn.size, 24, `${rows}x${columns}: paging down puts all 24 laps on the page, only ${drawn.size} were drawn`);
+		assert.ok(page.render().some((l) => l.includes("lap 24 of 24")), `${rows}x${columns}: the last lap is reachable at the bottom`);
+		page.key("\x1b[H");
+		assert.ok(page.render().some((l) => l.includes("lap 1 of 24")), `${rows}x${columns}: Home returns to the first lap`);
+		page.dispose();
+	}
+});
+
+test("every scroll key moves the plan page by its own step and stops exactly at the bottom row", () => {
+	for (const total of [1, 4, 5, 40, 400]) {
+		for (const rows of [1, 3, 9, 21]) {
+			const max = Math.max(0, total - Math.max(1, rows));
+			assert.equal(goalPageStep(total, rows, 0, "bottom"), max, `total ${total} rows ${rows}: End lands on the last row, not past it`);
+			assert.equal(goalPageStep(total, rows, max, "top"), 0, `total ${total} rows ${rows}: Home lands on the first row`);
+			assert.equal(goalPageStep(total, rows, 0, "up"), 0, `total ${total} rows ${rows}: scrolling up from the top stays at the top`);
+			assert.equal(goalPageStep(total, rows, max, "down"), max, `total ${total} rows ${rows}: scrolling down from the bottom stays at the bottom`);
+			assert.equal(goalPageStep(total, rows, max, "pageDown"), max, `total ${total} rows ${rows}: a page down at the bottom changes nothing`);
+			let down = 0;
+			for (let i = 0; i < total + 2; i++) down = goalPageStep(total, rows, down, "down");
+			assert.equal(down, max, `total ${total} rows ${rows}: stepping down enough times reaches the bottom and never leaves it`);
+			let up = max;
+			for (let i = 0; i < total + 2; i++) up = goalPageStep(total, rows, up, "up");
+			assert.equal(up, 0, `total ${total} rows ${rows}: stepping up enough times returns to the top`);
+			assert.equal(goalPageStep(total, rows, 0, "pageDown"), Math.min(max, rows), `total ${total} rows ${rows}: one page down is one viewport`);
+		}
+	}
+});
+
+test("the plan page's viewport leaves room for its own chrome: rows never overlap the header or the key line", () => {
+	for (const termRows of [1, 6, 10, 24, 60, 120]) {
+		const ceiling = goalPageCeiling(termRows);
+		assert.ok(ceiling <= Math.max(4, Math.floor((termRows || 24) * 0.9)), `term ${termRows}: the overlay stays inside its share of the screen`);
+		for (const header of [1, 2, 5, 20]) {
+			const viewport = goalPageViewport(termRows, header);
+			assert.equal(viewport, Math.max(1, ceiling - header - GOAL_PAGE_CHROME_ROWS), `term ${termRows} header ${header}: the body is exactly what the chrome leaves`);
+			if (ceiling - header - GOAL_PAGE_CHROME_ROWS >= 1) assert.equal(header + viewport + GOAL_PAGE_CHROME_ROWS, ceiling, `term ${termRows} header ${header}: header, body and key line fill the ${ceiling}-row page exactly, never past it`);
+		}
+	}
+	const lines = goalPageLines(goalAt(2));
+	const wide = goalPageBody(lines, 200, 0, 3);
+	const narrow = goalPageBody(lines, 24, 0, 3);
+	assert.ok(narrow.from === wide.from && narrow.to <= wide.to, "a narrower page never shows more rows than a wider one: wrapping only adds rows");
+});
+
+test("q closes the plan page exactly like Esc, and no scroll key closes it", () => {
+	const closedBy = (key) => {
+		const page = openPlanPage(40, 80, 14);
+		page.render();
+		page.key(key);
+		const closed = page.closed();
+		page.dispose();
+		return closed;
+	};
+	for (const key of ["q", "\x1b", "\x1b[27u", "\r"]) assert.equal(closedBy(key), true, `${JSON.stringify(key)} closes the page`);
+	for (const key of ["\x1b[6~", "\x1b[5~", "\x1b[B", "\x1b[A", "\x1b[H", "\x1b[F"]) assert.equal(closedBy(key), false, `${JSON.stringify(key)} scrolls instead of closing`);
 });
 
 test("the goal row of the HUD is a click target of its own, and the goal page opens instead of an agent page", async () => {

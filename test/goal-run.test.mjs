@@ -27,7 +27,7 @@ const repo = (models, config) => {
 };
 
 test("the agent-facing surface is the goal tools — nothing that asks a human", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["finisher_goal", "finisher_phase", "finisher_swarm", "finisher_verify", "finisher_steer", "finisher_steer"].filter((v, i, a) => a.indexOf(v) === i));
+	assert.deepEqual([...SURFACE_TOOLS], ["goal", "lap", "code", "verify", "steer"]);
 	for (const t of RETIRED_TOOLS) {
 		assert.equal(isRetiredTool(t), true, `${t} must be retired`);
 		assert.equal(isLiveTool(t), false, `${t} must not be callable`);

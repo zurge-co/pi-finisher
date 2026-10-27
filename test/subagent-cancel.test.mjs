@@ -23,7 +23,7 @@ test("a pre-aborted signal is already done — the caller gates on signal.aborte
 });
 
 test("a cancelled coder keeps its own boot arguments: no session is dropped and writing stays allowed", () => {
-	const swarm = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.swarm, "swarm");
+	const swarm = buildRpcSubagentArgs(SUBAGENT_EXCLUDE_TOOLS.coder, "coder");
 	assert.ok(!swarm.includes("--no-session"), "a coder keeps its own session");
 	const list = swarm[swarm.indexOf("--exclude-tools") + 1].split(",");
 	assert.ok(!list.includes("write") && !list.includes("edit"), "the coder may write");
