@@ -1,6 +1,6 @@
 {
 	"name": "pi-finisher",
-	"version": "1.0.3",
+	"version": "1.1.0",
 	"description": "Goal-confirm autonomous runner for pi — state the goal once, and it finishes: parallel sub-agents, fresh context per loop, and one evidence-backed report.",
 	"keywords": [
 		"pi-package",
