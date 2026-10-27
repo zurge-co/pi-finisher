@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clip, elapsedLabel, formatPanelRow, liveRuns, panelLines, panelRows, panelTickMs, streamTail } from "../extensions/finisher/index.ts";
+import { clip, elapsedLabel, formatPanelRow, hudLines, liveRuns, panelLines, panelRows, panelTickMs, sessionTabs, streamTail } from "../extensions/finisher/index.ts";
 
 const run = (role, extra = {}) => ({ role, status: "running", startedAt: 1_000, at: 1_000, ...extra });
 
@@ -60,4 +60,16 @@ test("panels tick faster while several agents run, and liveRuns counts exactly t
 	assert.equal(panelTickMs(1), 2_000);
 	assert.equal(panelTickMs(0), 2_000);
 	assert.equal(liveRuns([run("a"), { role: "b", status: "done", at: 0 }, run("c")]).length, 2);
+});
+
+test("fan-out work is labelled CODER on every surface, whatever case the role arrives in", () => {
+	const roles = ["swarm", "coder", "Swarm", "CODER", " swarm "];
+	const runs = roles.map((role, i) => run(role, { slotId: `s${i}`, model: `m/${i}` }));
+	assert.deepEqual(panelRows(runs, { now: 2_000 }).map((r) => r.tag.replace(/\d+$/, "")), roles.map(() => "CODER"));
+	const surfaces = [...panelLines(runs, { now: 2_000 }), ...hudLines({ runs, width: 100, now: 2_000 }), sessionTabs(runs, 0, 200)];
+	for (const line of surfaces) {
+		assert.ok(!/SWA/.test(line), `no SWA anywhere on the HUD or the tab strip: ${line}`);
+		assert.ok(!/swarm/i.test(line), `the old role name never reaches a label: ${line}`);
+	}
+	assert.match(sessionTabs(runs, 0, 200), /1:CODER/);
 });

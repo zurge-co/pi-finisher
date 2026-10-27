@@ -3,11 +3,13 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
-import { consentLifts, humanResumes } from "./src/goal-confirm.ts";
+import { consultMode, readConsultMode, turnIntent } from "./src/consult.ts";
+import { consentLifts, humanResumes, sessionIdFrom } from "./src/goal-confirm.ts";
 import { claimGoalStopAbort, clearGoalStop, goalStopGate, stopLanguage } from "./src/goal-stop.ts";
 import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
 import { harnessSystemPrompt } from "./src/system-prompt.ts";
-import { intakeDirective, intakeGate, intakeOpen, isExploreTool } from "./src/intake.ts";
+import { intakeDirective, intakeOpen } from "./src/intake.ts";
+import { legacyDirective, legacyToolHint } from "./src/legacy-names.ts";
 import { writesFiles } from "./src/verify-checks.ts";
 import { appendCommand } from "./src/command-record.ts";
 import { gitOk } from "./src/worktree.ts";
@@ -15,7 +17,7 @@ import { createEscGuard } from "./src/esc-guard.ts";
 import { createStateBox } from "./src/state-box.ts";
 import { finisherDir, type State } from "./src/types.ts";
 import { type HarnessContext } from "./src/kit.ts";
-import { createGui } from "./src/gui.ts";
+import { OVERLAY_EXTRA_LARGE, OVERLAY_LARGE, OVERLAY_MEDIUM, REJECT_WITH_REASON_CODE, createGui } from "./src/gui.ts";
 import { createPanelWidget } from "./src/panel-widget.ts";
 import { applyFullscreenDefault } from "./src/fullscreen.ts";
 import { createViewers } from "./src/viewers.ts";
@@ -24,7 +26,7 @@ import { createSubagentLaunch } from "./src/subagent-launch.ts";
 import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
 import { freshCompactionEntry, freshLapDecision, lapCompactionSummary, readFreshContextConfig, trackerEntryDraft } from "./src/fresh-context.ts";
-import { buildLapTracker, clearLapTracker, readLapTracker, renderLapTracker, writeLapTracker } from "./src/lap-tracker.ts";
+import { buildLapTracker, clearLapTracker, renderLapTracker, trackerForSession, writeLapTracker } from "./src/lap-tracker.ts";
 import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
 import { enforceDeadline, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
@@ -48,7 +50,10 @@ export * from "./src/test-quality.ts";
 export * from "./src/review-file.ts";
 export * from "./src/goal-confirm.ts";
 export * from "./src/intake.ts";
+export * from "./src/consult.ts";
+export * from "./src/legacy-names.ts";
 export * from "./src/goal-clarify.ts";
+export * from "./src/chrome-text.ts";
 export * from "./src/clarify-dialog.ts";
 export * from "./src/check-runner.ts";
 export * from "./src/check-file.ts";
@@ -135,10 +140,10 @@ export default function (pi: ExtensionAPI) {
 	} as unknown as HarnessContext;
 
 	kit.escGuard = createEscGuard();
-	kit.OVERLAY_LG = { overlay: true, overlayOptions: { width: "92%", minWidth: 60, maxHeight: "85%" } };
-	kit.OVERLAY_MD = { overlay: true, overlayOptions: { width: "80%", minWidth: 56, maxHeight: "80%" } };
-	kit.OVERLAY_XL = { overlay: true, overlayOptions: { width: "95%", minWidth: 60, maxHeight: "90%" } };
-	kit.REJECT_WITH_REASON = "__finisher_reject_reason__";
+	kit.OVERLAY_LG = OVERLAY_LARGE;
+	kit.OVERLAY_MD = OVERLAY_MEDIUM;
+	kit.OVERLAY_XL = OVERLAY_EXTRA_LARGE;
+	kit.REJECT_WITH_REASON = REJECT_WITH_REASON_CODE;
 
 	const gui = createGui(kit);
 	Object.assign(kit, gui);
@@ -188,6 +193,7 @@ export default function (pi: ExtensionAPI) {
 		for (const e of ctx.sessionManager.getEntries())
 			if (e.type === "custom" && e.customType === "finisher-state")
 				box.set({ ...freshState(), ...(e.data as State) });
+		box.get().consultMode = readConsultMode(ctx.cwd);
 		consentLifts(box.get());
 		box.get().goalStop = undefined;
 		kit.updateWidget(ctx);
@@ -212,17 +218,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", async () => goalStopGate(box.get(), stopLanguage(box.get())));
 
-	pi.on("tool_call", async (ev) => {
-		const live = box.get();
-		const refusal = intakeGate(live.goalDriver, ev.toolName, live.preGoalCalls ?? 0, live.humanLang);
-		if (!intakeOpen(live.goalDriver) && isExploreTool(ev.toolName)) {
-			live.preGoalCalls = (live.preGoalCalls ?? 0) + 1;
-			persist();
-		}
-		if (!refusal.block) return undefined;
-		return { block: true, reason: refusal.reason ?? "a goal must be confirmed before the code is explored" };
-	});
-
 	pi.on("turn_end", async (_ev, ctx) => {
 		if (!claimGoalStopAbort(box.get())) return;
 		try {
@@ -231,19 +226,22 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (event.messageType !== "user") return;
 		const live = box.get();
 		live.humanAt = Date.now();
 		humanResumes(live, live.humanAt);
 		if (clearGoalStop(live)) persist();
-		if (live.preGoalCalls) {
-			live.preGoalCalls = 0;
-			persist();
-		}
 		const lang = humanLanguage(live.humanLang, event.prompt);
 		if (lang !== live.humanLang) {
 			live.humanLang = lang;
+			persist();
+		}
+		const mode = consultMode(live.consultMode ?? readConsultMode(ctx?.cwd ?? process.cwd()));
+		const intent = turnIntent(mode);
+		if (mode !== live.consultMode || intent !== live.turnIntent) {
+			live.consultMode = mode;
+			live.turnIntent = intent;
 			persist();
 		}
 	});
@@ -255,21 +253,22 @@ export default function (pi: ExtensionAPI) {
 		return { cancel: true };
 	});
 
-	const liveTrackerText = (): string => {
+	const liveTrackerText = (ctx: ExtensionContext): string => {
 		const goal = box.get().goalDriver;
 		if (!goal || goal.doneAt) return "";
-		const tracker = buildLapTracker(goal, box.get().verifyCalls ?? [], Date.now());
-		return tracker ? renderLapTracker(tracker) : "";
+		const tracked = trackerForSession(ctx.cwd, sessionIdFrom(ctx.sessionManager as never), goal, box.get().verifyCalls ?? [], Date.now());
+		return tracked ? renderLapTracker(tracked) : "";
 	};
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		const bulletin = takeContextBulletin(box.get());
 		if (bulletin) persist();
 		const live = box.get();
 		const prompt = event.messageType === "user" && typeof event.prompt === "string" ? event.prompt.trim() : "";
-		const intake = !intakeOpen(live.goalDriver) && prompt ? intakeDirective(prompt, live.humanLang) : "";
-		const extra = [intake, bulletin, liveTrackerText()].filter(Boolean).join("\n\n");
-		const sp = harnessSystemPrompt(event.systemPrompt, live.humanLang ?? DEFAULT_GOAL_LANG, extra);
+		const intake = !intakeOpen(live.goalDriver) && prompt ? intakeDirective(prompt, live.humanLang, live.turnIntent) : "";
+		const legacy = prompt ? legacyDirective(prompt, live.humanLang) : "";
+		const extra = [intake, legacy, bulletin, liveTrackerText(ctx)].filter(Boolean).join("\n\n");
+		const sp = harnessSystemPrompt(event.systemPrompt, live.humanLang ?? DEFAULT_GOAL_LANG, extra, live.turnIntent);
 		if (sp === event.systemPrompt) return;
 		return { systemPrompt: sp };
 	});
@@ -287,12 +286,13 @@ export default function (pi: ExtensionAPI) {
 		kit.updateWidget(ctx);
 		persist();
 		const goal = box.get().goalDriver;
-		const tracker = buildLapTracker(goal, box.get().verifyCalls ?? [], Date.now());
+		const sessionId = sessionIdFrom(ctx.sessionManager as never);
+		const tracker = buildLapTracker(goal, box.get().verifyCalls ?? [], Date.now(), sessionId);
 		if (!goal || goal.doneAt || !tracker) {
-			clearLapTracker(ctx.cwd);
+			clearLapTracker(ctx.cwd, sessionId);
 			return;
 		}
-		writeLapTracker(ctx.cwd, goal, box.get().verifyCalls ?? [], Date.now());
+		writeLapTracker(ctx.cwd, sessionId, goal, box.get().verifyCalls ?? [], Date.now());
 		const decision = freshLapDecision({
 			enabled: readFreshContextConfig(ctx.cwd).enabled,
 			hasWork: ev.context.contextEntries.length > 0,

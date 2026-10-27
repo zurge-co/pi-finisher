@@ -4,7 +4,12 @@ import { createEscGuard } from "./esc-guard.ts";
 import { CLARIFY_PICK_HINT } from "./clarify-dialog.ts";
 import { panelize } from "./models.ts";
 import { scrollKeyAction as scrollKeys } from "./scroll-page.ts";
-import { type AskClarify, type AskRejectReason, type FinisherCustom, type FinisherPick, type ScrollKeyAction, type HarnessContext } from "./kit.ts";
+import { type AskClarify, type AskRejectReason, type CustomDialogOptions, type FinisherCustom, type FinisherPick, type ScrollKeyAction, type HarnessContext } from "./kit.ts";
+
+export const OVERLAY_LARGE: CustomDialogOptions = { overlay: true, overlayOptions: { width: "92%", minWidth: 60, maxHeight: "85%" } };
+export const OVERLAY_MEDIUM: CustomDialogOptions = { overlay: true, overlayOptions: { width: "80%", minWidth: 56, maxHeight: "80%" } };
+export const OVERLAY_EXTRA_LARGE: CustomDialogOptions = { overlay: true, overlayOptions: { width: "95%", minWidth: 60, maxHeight: "90%" } };
+export const REJECT_WITH_REASON_CODE = "__finisher_reject_reason__";
 
 export const createGui = (ctx: HarnessContext) => {
 	const pi = ctx.pi;
@@ -46,15 +51,15 @@ export const createGui = (ctx: HarnessContext) => {
 		} as never);
 	};
 
-	const OVERLAY_LG = { overlay: true, overlayOptions: { width: "92%", minWidth: 60, maxHeight: "85%" } } as const;
+	const OVERLAY_LG = OVERLAY_LARGE;
 
-	const OVERLAY_MD = { overlay: true, overlayOptions: { width: "80%", minWidth: 56, maxHeight: "80%" } } as const;
+	const OVERLAY_MD = OVERLAY_MEDIUM;
 
-	const OVERLAY_XL = { overlay: true, overlayOptions: { width: "95%", minWidth: 60, maxHeight: "90%" } } as const;
+	const OVERLAY_XL = OVERLAY_EXTRA_LARGE;
 
 	const scrollKeyAction = scrollKeys;
 
-	const REJECT_WITH_REASON = "__finisher_reject_reason__";
+	const REJECT_WITH_REASON = REJECT_WITH_REASON_CODE;
 
 	const askRejectReason = async (ctx: ExtensionContext, what: string): Promise<string | undefined> => {
 		try {

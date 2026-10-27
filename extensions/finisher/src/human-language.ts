@@ -180,7 +180,7 @@ export const languageGuideline = (lang: HumanLang | undefined): string => {
 	const name = languageName(code);
 	return [
 		`human language: ${name} (${code}).`,
-		`The human writes and reads ${name}: write the goal goal text and every case in ${name}, and report to them in ${name}.`,
+		`The human writes and reads ${name}: write the goal text and every case in ${name}, and report to them in ${name}.`,
 		"Keep file paths, identifiers, commands, code and quoted output exactly as they are — never translate those.",
 	].join(" ");
 };

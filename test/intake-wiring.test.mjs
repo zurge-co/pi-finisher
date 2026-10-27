@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import finisher from "../extensions/finisher/index.ts";
-import { CLARIFY_MAX, INTAKE_GRACE_CALLS, intakeDirective } from "../extensions/finisher/index.ts";
+import { CLARIFY_MAX, CONSULT_GUIDELINE, GOAL_FIRST_GUIDELINE, INTENT_GUIDELINE, intakeDirective } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 
@@ -39,27 +40,58 @@ const liveHarness = (overrides = {}) => {
 		}
 		return out ?? "";
 	};
-	return { call, prompt, run: (name, input) => tools[name].execute("call-1", input, undefined, undefined, ctx) };
+	const start = async () => {
+		for (const handler of handlers.session_start ?? []) await handler({ type: "session_start" }, ctx);
+	};
+	return { call, prompt, start, run: (name, input) => tools[name].execute("call-1", input, undefined, undefined, ctx) };
 };
 
-test("the running extension closes code exploration once the pre-goal budget is spent, and never before", async () => {
+test("nothing in the harness inspects the human's words: exploration is never refused, however many reads a turn takes", async () => {
 	const harness = liveHarness();
-	for (let used = 0; used < INTAKE_GRACE_CALLS; used++) assert.equal(await harness.call("read", { path: "src/a.ts" }), undefined, `exploratory call ${used + 1} is still inside the budget`);
-	const blocked = await harness.call("bash", { command: "grep -rn x ." });
-	assert.equal(blocked?.block, true, "the budget is spent, so the next exploration is refused by the real hook");
-	assert.match(blocked.reason, /goal/, "the refusal names the tool that opens the gate");
-	assert.equal(await harness.call("goal", { goal: "ship it" }), undefined, "the gate can never stand between the agent and the goal tool");
+	for (const ask of ["แก้บั๊กตอน logout", "ทำไม HUD ถึงกระพริบ", "what do you think about splitting the swarm module"]) {
+		await harness.prompt(ask);
+		for (let used = 0; used < 40; used++) assert.equal(await harness.call("read", { path: `src/${used}.ts` }), undefined, `${ask}: read ${used + 1} is the model's call, not a gate's`);
+		assert.equal(await harness.call("bash", { command: "grep -rn x ." }), undefined, `${ask}: bash is never blocked before the goal`);
+	}
+	assert.equal(await harness.call("goal", { goal: "ship it" }), undefined, "and the goal tool was never gated either");
 });
 
-test("a new human turn gives the intake budget back, so no goal is stonewalled across turns", async () => {
-	const harness = liveHarness();
-	for (let used = 0; used < INTAKE_GRACE_CALLS; used++) await harness.call("read", { path: "src/a.ts" });
-	assert.equal((await harness.call("read", { path: "src/b.ts" }))?.block, true, "the budget is spent inside the turn");
-	await harness.prompt("one more thing before you start");
-	assert.equal(await harness.call("read", { path: "src/c.ts" }), undefined, "the human's new turn reopens the budget instead of stonewalling the agent");
+test("the words alone decide nothing: the same message reads as work in auto mode and as a conversation in always mode", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "finisher-consult-"));
+	mkdirSync(join(cwd, ".finisher"), { recursive: true });
+	const message = "how would you structure the report page";
+	const plain = await liveHarness({ cwd }).prompt(message);
+	assert.ok(plain.includes(INTENT_GUIDELINE), "with no config the model is told to decide the turn itself");
+	assert.ok(plain.includes(GOAL_FIRST_GUIDELINE), "and the run still starts at goal");
+	assert.ok(!plain.includes(CONSULT_GUIDELINE));
+
+	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "always" }));
+	const forced = liveHarness({ cwd });
+	await forced.start();
+	const prompt = await forced.prompt(message);
+	assert.ok(prompt.includes(CONSULT_GUIDELINE), "always is the human forcing the conversation, whatever the words");
+	assert.ok(!prompt.includes(GOAL_FIRST_GUIDELINE));
+
+	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "off" }));
+	const off = liveHarness({ cwd });
+	await off.start();
+	const workTurn = await off.prompt("what do you think about the HUD");
+	assert.ok(workTurn.includes(GOAL_FIRST_GUIDELINE), "off is the human refusing the conversation, whatever the words");
+	assert.ok(!workTurn.includes(CONSULT_GUIDELINE));
 });
 
-test("the pre-goal system prompt carries the draft goal and every drafted case, before any exploration advice", async () => {
+test("the prompt the model reads carries the decision rule it is meant to apply, exactly once", async () => {
+	const harness = liveHarness();
+	const work = await harness.prompt("add the missing case to the report page");
+	assert.equal(work.split(INTENT_GUIDELINE).length - 1, 1, "the decision rule reaches the prompt once and only once");
+	assert.ok(work.includes(GOAL_FIRST_GUIDELINE), "a turn the model reads as a work order still leads with the goal");
+	assert.ok(!work.includes(CONSULT_GUIDELINE));
+
+	const forced = await liveHarness({ cwd: process.cwd() }).prompt("add the missing case");
+	assert.ok(forced.includes(INTENT_GUIDELINE), "the mode the model has to honour is stated in the prompt it reads");
+});
+
+test("the pre-goal system prompt carries the draft goal and every drafted case", async () => {
 	const harness = liveHarness();
 	const human = "Ship the report page. It must open from the HUD row";
 	const text = await harness.prompt(human);
@@ -71,10 +103,11 @@ test("the pre-goal system prompt carries the draft goal and every drafted case, 
 
 test("the goal tool asks its bounded clarify round before the confirm dialog, and never asks twice", () => {
 	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
-	assert.match(tools, /clarifyPlan\(\{ goal, cases: confirmed \}/, "the tool reads the gaps from the draft it is about to confirm");
+	assert.match(tools, /clarifyPlan\(\{ goal, cases: confirmed \}, state, caseKey\(goal\), lang, state\.clarifyChrome\)/, "the tool reads the gaps from the draft it is about to confirm, in the chrome the agent supplied");
 	assert.match(tools, /plan\.ask[\s\S]{0,600}?askClarifyQuestion\(/, "and asks before the human is shown anything");
 	assert.match(tools, /markClarify\(state, caseKey\(goal\)/, "the round is marked on the goal itself, so an unchanged goal never asks again");
 	assert.match(tools, /askGoalConfirm\(ctx, askGoal, askCases\)/, "the dialog receives the sharpened goal text and the sharpened cases");
+	assert.match(tools, /state\.clarifyChrome = Object\.keys\(clarifyGiven\)\.length \? clarifyGiven : undefined/, "the clarify chrome is validated once and remembered on the run");
 	assert.match(readFileSync(join(here, "extensions/finisher/src/gui.ts"), "utf8"), /askClarifyQuestion/, "and the session really provides the question dialog, not a stub");
 });
 
@@ -85,10 +118,13 @@ test("a session with no dialog refuses the goal instead of waiting on a clarify 
 	assert.match(result.content[0].text, /no dialog/, "the refusal says why");
 });
 
-test("confirming a goal resets the intake budget, so a confirmed run explores freely", () => {
-	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
-	assert.match(tools, /state\.goalDriver = adopted[\s\S]{0,400}state\.preGoalCalls = 0/, "the counter is reset where the goal is adopted, not somewhere else");
-	assert.equal(INTAKE_GRACE_CALLS > 0, true, "a zero budget would block the very first look at the repo");
+test("no intake counter is left in the wiring: the retired gate cannot come back through a hook", () => {
+	const index = readFileSync(join(here, "extensions/finisher/index.ts"), "utf8");
+	assert.ok(!index.includes("intakeGate"), "the gate that refused exploration is gone from the entry point");
+	assert.ok(!index.includes("preGoalCalls"), "and so is the counter it spent");
+	assert.match(index, /turnIntent\(mode\)/, "the turn's intent comes from the configured mode, not from the human's words");
+	const types = readFileSync(join(here, "extensions/finisher/src/types.ts"), "utf8");
+	assert.ok(!types.includes("preGoalCalls"), "the state carries no pre-goal budget either");
 });
 
 const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text, dim: (text) => text, style: (text) => text, colors: {}, appearance: "dark" };
@@ -122,7 +158,7 @@ test("the real goal tool asks its bounded round first, and the confirm dialog is
 	const dialog = seen.at(-1);
 	assert.match(dialog, /make it better/, "the human's own words are still the goal they confirm");
 	assert.match(dialog, /it works/, "and the case they already gave is not lost on the way");
-	assert.match(dialog, /npm test exits 0/, "the observable the human picked reaches the dialog as a case the harness can check");
+	assert.match(dialog, /npm test/, "the result the human picked reaches the dialog as a case the harness can check");
 
 	const quiet = [];
 	const sharp = await liveHarness(humanUi(quiet)).run("goal", { goal: "make the HUD ticker 20% faster in src/hud.ts", cases: ["npm test exits 0"], lang: "en" });

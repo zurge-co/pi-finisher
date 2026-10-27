@@ -1,10 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { finisherDir } from "./types.ts";
 import { allLapsDone, lapIndex, planOf, totalPhases, type PhasePlan } from "./goal-phase.ts";
 import { type GoalRunState } from "./goal-driver.ts";
 
-export const TRACKER_FILE = "tracker.json";
+export const TRACKER_FILE = "tracker.jsonl";
+export const TRACKER_SESSIONS_MAX = 8;
+export const TRACKER_RECORDS_MAX = 64;
+export const TRACKER_SESSION_MAX = 48;
+export const TRACKER_UNKNOWN_SESSION = "unknown";
 export const TRACKER_GOAL_MAX = 160;
 export const TRACKER_STEP_MAX = 100;
 export const TRACKER_CASE_MAX = 80;
@@ -30,6 +35,7 @@ export interface TrackerEvidence {
 
 export interface LapTracker {
 	at: number;
+	session: string;
 	goal: string;
 	round: number;
 	lap: number;
@@ -42,12 +48,26 @@ export interface LapTracker {
 	evidence: TrackerEvidence[];
 }
 
-export const trackerPath = (cwd: string): string => join(finisherDir(cwd), TRACKER_FILE);
-
 export const clipTrackerText = (text: string, max: number): string => {
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
 };
+
+const sessionToken = (sessionId: string): string => {
+	const flat = sessionId.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+	return flat ? flat.slice(0, TRACKER_SESSION_MAX) : TRACKER_UNKNOWN_SESSION;
+};
+
+const sessionDigest = (sessionId: string): string => createHash("sha1").update(sessionId).digest("hex").slice(0, 8);
+
+export const sessionDirKey = (sessionId = ""): string => {
+	const raw = sessionId.trim();
+	return `${sessionToken(raw)}-${sessionDigest(raw)}`;
+};
+
+export const trackerDir = (cwd: string, sessionId = ""): string => join(finisherDir(cwd), sessionDirKey(sessionId));
+
+export const trackerPath = (cwd: string, sessionId = ""): string => join(trackerDir(cwd, sessionId), TRACKER_FILE);
 
 export const stepStateOf = (plan: PhasePlan, index: number): StepState => {
 	const position = index + 1;
@@ -80,6 +100,7 @@ export const buildLapTracker = (
 	goal: GoalRunState | undefined,
 	evidence: { command: string; ok: boolean }[] = [],
 	at = Date.now(),
+	sessionId = "",
 ): LapTracker | undefined => {
 	if (!goal) return undefined;
 	const plan = planOf(goal);
@@ -88,6 +109,7 @@ export const buildLapTracker = (
 	const afterActive = active < 0 ? steps.length : active + 1;
 	return {
 		at,
+		session: sessionId,
 		goal: goal.goal.trim(),
 		round: goal.attempts?.rounds ?? 0,
 		lap: lapNumberOf(plan),
@@ -157,55 +179,146 @@ export const renderLapTracker = (t: LapTracker, budget = TRACKER_RENDER_MAX): st
 	return [...kept, ...pack(extra, budget - used)].join("\n");
 };
 
-export const readLapTracker = (cwd: string): LapTracker | undefined => {
-	const path = trackerPath(cwd);
+const trackerFrom = (raw: Partial<LapTracker>): LapTracker | undefined => {
+	if (typeof raw.goal !== "string" || !Array.isArray(raw.steps)) return undefined;
+	return {
+		at: typeof raw.at === "number" ? raw.at : 0,
+		session: typeof raw.session === "string" ? raw.session : "",
+		goal: raw.goal,
+		round: typeof raw.round === "number" ? raw.round : 0,
+		lap: typeof raw.lap === "number" ? raw.lap : 0,
+		laps: typeof raw.laps === "number" ? raw.laps : 0,
+		done: typeof raw.done === "number" ? raw.done : 0,
+		steps: raw.steps.filter((s) => s && typeof s.id === "string" && typeof s.text === "string" && typeof s.state === "string"),
+		...(raw.current && typeof raw.current.text === "string" ? { current: raw.current } : {}),
+		next: Array.isArray(raw.next) ? raw.next.filter((s) => s && typeof s.text === "string") : [],
+		cases: Array.isArray(raw.cases) ? raw.cases.filter((c) => typeof c === "string") : [],
+		evidence: Array.isArray(raw.evidence) ? raw.evidence.filter((e) => e && typeof e.command === "string").map((e) => ({ command: e.command, ok: e.ok !== false })) : [],
+	};
+};
+
+export const trackerRecords = (raw: string, cap = TRACKER_RECORDS_MAX): string[] => {
+	const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+	return cap > 0 ? lines.slice(Math.max(0, lines.length - cap)) : lines;
+};
+
+export const lastTrackerRecord = (raw: string): LapTracker | undefined => {
+	const lines = trackerRecords(raw);
+	for (let i = lines.length - 1; i >= 0; i--) {
+		try {
+			const tracker = trackerFrom(JSON.parse(lines[i]) as Partial<LapTracker>);
+			if (tracker) return tracker;
+		} catch {}
+	}
+	return undefined;
+};
+
+export const readLapTrackerFile = (path: string): LapTracker | undefined => {
 	if (!existsSync(path)) return undefined;
 	try {
-		const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<LapTracker>;
-		if (typeof raw.goal !== "string" || !Array.isArray(raw.steps)) return undefined;
-		return {
-			at: typeof raw.at === "number" ? raw.at : 0,
-			goal: raw.goal,
-			round: typeof raw.round === "number" ? raw.round : 0,
-			lap: typeof raw.lap === "number" ? raw.lap : 0,
-			laps: typeof raw.laps === "number" ? raw.laps : 0,
-			done: typeof raw.done === "number" ? raw.done : 0,
-			steps: raw.steps.filter((s) => s && typeof s.id === "string" && typeof s.text === "string" && typeof s.state === "string"),
-			...(raw.current && typeof raw.current.text === "string" ? { current: raw.current } : {}),
-			next: Array.isArray(raw.next) ? raw.next.filter((s) => s && typeof s.text === "string") : [],
-			cases: Array.isArray(raw.cases) ? raw.cases.filter((c) => typeof c === "string") : [],
-			evidence: Array.isArray(raw.evidence) ? raw.evidence.filter((e) => e && typeof e.command === "string").map((e) => ({ command: e.command, ok: e.ok !== false })) : [],
-		};
+		return lastTrackerRecord(readFileSync(path, "utf8"));
 	} catch {
 		return undefined;
 	}
 };
 
-export const clearLapTracker = (cwd: string): boolean => {
+export const readLapTracker = (cwd: string, sessionId = ""): LapTracker | undefined => readLapTrackerFile(trackerPath(cwd, sessionId));
+
+export const trackerForSession = (
+	cwd: string,
+	sessionId: string,
+	goal: GoalRunState | undefined,
+	evidence: { command: string; ok: boolean }[] = [],
+	at = Date.now(),
+): LapTracker | undefined => {
+	const live = buildLapTracker(goal, evidence, at, sessionId);
+	const stored = readLapTracker(cwd, sessionId);
+	if (!stored || !live) return live ?? stored;
+	if (stored.goal !== live.goal) return live;
+	if (live.steps.length) return live;
+	return stored;
+};
+
+export const clearLapTracker = (cwd: string, sessionId = ""): boolean => {
 	try {
-		rmSync(trackerPath(cwd), { force: true });
+		rmSync(trackerDir(cwd, sessionId), { recursive: true, force: true });
 		return true;
 	} catch {
 		return false;
 	}
 };
 
+export const isSessionDirName = (name: string): boolean => /^[a-z0-9_-]{1,48}-[0-9a-f]{8}$/.test(name);
+
+export const sessionTrackers = (cwd: string): { path: string; at: number }[] => {
+	const root = finisherDir(cwd);
+	if (!existsSync(root)) return [];
+	try {
+		return readdirSync(root, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && isSessionDirName(String(entry.name)))
+			.map((entry) => {
+				const path = join(root, String(entry.name));
+				try {
+					return { path, at: statSync(join(path, TRACKER_FILE)).mtimeMs };
+				} catch {
+					return { path, at: 0 };
+				}
+			})
+			.sort((a, b) => b.at - a.at || a.path.localeCompare(b.path));
+	} catch {
+		return [];
+	}
+};
+
+export const pruneTrackers = (cwd: string, keep = TRACKER_SESSIONS_MAX): number => {
+	const files = sessionTrackers(cwd);
+	let pruned = 0;
+	for (const old of files.slice(Math.max(0, keep))) {
+		try {
+			rmSync(old.path, { recursive: true, force: true });
+			pruned++;
+		} catch {}
+	}
+	return pruned;
+};
+
+let tmpSeq = 0;
+
+const trackerTempPath = (path: string): string => {
+	tmpSeq += 1;
+	return join(dirname(path), `${basename(path)}.${process.pid}.${tmpSeq}.tmp`);
+};
+
+export const trackerAppend = (existing: string, tracker: LapTracker, cap = TRACKER_RECORDS_MAX): string => {
+	const line = JSON.stringify(tracker);
+	const kept = trackerRecords(existing, cap > 0 ? cap - 1 : 0);
+	return `${[...kept, line].join("\n")}\n`;
+};
+
 export const writeLapTracker = (
 	cwd: string,
+	sessionId: string,
 	goal: GoalRunState | undefined,
 	evidence: { command: string; ok: boolean }[] = [],
 	at = Date.now(),
 ): string | undefined => {
-	const tracker = buildLapTracker(goal, evidence, at);
+	const path = trackerPath(cwd, sessionId);
+	const tracker = buildLapTracker(goal, evidence, at, sessionId);
 	if (!tracker || goal?.doneAt) {
-		clearLapTracker(cwd);
+		clearLapTracker(cwd, sessionId);
+		pruneTrackers(cwd);
 		return undefined;
 	}
+	const tmp = trackerTempPath(path);
 	try {
-		mkdirSync(finisherDir(cwd), { recursive: true });
-		writeFileSync(trackerPath(cwd), `${JSON.stringify(tracker, null, 2)}\n`);
-		return trackerPath(cwd);
+		const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(tmp, trackerAppend(existing, tracker));
+		renameSync(tmp, path);
 	} catch {
+		rmSync(tmp, { force: true });
 		return undefined;
 	}
+	pruneTrackers(cwd);
+	return path;
 };

@@ -1,19 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-	DRAFT_CASES_MAX,
-	DRAFT_GOAL_MAX,
-	INTAKE_EXPLORE_TOOLS,
-	INTAKE_GRACE_CALLS,
-	draftCases,
-	draftGoal,
-	intakeBlockNote,
-	intakeDirective,
-	intakeDraft,
-	intakeGate,
-	intakeOpen,
-	isExploreTool,
-} from "../extensions/finisher/src/intake.ts";
+import { DRAFT_CASES_MAX, DRAFT_GOAL_MAX, draftCases, draftGoal, intakeDirective, intakeDraft, intakeOpen } from "../extensions/finisher/src/intake.ts";
+import { consultDirective } from "../extensions/finisher/src/consult.ts";
 
 const collapse = (text) => text.replace(/\s+/g, " ").trim();
 
@@ -83,41 +71,14 @@ test("the case list is a real bound: nine lines still yield at most the cap", ()
 	assert.deepEqual(cases, ["case number 0", "case number 1", "case number 2", "case number 3", "case number 4"]);
 });
 
-test("the goal-first gate opens exactly below the grace budget and closes at it", () => {
-	for (let used = 0; used <= INTAKE_GRACE_CALLS + 4; used++) {
-		const gate = intakeGate(undefined, "read", used);
-		assert.equal(gate.block, used >= INTAKE_GRACE_CALLS, `blocked at ${used} pre-goal call(s)`);
-		assert.equal(gate.remaining, Math.max(0, INTAKE_GRACE_CALLS - used));
-		assert.equal(gate.remaining >= 0, true);
-	}
-	assert.match(intakeGate(undefined, "bash", INTAKE_GRACE_CALLS).reason, /goal/);
-	assert.equal(intakeGate(undefined, "read", Number.NaN).block, false, "an unknown count is not a refusal");
-	assert.equal(intakeGate(undefined, "read", -5).block, false);
-});
-
-test("no gate ever stands between the harness and the goal tools, and no gate survives a confirmed goal", () => {
-	for (const tool of ["goal", "lap", "verify", "steer", "web_search", ""])
-		for (const used of [0, INTAKE_GRACE_CALLS, 999]) assert.equal(intakeGate(undefined, tool, used).block, false, `${tool} must stay callable`);
-	for (const tool of INTAKE_EXPLORE_TOOLS) assert.equal(intakeGate({ goal: "x", confirmedAt: 1 }, tool, 999).block, false);
-	for (const tool of ["READ", " Bash "]) assert.equal(isExploreTool(tool), true);
+test("a confirmed goal is the only thing that closes intake, and the draft never invents one", () => {
 	assert.equal(intakeOpen({ goal: "x" }), false);
 	assert.equal(intakeOpen({ goal: "x", confirmedAt: 0 }), false);
 	assert.equal(intakeOpen({ goal: "x", confirmedAt: Date.now() }), true);
+	assert.equal(intakeOpen({ goal: "x", confirmedAt: Number.NaN }), false, "a garbage stamp is not a confirmation");
 });
 
-test("the refusal note speaks the human's language, stays one line, and always names goal", () => {
-	const thai = intakeBlockNote("th", 0);
-	const english = intakeBlockNote("en", 0);
-	assert.match(thai, /[\u0E00-\u0E7F]/, "Thai must reach the Thai human");
-	assert.doesNotMatch(english, /[\u0E00-\u0E7F]/, "English must not carry Thai");
-	assert.match(intakeBlockNote("th-TH", 0), /[\u0E00-\u0E7F]/);
-	for (const note of [thai, english, intakeBlockNote(undefined, 3)]) {
-		assert.ok(!note.includes("\n") && !note.includes("\t"), "a note is one painted line");
-		assert.match(note, /goal/);
-	}
-});
-
-test("the directive carries every drafted case and points at goal before exploration", () => {
+test("the directive carries every drafted case and points at goal, and never a case list on a conversation", () => {
 	const thai = ["เพิ่มหน้า login", "แก้บั๊กตอน logout"].join("\n");
 	const directive = intakeDirective(thai);
 	assert.match(directive, /goal/);
@@ -127,4 +88,9 @@ test("the directive carries every drafted case and points at goal before explora
 	const blank = intakeDirective("  ");
 	assert.ok(blank.length > 0, "a blank prompt still produces a directive");
 	assert.match(blank, /goal/i);
+	const prompt = "ทำไมหน้า report ถึงช้า";
+	assert.equal(intakeDirective(prompt, "th", "consult"), consultDirective(prompt, "th"), "the consult mode gets the consult directive verbatim");
+	assert.ok(!intakeDirective(prompt, "th", "consult").includes("case ="), "no draft case list is pushed in consult mode");
+	assert.ok(intakeDirective(prompt, "th", "work").includes("case ="), "a work turn still carries the drafted cases");
+	assert.equal(intakeDirective(prompt, undefined, "work"), intakeDirective(prompt), "no intent keeps the goal-first directive unchanged");
 });

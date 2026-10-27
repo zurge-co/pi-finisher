@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DefaultPackageManager, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { finisherDir } from "./types.ts";
+import { SURFACE_TOOLS } from "./goal-run.ts";
 
 export const SUBAGENT_ROLES = ["coder"] as const;
 export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
@@ -87,7 +88,7 @@ export const buildProviderMissingGuidance = (role: string, providerId: string): 
 
 export const FINISHER_TOOL_GLOB = "finisher_*";
 
-export const HARNESS_TOOLS = ["goal", "lap", "code", "verify", "steer"] as const;
+export const HARNESS_TOOLS = SURFACE_TOOLS;
 
 export const harnessExclusions = (): string[] => [...HARNESS_TOOLS];
 

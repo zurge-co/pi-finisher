@@ -72,7 +72,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		try {
 			plans = planSlices(slices, join(finisherDir(ctx.cwd), "worktree", "swarm"), new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
 		} catch (e) {
-			return { content: [{ type: "text", text: `code code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
+			return { content: [{ type: "text", text: `code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
 		}
 		const outcomes: SliceOutcome[] = [];
 		const byPlan = new Map(plans.map((pl) => [pl.id, pl]));

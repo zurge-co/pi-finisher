@@ -1,10 +1,5 @@
 import { baseLang, DEFAULT_GOAL_LANG, type HumanLang } from "./human-language.ts";
-
-export const INTAKE_GRACE_CALLS = 2;
-
-export const INTAKE_EXPLORE_TOOLS: readonly string[] = ["read", "bash", "grep", "find", "ls", "glob", "edit", "write"];
-
-export const isExploreTool = (toolName: string): boolean => INTAKE_EXPLORE_TOOLS.includes(String(toolName ?? "").trim().toLowerCase());
+import { consultDirective, type TurnIntent } from "./consult.ts";
 
 export interface IntakeGoal {
 	goal?: string;
@@ -14,28 +9,6 @@ export interface IntakeGoal {
 export const intakeOpen = (goal: IntakeGoal | undefined): boolean => (Number.isFinite(goal?.confirmedAt) ? (goal?.confirmedAt ?? 0) > 0 : false);
 
 const thaiLang = (lang?: string): boolean => baseLang((lang ?? DEFAULT_GOAL_LANG) as HumanLang) === "th";
-
-export interface IntakeRefusal {
-	block: boolean;
-	reason?: string;
-	remaining: number;
-}
-
-const callCount = (n: number): number => (Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0);
-
-export const intakeGate = (goal: IntakeGoal | undefined, toolName: string, preGoalCalls: number, lang?: string): IntakeRefusal => {
-	const used = callCount(preGoalCalls);
-	const remaining = Math.max(0, INTAKE_GRACE_CALLS - used);
-	if (intakeOpen(goal) || !isExploreTool(toolName) || used < INTAKE_GRACE_CALLS) return { block: false, remaining };
-	return { block: true, remaining: 0, reason: intakeBlockNote(lang, 0) };
-};
-
-export const intakeBlockNote = (lang: string | undefined, remaining: number): string => {
-	const left = callCount(remaining);
-	return thaiLang(lang)
-		? `ยังไม่มีการยืนยัน goal: การสำรวจโค้ดถูกปิดแล้ว (เหลือ ${left} ครั้ง) — goal และ case ฉบับร่างเตรียมไว้จากข้อความของมนุษย์แล้ว ให้เรียก goal ก่อน แล้วค่อยสำรวจโค้ด`
-		: `no goal is confirmed yet: code exploration is closed (${left} call(s) left) — the draft goal and its cases are already prepared from the human's message, so call goal first and explore only after that`;
-};
 
 export const DRAFT_GOAL_MAX = 200;
 export const DRAFT_CASES_MAX = 5;
@@ -92,14 +65,15 @@ export const intakeDraft = (prompt: string): IntakeDraft => {
 	return { goal, cases: draftCases(prompt, goal) };
 };
 
-export const intakeDirective = (prompt: string, lang?: string): string => {
+export const intakeDirective = (prompt: string, lang?: string, intent?: TurnIntent): string => {
+	if (intent === "consult") return consultDirective(prompt, lang);
 	const draft = intakeDraft(prompt);
 	const numbered = draft.cases.map((c, i) => `${i + 1}. ${c}`).join("  ");
 	if (!draft.goal)
 		return thaiLang(lang)
-			? "ยังไม่มี goal: ถามมนุษย์ว่า goal คืออะไรด้วยคำพูดของเขาเอง แล้วเรียก goal ก่อนสำรวจโค้ดใด ๆ"
-			: "no goal yet: ask the human for the goal in their own words, then call goal before any code exploration";
+			? "ยังไม่มี goal: ถามมนุษย์ว่า goal คืออะไรด้วยคำพูดของเขาเอง แล้วเรียก goal ก่อนลงมือ"
+			: "no goal yet: ask the human for the goal in their own words, then call goal before you start";
 	if (thaiLang(lang))
-		return `goal ยังไม่ถูกยืนยัน — ฉบับร่างจากข้อความของมนุษย์: goal = ${draft.goal} | case = ${numbered}. เรียก goal ด้วย goal และ case ชุดนี้ก่อนอ่าน/grep/bash ใด ๆ (สำรวจโค้ดได้อีก ${INTAKE_GRACE_CALLS} ครั้งก่อนถูกปิด) มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
-	return `no goal is confirmed yet — the draft from the human's own message: goal = ${draft.goal} | cases = ${numbered}. Call goal with this goal and these cases before any read/grep/bash (exploration is closed after ${INTAKE_GRACE_CALLS} calls); the human confirms once and the same goal is never asked again`;
+		return `ถ้าข้อความนี้เป็นงานที่ต้องลงมือ — ฉบับร่างจากคำพูดของมนุษย์: goal = ${draft.goal} | case = ${numbered}. เรียก goal ด้วย goal และ case ชุดนี้ ไม่ต้องเดา มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
+	return `if this message is a work order — the draft from the human's own words: goal = ${draft.goal} | cases = ${numbered}. Call goal with this goal and these cases instead of guessing; the human confirms once and the same goal is never asked again`;
 };

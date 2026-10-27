@@ -1,11 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	acceptanceBlock,
 	acceptanceLines,
 	blockedBy,
+	CODER_FLOOR,
+	CONTRACT_HEADER,
+	ACCEPTANCE_HEADER,
+	contractBlock,
+	coderFloor,
+	coderFloorNote,
 	contractLines,
 	declaredOverlaps,
 	findCycles,
+	MAIN_ALONGSIDE_LINE,
 	planOrder,
 	planRefusalText,
 	planRefusals,
@@ -81,8 +89,29 @@ test("a failed dependency names its dependents, so the rest of the plan is not a
 test("the shared contract and the acceptance criteria reach the coder, and are absent when they were not given", () => {
 	assert.deepEqual(contractLines(plan([slice("a", ["a"])]), "  "), [], "no contract means no invented one");
 	const contract = contractLines(plan([slice("a", ["a"])]), "export type Token = { id: string }");
-	assert.match(contract.join("\n"), /SHARED CONTRACT/);
+	assert.equal(contract[0], CONTRACT_HEADER, "the plan check and the coder prompt read one header, not two copies of it");
 	assert.match(contract.join("\n"), /export type Token/);
+	assert.deepEqual(contract, contractBlock("export type Token = { id: string }"));
 	assert.deepEqual(acceptanceLines(plan([slice("a", ["a"])])[0]), [], "a slice with no criteria adds no lines");
+	assert.equal(acceptanceLines(plan([slice("a", ["a"], { acceptance: ["the token refreshes"] })])[0])[0], ACCEPTANCE_HEADER);
 	assert.match(acceptanceLines(plan([slice("a", ["a"], { acceptance: ["the token refreshes"] })])[0]).join("\n"), /the token refreshes/);
+	assert.deepEqual(acceptanceBlock(["", "   ", undefined]), [], "an empty criterion is not a criterion");
+});
+
+test("the coder floor is an exact boundary for every input: fewer than 2 slices is refused, 2 and above always spawn", () => {
+	for (let n = 0; n <= 12; n++) {
+		const floor = coderFloor(n);
+		assert.equal(floor.spawn, n >= CODER_FLOOR, `${n} slices: spawn is exactly n >= ${CODER_FLOOR}`);
+		assert.equal(floor.coders, n, "the slice count is reported unchanged");
+		assert.equal(floor.spawn, !(floor.coders < CODER_FLOOR), "the two branches are complementary — never both, never neither");
+	}
+	for (const bad of [NaN, -3, -1, 0.5, 1.9]) assert.equal(coderFloor(bad).spawn, false, `${String(bad)} cannot buy a spawn`);
+	assert.equal(coderFloor(NaN).coders, 0, "a non-finite count is zero coders");
+	assert.equal(coderFloor(2.7).coders, 2, "a fractional count floors to whole coders");
+	assert.equal(coderFloor(2.7).spawn, true);
+	const note = coderFloorNote(1);
+	assert.match(note, /main agent/, "a lone slice is sent back to main");
+	assert.ok(note.includes(String(CODER_FLOOR)), "the refusal names the floor it applies");
+	assert.match(MAIN_ALONGSIDE_LINE, /main/i, "the alongside rule is about main, not the coders alone");
+	assert.ok(MAIN_ALONGSIDE_LINE.length > 0);
 });

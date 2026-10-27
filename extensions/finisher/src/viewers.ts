@@ -3,6 +3,7 @@ import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-
 import { relative } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { panelize } from "./models.ts";
+import { roleTag } from "./agent-panel.ts";
 import { GOAL_PAGE_CLOSE, GOAL_PAGE_KEYS, goalPageBody, goalPageLines, goalPageRowOf, goalPageSummary, goalPageTitle, type GoalPageGoal, type GoalPageLine } from "./goal-page.ts";
 import { REPORT_PAGE_CLOSE, REPORT_PAGE_KEYS, reportPageLines, reportPageSummary, reportPageTitle, type HudReport } from "./report-page.ts";
 import { SCROLL_CLOSE, createScrollPage, scrollCloses, scrollProgress, scrollRange } from "./scroll-page.ts";
@@ -20,7 +21,7 @@ export const createViewers = (ctx: HarnessContext) => {
 	const pi = ctx.pi;
 
 	const runLabel = (r: SubagentRun) =>
-		`${r.status === "running" ? "▶" : r.ok ? "✅" : "❌"} ${r.role} @ ${new Date(r.startedAt ?? r.at).toLocaleTimeString()}`;
+		`${r.status === "running" ? "▶" : r.ok ? "✅" : "❌"} ${roleTag(r.role).toLowerCase()} @ ${new Date(r.startedAt ?? r.at).toLocaleTimeString()}`;
 
 	const logLines = (run: SubagentRun): string[] => {
 		if (!run.logPath || !existsSync(run.logPath)) return ["(waiting for the first output…)"];

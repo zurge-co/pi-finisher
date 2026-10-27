@@ -1,19 +1,18 @@
 import { baseLang, DEFAULT_GOAL_LANG, type HumanLang } from "./human-language.ts";
+import { cleanChromeText } from "./chrome-text.ts";
 import { DRAFT_CASES_MAX } from "./intake.ts";
 
-export type ClarifyGap = "target" | "observable" | "scope";
+export type ClarifyGap = "meaning" | "words" | "outcome";
 
-export const CLARIFY_GAPS: readonly ClarifyGap[] = ["target", "observable", "scope"];
+export const CLARIFY_GAPS: readonly ClarifyGap[] = ["meaning", "words", "outcome"];
 
 export const CLARIFY_MAX = 3;
+
+export const CLARIFY_OPTIONS_MAX = CLARIFY_MAX + 1;
 
 export interface ClarifyDraft {
 	goal: string;
 	cases: readonly string[];
-}
-
-export interface ClarifyChoices {
-	targets: readonly string[];
 }
 
 export interface ClarifyQuestion {
@@ -33,7 +32,7 @@ export interface ClarifyAnswerState {
 	clarify?: { goalKey?: string; at?: number };
 }
 
-	export interface ClarifyApplied {
+export interface ClarifyApplied {
 	goal: string;
 	goalText: string;
 	cases: string[];
@@ -43,27 +42,34 @@ export interface ClarifyAnswerState {
 
 const thaiLang = (lang?: string): boolean => baseLang((lang ?? DEFAULT_GOAL_LANG) as HumanLang) === "th";
 
+export type ClarifyChromeOverrides = Partial<Record<keyof ClarifyChrome, string>>;
+
+export const CLARIFY_CHROME_KEYS: readonly (keyof ClarifyChrome)[] = ["title", "asIs", "later", "note"];
+
 const collapse = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 const EN_CHROME: ClarifyChrome = {
-	title: "clarify the goal before it is confirmed",
+	title: "confirm that I read the goal the way you meant it",
 	asIs: "as I said is enough",
 	later: "let the rest be decided while working",
-	note: "asked once, at most 3 questions, each with options to pick, and never a question that reading the code would answer",
+	note: "asked once, at most 3 questions, each one only to check that I understood the goal the way you meant it — never about how the work is done and never about how far it reaches",
 };
 
 const TH_CHROME: ClarifyChrome = {
-	title: "ทำเป้าหมายให้ชัดก่อนยืนยัน",
+	title: "ยืนยันว่าฉันเข้าใจ goal ตรงกับที่คุณหมายไว้",
 	asIs: "ตามที่ฉันพูดก็พอ",
 	later: "ที่เหลือให้ตัดสินระหว่างทำงาน",
-	note: "ถามครั้งเดียว ไม่เกิน 3 ข้อ มีตัวเลือกให้เลือก และไม่ถามสิ่งที่อ่านโค้ดตอบได้",
+	note: "ถามครั้งเดียว ไม่เกิน 3 ข้อ แต่ละข้อถามเพื่อยืนยันว่าฉันเข้าใจ goal ตรงกับคุณเท่านั้น — ไม่ถามว่าทำอย่างไร และไม่ถามขอบเขต",
 };
 
 export const CLARIFY_AS_IS: string = EN_CHROME.asIs;
 
 export const CLARIFY_RULE: string = TH_CHROME.note;
 
-export const clarifyChrome = (lang?: string): ClarifyChrome => (thaiLang(lang) ? TH_CHROME : EN_CHROME);
+export const clarifyChrome = (lang?: string, overrides?: ClarifyChromeOverrides): ClarifyChrome => ({
+	...(thaiLang(lang) ? TH_CHROME : EN_CHROME),
+	...cleanChromeText(CLARIFY_CHROME_KEYS, overrides),
+});
 
 const AS_IS_TEXTS = new Set([EN_CHROME.asIs, TH_CHROME.asIs, "as-is", "as is"].map((text) => text.toLowerCase()));
 
@@ -75,8 +81,6 @@ const DIGIT_RE = /\d/;
 
 const BOUND_RE =
 	/[<>≤≥]|ไม่เกิน|อย่างน้อย|ไม่ต่ำกว่า|ไม่มากกว่า|\b(?:at\s+most|at\s+least|no\s+more\s+than|no\s+less\s+than|fewer\s+than|less\s+than|greater\s+than|more\s+than|under|over|exactly)\b/i;
-
-const EXIT_RE = /\bexits?\b|\bexit\s*(?:code|status)\b|\bคืนค่า\b/i;
 
 const COMMANDS = new Set([
 	"npm",
@@ -149,9 +153,8 @@ export const decidable = (c: string): boolean => {
 	if (PATH_RE.test(text)) return true;
 	const tokens = tokensOf(text);
 	if (tokens.some((_, index) => namesCommand(tokens, index))) return true;
-	if (DIGIT_RE.test(text)) return true;
-	if (BOUND_RE.test(text)) return true;
-	return EXIT_RE.test(text);
+	if (DIGIT_RE.test(text) || BOUND_RE.test(text)) return true;
+	return false;
 };
 
 const VAGUE_WORDS = new Set([
@@ -250,6 +253,30 @@ const THAI_VAGUE = [
 	"ง่าย",
 ];
 
+const AMBIGUOUS_LATIN = [
+	"faster",
+	"quicker",
+	"slower",
+	"better",
+	"nicer",
+	"cleaner",
+	"simpler",
+	"easier",
+	"readable",
+	"maintainable",
+	"robust",
+	"stable",
+	"lighter",
+	"smaller",
+	"smoother",
+	"modernise",
+	"modernize",
+	"optimise",
+	"optimize",
+];
+
+const AMBIGUOUS_THAI = ["เร็วขึ้น", "ดีขึ้น", "สวยขึ้น", "ง่ายขึ้น", "อ่านง่ายขึ้น", "เบาขึ้น", "เสถียรขึ้น", "กระชับขึ้น", "คล่องขึ้น"];
+
 const THAI_RE = /[\u0E00-\u0E7F]/;
 
 const wordsOf = (text: string): string[] => collapse(text).toLowerCase().match(/[\p{L}\p{N}_%.@/~-]+/gu) ?? [];
@@ -272,6 +299,20 @@ const vagueTarget = (goal: string): boolean => {
 	return THAI_RE.test(text) ? thaiVagueOnly(text) : false;
 };
 
+const quantified = (goal: string): boolean => DIGIT_RE.test(goal) || BOUND_RE.test(goal);
+
+export const ambiguousWord = (goal: string): string | undefined => {
+	const text = collapse(goal);
+	if (!text || quantified(text)) return undefined;
+	for (const term of AMBIGUOUS_THAI) if (text.includes(term)) return term;
+	const lower = text.toLowerCase();
+	for (const term of AMBIGUOUS_LATIN) {
+		const pattern = new RegExp(`(?<![a-z])${term}(?![a-z])`);
+		if (pattern.test(lower)) return term;
+	}
+	return undefined;
+};
+
 const draftOf = (draft: ClarifyDraft | undefined): { goal: string; cases: string[] } => {
 	const goal = typeof draft?.goal === "string" ? draft.goal : "";
 	const raw: readonly string[] | undefined = draft?.cases;
@@ -281,11 +322,11 @@ const draftOf = (draft: ClarifyDraft | undefined): { goal: string; cases: string
 
 export const clarifyGaps = (draft: ClarifyDraft): ClarifyGap[] => {
 	const { goal, cases } = draftOf(draft);
-	const anchored = cases.some(decidable);
 	const gaps: ClarifyGap[] = [];
-	if (vagueTarget(goal)) gaps.push("target");
-	if (!anchored) gaps.push("observable");
-	if (!anchored && !decidable(goal)) gaps.push("scope");
+	const stated = cases.some((c) => decidable(c));
+	if (vagueTarget(goal)) gaps.push("meaning");
+	if (ambiguousWord(goal)) gaps.push("words");
+	if (!stated) gaps.push("outcome");
 	return gaps.slice(0, CLARIFY_MAX);
 };
 
@@ -294,11 +335,11 @@ const orderedGaps = (gaps: readonly ClarifyGap[] | undefined): ClarifyGap[] => {
 	return CLARIFY_GAPS.filter((gap) => wanted.has(gap)).slice(0, CLARIFY_MAX);
 };
 
-const uniqueOptions = (options: readonly string[] | undefined, asIs: string): string[] => {
+const uniqueOptions = (options: readonly string[], asIs: string): string[] => {
 	const seen = new Set<string>([asIs.toLowerCase()]);
 	const out: string[] = [];
-	for (const raw of options ?? []) {
-		const text = typeof raw === "string" ? collapse(raw) : "";
+	for (const raw of options) {
+		const text = collapse(raw);
 		const key = text.toLowerCase();
 		if (!text || seen.has(key)) continue;
 		seen.add(key);
@@ -307,79 +348,82 @@ const uniqueOptions = (options: readonly string[] | undefined, asIs: string): st
 	return out;
 };
 
-const EN_TARGET_OPTIONS = ["the file that owns the behaviour", "the screen or command the human sees", "the whole module, not one line"];
+const EN_MEANING = [
+	"exactly the words you used, nothing added",
+	"the same thing, but it has to be noticeable when you use it",
+	"the same thing, and what already works has to keep working",
+];
 
-const TH_TARGET_OPTIONS = ["ไฟล์ที่คุมพฤติกรรมนี้", "หน้าจอหรือคำสั่งที่มนุษย์เห็น", "ทั้งโมดูล ไม่ใช่บรรทัดเดียว"];
+const TH_MEANING = ["ตรงตามที่คุณพูดไว้ทุกคำ ไม่เพิ่มไม่ลด", "เรื่องเดียวกัน แต่ต้องรู้สึกได้ตอนคุณใช้", "เรื่องเดียวกัน และของที่ใช้ได้อยู่ต้องใช้ได้ต่อไป"];
 
-const EN_OBSERVE_OPTIONS = ["npm test exits 0", "npm run typecheck exits 0", "the failing case replays green"];
+const EN_WORD_TAIL = ["in a way you notice while using it", "in a way you can point at as a number", "without changing what already works"];
 
-const TH_OBSERVE_OPTIONS = ["npm test ออกด้วย exit code 0", "npm run typecheck ผ่าน", "เคสที่พังอยู่เล่นซ้ำแล้วได้ exit code 0"];
+const TH_WORD_TAIL = ["แบบรู้สึกได้ตอนใช้", "แบบชี้เป็นตัวเลขได้", "โดยของเดิมไม่ต้องเปลี่ยน"];
 
-const EN_SCOPE_OPTIONS = ["only the path the goal names", "every file the change touches, tests included"];
+const EN_OUTCOME = [
+	"I run `npm test` and it is all green",
+	"the thing that bothers me stops happening when I use it",
+	"it works the way the goal says and nothing that works today breaks",
+];
 
-const TH_SCOPE_OPTIONS = ["เฉพาะ path ที่ goal ระบุ", "ทุกไฟล์ที่การเปลี่ยนนี้แตะ รวม test"];
-
-const pathsOf = (text: string): string[] => {
-	const re = new RegExp(PATH_RE.source, "gi");
-	const found: string[] = [];
-	for (const match of text.matchAll(re)) {
-		const path = match[1] ?? "";
-		if (path && !found.some((seen) => seen.toLowerCase() === path.toLowerCase())) found.push(path);
-	}
-	return found;
-};
-
-const scopeOptions = (draft: { goal: string; cases: string[] }, lang?: string): string[] => {
-	const [anchor] = pathsOf([draft.goal, ...draft.cases].join(" "));
-	if (!anchor) return thaiLang(lang) ? TH_SCOPE_OPTIONS : EN_SCOPE_OPTIONS;
-	return thaiLang(lang) ? [`เฉพาะ ${anchor}`, `${anchor} กับ test ของมัน`] : [`only ${anchor}`, `${anchor} plus its tests`];
-};
+const TH_OUTCOME = ["ฉันรัน `npm test` แล้วเขียวหมด", "เรื่องที่กวนใจฉันอยู่ไม่เกิดอีกตอนใช้งาน", "ได้ตาม goal และของที่ใช้ได้วันนี้ยังใช้ได้"];
 
 const QUESTION_TEXT: Record<ClarifyGap, { en: string; th: string }> = {
-	target: { en: "what exactly should change? pick one:", th: "จะให้เปลี่ยนอะไรกันแน่ — เลือกหนึ่งข้อ:" },
-	observable: { en: "how should the result be checked? pick one:", th: "จะตรวจผลด้วยอะไร — เลือกหนึ่งข้อ:" },
-	scope: { en: "how far should the change reach? pick one:", th: "ขอบเขตแค่ไหน — เลือกหนึ่งข้อ:" },
+	meaning: {
+		en: "so that I read the goal the way you meant it — which of these is what you mean? pick one:",
+		th: "เพื่อให้ฉันเข้าใจ goal ตรงกับที่คุณหมายไว้ — ข้อไหนคือสิ่งที่คุณหมายถึง? เลือกหนึ่งข้อ:",
+	},
+	words: {
+		en: 'I want to be sure I understand the word you used — what does it mean to you here? pick one:',
+		th: "ฉันอยากเข้าใจคำที่คุณใช้ให้ตรง — คำนี้หมายถึงอะไรสำหรับคุณ? เลือกหนึ่งข้อ:",
+	},
+	outcome: {
+		en: "and the result you expect to see at the end is — pick one:",
+		th: "แล้วผลที่คุณคาดว่าจะเห็นตอนจบคือ — เลือกหนึ่งข้อ:",
+	},
 };
 
-const optionsFor = (gap: ClarifyGap, draft: { goal: string; cases: string[] }, choices: ClarifyChoices | undefined, lang?: string): string[] => {
+const optionsFor = (gap: ClarifyGap, draft: { goal: string }, lang?: string): string[] => {
 	const thai = thaiLang(lang);
-	if (gap === "observable") return thai ? TH_OBSERVE_OPTIONS : EN_OBSERVE_OPTIONS;
-	if (gap === "scope") return scopeOptions(draft, lang);
-	const given = uniqueOptions(choices?.targets, clarifyChrome(lang).asIs);
-	return given.length ? given.slice(0, CLARIFY_MAX) : thai ? TH_TARGET_OPTIONS : EN_TARGET_OPTIONS;
+	if (gap === "meaning") return thai ? TH_MEANING : EN_MEANING;
+	if (gap === "outcome") return thai ? TH_OUTCOME : EN_OUTCOME;
+	const word = ambiguousWord(draft.goal) ?? draft.goal;
+	return (thai ? TH_WORD_TAIL : EN_WORD_TAIL).map((tail) => `${word} ${tail}`);
 };
 
-export const clarifyQuestions = (gaps: readonly ClarifyGap[], draft: ClarifyDraft, choices: ClarifyChoices, lang?: string): ClarifyQuestion[] => {
-	const words = clarifyChrome(lang);
+export const clarifyQuestions = (gaps: readonly ClarifyGap[], draft: ClarifyDraft, lang?: string, chrome?: ClarifyChromeOverrides): ClarifyQuestion[] => {
+	const words = clarifyChrome(lang, chrome);
 	const parsed = draftOf(draft);
 	const thai = thaiLang(lang);
 	return orderedGaps(gaps).map((gap) => ({
 		gap,
 		question: QUESTION_TEXT[gap][thai ? "th" : "en"],
-		options: [...uniqueOptions(optionsFor(gap, parsed, choices, lang), words.asIs).slice(0, CLARIFY_MAX), words.asIs],
+		options: [...uniqueOptions(optionsFor(gap, parsed, lang), words.asIs).slice(0, CLARIFY_OPTIONS_MAX - 1), words.asIs],
 	}));
 };
 
-const usableAnswer = (value: unknown): string | undefined => {
+const usableAnswer = (value: unknown, asIs?: string): string | undefined => {
 	if (typeof value !== "string") return undefined;
 	const text = collapse(value);
 	if (!text || AS_IS_TEXTS.has(text.toLowerCase())) return undefined;
+	if (asIs && text.toLowerCase() === asIs.trim().toLowerCase()) return undefined;
 	return text;
 };
 
 const CLAUSE_LABEL: Record<ClarifyGap, { en: string; th: string }> = {
-	target: { en: "target", th: "เป้าหมาย" },
-	observable: { en: "check", th: "ตรวจด้วย" },
-	scope: { en: "scope", th: "ขอบเขต" },
+	meaning: { en: "what I understand you to mean", th: "ความหมายที่ฉันเข้าใจ" },
+	words: { en: "the word you used", th: "คำที่คุณใช้" },
+	outcome: { en: "the result you expect", th: "ผลที่คุณคาด" },
 };
 
-export const applyAnswers = (draft: ClarifyDraft, answers: Partial<Record<ClarifyGap, string>>, lang?: string): ClarifyApplied => {
+export const applyAnswers = (draft: ClarifyDraft, answers: Partial<Record<ClarifyGap, string>>, lang?: string, chrome?: ClarifyChromeOverrides): ClarifyApplied => {
 	const base = draftOf(draft);
+	const asIs = clarifyChrome(lang, chrome).asIs;
 	const cases = [...base.cases];
 	const notes: string[] = [];
 	const answered = new Set<ClarifyGap>();
 	for (const gap of CLARIFY_GAPS) {
-		const answer = usableAnswer(answers?.[gap]);
+		const answer = usableAnswer(answers?.[gap], asIs);
 		if (!answer) continue;
 		answered.add(gap);
 		if (cases.some((c) => collapse(c).toLowerCase() === answer.toLowerCase())) continue;
@@ -406,14 +450,16 @@ export interface ClarifyPlan {
 	questions: ClarifyQuestion[];
 }
 
-export const clarifyPlan = (draft: ClarifyDraft, state: ClarifyAnswerState | undefined, goalKey: string, choices: ClarifyChoices, lang?: string): ClarifyPlan => {
+export const clarifyPlan = (draft: ClarifyDraft, state: ClarifyAnswerState | undefined, goalKey: string, lang?: string, chrome?: ClarifyChromeOverrides): ClarifyPlan => {
 	const gaps = clarifyGaps(draft);
 	const ask = gaps.length > 0 && clarifyOpen(state, goalKey);
-	return { ask, gaps, questions: ask ? clarifyQuestions(gaps, draft, choices, lang) : [] };
+	return { ask, gaps, questions: ask ? clarifyQuestions(gaps, draft, lang, chrome) : [] };
 };
 
-export const clarifyNote = (open: readonly ClarifyGap[], lang?: string): string => {
+export const clarifyNote = (open: readonly ClarifyGap[], lang?: string, chrome?: ClarifyChromeOverrides): string => {
 	const gaps = orderedGaps(open);
-	if (!gaps.length) return thaiLang(lang) ? "ไม่ต้องถามเพิ่ม: goal นี้ชัดพอจะยืนยันแล้ว" : "nothing to ask: this goal is specific enough to confirm";
-	return thaiLang(lang) ? `ยังขาด ${gaps.join(", ")} — ${TH_CHROME.note}` : `still missing ${gaps.join(", ")} — ${EN_CHROME.note}`;
+	const words = clarifyChrome(lang, chrome);
+	if (!gaps.length)
+		return thaiLang(lang) ? "ไม่ต้องถามเพิ่ม: ฉันเข้าใจ goal นี้ตรงกับที่คุณหมายไว้แล้ว" : "nothing to ask: I already read this goal the way you meant it";
+	return thaiLang(lang) ? `ยังมี ${gaps.length} จุดที่ฉันยังไม่แน่ใจว่าเข้าใจตรงกัน — ${words.note}` : `${gaps.length} point(s) I still want to confirm about what you mean — ${words.note}`;
 };

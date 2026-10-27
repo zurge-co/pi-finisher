@@ -1,15 +1,22 @@
 ---
 name: goal-intake
-description: Confirm the goal with goal before exploring any code, drafting the goal and its cases from the human's own words. Use at the start of a pi-finisher run, before the first read, grep or bash call.
+description: Confirm the goal with goal before the run starts, drafting the goal and its cases from the human's own words, and decide for yourself whether a message is a conversation or a work order. Use whenever a pi-finisher turn begins.
 ---
 
 # Goal intake
 
-The human's message **is** the goal. Confirm it with `goal` before you read, grep, or
-explore anything. The harness allows two pre-goal calls to reach that dialog; after that every
-exploration call is refused with a note that says so, and the only way forward is the dialog.
+The human's message **is** the goal. Confirm it with `goal` before the run starts.
 
-Nothing has to be configured for this. It is on from install, in every session.
+Reading the code to understand the request is yours to decide, not the harness's: nothing counts your
+calls and nothing refuses a `read` or a `grep`. What the harness does do is draft the goal and its cases
+from the human's own words and put that draft in front of you, so the dialog is one keystroke away
+instead of a guess.
+
+The turn itself is yours to classify. A message that asks something is a conversation: answer it, and
+no dialog opens. A message that orders work is a run: `goal` with `start: true`. Only an explicit
+`consultMode: always` in `.finisher/config.json` takes that decision away from you.
+
+Nothing else has to be configured. It is on from install, in every session.
 
 ## Draft the goal and its cases from the human's own words
 
@@ -23,19 +30,30 @@ Nothing has to be configured for this. It is on from install, in every session.
 
 ## When the human's own words are vague
 
-Some messages carry no checkable outcome: "make it faster", "clean this up", "ปรับปรุงหน่อย".
-Reading more code cannot answer what they meant, so `goal` asks — once, before the dialog.
+Some messages are easy to misread: "make it faster", "clean this up", "ปรับปรุงหน่อย".
+The risk is not that they lack detail, it is that you understood them differently than they meant.
+So `goal` asks — once, before the dialog — only to check the two of you mean the same thing.
 
-- At most 3 questions, one per gap it names: what should change (`target`), how the result is
-  checked (`observable`), how far the change may reach (`scope`).
-- Every question carries options to pick — drawn from the repo's own module and directory names where
-  it can — and the last option is always "as I said is enough".
-- Never a question that reading the code would answer: which file owns a behaviour is your job, what
-  counts as done is theirs.
+- At most 3 questions, one per gap it names: what you take the goal to mean (`meaning`), what the
+  quality word they used means to them (`words`), the result they expect at the end (`outcome`).
+- Never a question about how the work is done and never one about how far it reaches — that is the
+  agent's decision, and asking it reads as an interview.
+- Every question carries options to pick, and the last option is always "as I said is enough".
+- Never a question that reading the code would answer.
 - The answers are folded into the cases before the same confirm dialog opens, so the human weighs one
   sharpened case list and confirms once. There is no second round for the same goal.
 - If they pick "as I said is enough", confirm their words and make the cases concrete in the first
-  lap; a clarifying answer that cannot be checked is kept as a note, never dressed up as a case.
+  lap; an answer that cannot be checked is kept as a note, never dressed up as a case.
+
+### Both dialogs speak the human's language
+
+Pass `lang` with the tag the human writes in. Pass `chrome` for the confirm dialog (`title`, `header`,
+`note`, `keys`, `keysLine`, `emptyGoal`) and `clarifyChrome` for the clarify round (`title`, `asIs`,
+`later`, `note`) written in that same language. Anything you leave out falls back to **English** — never
+to another language, so a Spanish reader is never handed Thai. A value that is empty, longer than 120
+characters, or carries a newline or control character is dropped instead of shown, so keep each string
+one line. The escape the human picks (`asIs`) is refused as an answer in every language, including the
+one you supplied.
 
 ## The dialog happens once
 

@@ -178,12 +178,27 @@ export const parseWorkerTests = (out: string): { result: "PASS" | "FAIL" | "SKIP
 	return undefined;
 };
 
+export const CONTRACT_HEADER = "SHARED CONTRACT (decided before you started — follow it exactly, do not redesign it):";
+
+export const ACCEPTANCE_HEADER = "Your slice is done when these hold:";
+
+export const contractBlock = (sharedContract?: string): string[] => {
+	const shared = (sharedContract ?? "").trim();
+	return shared ? [CONTRACT_HEADER, shared] : [];
+};
+
+export const acceptanceBlock = (acceptance?: string[]): string[] => {
+	const lines = (acceptance ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
+	return lines.length ? [ACCEPTANCE_HEADER, ...lines.map((a) => `  - ${a}`)] : [];
+};
+
 export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string; sharedContract?: string; acceptance?: string[] }): string =>
 	[
 		`You are CODER ${slice.id}. GOAL: ${opts.goal ?? "(goal supplied by the main agent)"}`,
 		`The main agent is working on the same goal right now, in parallel with you and the other coders — stay inside your slice and do not wait for it.`,
-		...((opts.sharedContract ?? "").trim() ? ["SHARED CONTRACT (decided before you started — follow it exactly, do not redesign it):", (opts.sharedContract ?? "").trim(), ""] : []),
-		...((opts.acceptance ?? []).length ? ["Your slice is done when these hold:", ...(opts.acceptance ?? []).map((a) => `  - ${a}`), ""] : []),
+		...contractBlock(opts.sharedContract),
+		...acceptanceBlock(opts.acceptance),
+		...([...contractBlock(opts.sharedContract), ...acceptanceBlock(opts.acceptance)].length ? [""] : []),
 		`You work ALONE in your own checkout: ${opts.worktreeDir}. Other coders are editing other checkouts of the same repo at the same time.`,
 		opts.scopes.length ? `Stay inside your slice's paths: ${opts.scopes.join(", ")}. Touching a file outside them is a conflict with another coder.` : "No explicit paths were given: keep the change as narrow as the instruction.",
 		"Write the code for YOUR slice only, then stop. Do not try to merge, commit, rebase or touch another slice's files.",

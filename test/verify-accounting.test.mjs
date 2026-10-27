@@ -100,8 +100,8 @@ test("the tracker on disk keeps the human's goal and every case whole — only t
 	const goalText = `goal ${'ก'.repeat(300)} tail`;
 	const cases = caselist(12).map((c, i) => `${c} ${'ข'.repeat(200)} ${i}`);
 	const goal = freshGoalRun(goalText, 1_000, cases);
-	writeLapTracker(cwd, goal, [], 2_000);
-	const read = readLapTracker(cwd);
+	writeLapTracker(cwd, "sess-accounting", goal, [], 2_000);
+	const read = readLapTracker(cwd, "sess-accounting");
 	assert.equal(read.goal, goalText, "the goal is stored verbatim, never shortened on disk");
 	assert.deepEqual(read.cases, cases, "every case is stored verbatim — the tracker is the state that survives a cleared context");
 	const text = renderLapTracker(read);

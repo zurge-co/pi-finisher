@@ -7,7 +7,7 @@ import { DEFAULT_GOAL_LANG, goalLanguageNote, languageTag, readableIn, resolveGo
 import { armGoalStop, goalStopMessage } from "./goal-stop.ts";
 import { type LaunchSubagent, type Persist, type RunCodeSwarm, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { effectiveLadder, concurrencyFor, swarmSlots } from "./swarm.ts";
-import { coderFloor, coderFloorNote, CODER_FLOOR, planRefusalText, planRefusals, readPlanSlices } from "./swarm-plan.ts";
+import { coderFloor, coderFloorNote, CODER_FLOOR, MAIN_ALONGSIDE_LINE, planRefusalText, planRefusals, readPlanSlices } from "./swarm-plan.ts";
 import { clearOtherGoals } from "./handoff-stack.ts";
 import { handoffOff } from "./handoff-gate.ts";
 import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
@@ -20,9 +20,11 @@ import { recordSteerOnRun } from "./agent-session.ts";
 import { countSuite } from "./suite-budget.ts";
 import { registerPhaseTool } from "./phase-tool.ts";
 import { verifyToolDefinition, VERIFY_TOOL } from "./verify-tool.ts";
-import { applyAnswers, clarifyPlan, markClarify, type ClarifyGap } from "./goal-clarify.ts";
-import { askClarify, clarifyTargets } from "./clarify-dialog.ts";
+import { applyAnswers, clarifyPlan, CLARIFY_CHROME_KEYS, markClarify, type ClarifyChromeOverrides, type ClarifyGap } from "./goal-clarify.ts";
+import { cleanChromeText } from "./chrome-text.ts";
+import { askClarify } from "./clarify-dialog.ts";
 import { caseKey } from "./goal-confirm.ts";
+import { consultOnly, goalConsultNote, worksTurn } from "./consult.ts";
 
 export const SWARM_MODES = ["code"] as const;
 export const RETIRED_MODES = ["explore", "verify"] as const;
@@ -83,7 +85,8 @@ export const registerTools = (ctx: HarnessContext) => {
 		promptGuidelines: [
 			"This tool only codes. Do the exploring and the planning yourself first — decide the slices, the files each one owns and the interface they share — because every slice you add is paid for by a coder reading context you already have.",
 			"Give every slice its scope (repo-relative paths): two slices sharing a path are a conflict, so split differently. Keep slices independent — they run concurrently, so a slice that needs another's interface must have that interface decided in your plan, not discovered by the coder.",
-			`A CODER is never spawned alone: at least ${CODER_FLOOR} coders must run side by side, and main keeps working its own lap while they do. If the work is one slice, do it yourself instead of calling this tool.`,
+			`A CODER is never spawned alone: at least ${CODER_FLOOR} coders must run side by side, and one slice is refused. If the work is one slice, do it yourself instead of calling this tool.`,
+			MAIN_ALONGSIDE_LINE,
 			"Use as many slices as the work genuinely splits into and no more: fewer coders is faster when the work serialises. Do not spend the whole ladder because it is there.",
 			"Verification is verify, not this tool: you run the deterministic checks and name the command that proves each case, so no sub-agent grades your work.",
 			"Treat a worker's report as the evidence: do not re-read the files it read or re-run the commands it ran.",
@@ -161,6 +164,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		],
 		parameters: Type.Object({
 			goal: Type.String({ description: "the outcome, in the human's words — one goal per run" }),
+			start: Type.Optional(Type.Boolean({ description: "true when the human is saying go: it is the only way a conversation turn starts a run (and the only way it opens a dialog)" })),
 			cases: Type.Optional(Type.Array(Type.String(), { description: "the cases that make the goal true (defaults to the spec's own goal cases)" })),
 			lang: Type.Optional(Type.String({ description: "the language the human writes in (e.g. th, ja, pt-BR) — the confirm dialog uses it" })),
 			chrome: Type.Optional(
@@ -170,16 +174,34 @@ export const registerTools = (ctx: HarnessContext) => {
 					note: Type.Optional(Type.String()),
 					keys: Type.Optional(Type.String()),
 					keysLine: Type.Optional(Type.String()),
+					emptyGoal: Type.Optional(Type.String()),
+				}),
+			),
+			clarifyChrome: Type.Optional(
+				Type.Object({
+					title: Type.Optional(Type.String()),
+					asIs: Type.Optional(Type.String()),
+					later: Type.Optional(Type.String()),
+					note: Type.Optional(Type.String()),
 				}),
 			),
 		}),
 		async execute(_id, p, _s, _o, ctx) {
 			const goal = p.goal.trim();
 			if (!goal) return { content: [{ type: "text", text: "goal: goal is empty — state the outcome the human wants" }], details: {}, isError: true };
+			const intent = state.turnIntent;
+			const start = p.start === true;
+			if (consultOnly(intent, start)) {
+				state.goalLang = resolveGoalLang(languageTag(p.lang), state.humanLang);
+				persist();
+				return { content: [{ type: "text", text: goalConsultNote(state.humanLang) }], details: { goal, confirmed: false, outcome: "consult", cases: state.goalDriver?.cases ?? [] } };
+			}
 			const lang = resolveGoalLang(languageTag(p.lang), state.humanLang);
 			state.goalLang = lang;
 			const chrome = cleanChrome(p.chrome as GoalChromeOverrides | undefined);
 			state.goalChrome = Object.keys(chrome).length ? chrome : undefined;
+			const clarifyGiven = cleanChromeText(CLARIFY_CHROME_KEYS, p.clarifyChrome as ClarifyChromeOverrides | undefined);
+			state.clarifyChrome = Object.keys(clarifyGiven).length ? clarifyGiven : undefined;
 			if (!readableIn(lang, goal))
 				return {
 					content: [{ type: "text", text: goalLanguageNote(lang) }],
@@ -212,14 +234,14 @@ export const registerTools = (ctx: HarnessContext) => {
 			let sharpened: string[] | undefined;
 			let clarifyNotes: string[] = [];
 			const clarify: { gaps: ClarifyGap[]; asked: number } = { gaps: [], asked: 0 };
-			const plan = clarifyPlan({ goal, cases: confirmed }, state, caseKey(goal), { targets: clarifyTargets(ctx.cwd) }, lang);
-			if (asks && plan.ask && typeof askClarifyQuestion === "function" && Boolean(ctx.hasUI)) {
-				const asked = await askClarify((question) => askClarifyQuestion(ctx, { question: question.question, choices: question.options }), plan.questions, lang);
+			const plan = clarifyPlan({ goal, cases: confirmed }, state, caseKey(goal), lang, state.clarifyChrome);
+			if (worksTurn(intent, start) && asks && plan.ask && typeof askClarifyQuestion === "function" && Boolean(ctx.hasUI)) {
+				const asked = await askClarify((question) => askClarifyQuestion(ctx, { question: question.question, choices: question.options }), plan.questions, lang, state.clarifyChrome);
 				markClarify(state, caseKey(goal), Date.now());
 				clarify.gaps = plan.gaps;
 				clarify.asked = asked.asked;
 				if (Object.keys(asked.answers).length) {
-					const applied = applyAnswers({ goal, cases: confirmed }, asked.answers, lang);
+					const applied = applyAnswers({ goal, cases: confirmed }, asked.answers, lang, state.clarifyChrome);
 					askGoal = applied.goalText;
 					askCases = applied.cases;
 					sharpened = applied.cases;
@@ -260,7 +282,6 @@ export const registerTools = (ctx: HarnessContext) => {
 			if (gate !== "resume" || !state.suiteAtStart) state.suiteAtStart = countSuite(ctx.cwd);
 			state.goalConsent = undefined;
 			state.goalStop = undefined;
-			state.preGoalCalls = 0;
 			state.lastModifiedAt = Date.now();
 			if (adopted.length && !state.spec) {
 				state.spec = { version: 1, title: goal.slice(0, 80), intent: goal, crossCheck: adopted, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;

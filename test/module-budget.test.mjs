@@ -56,11 +56,20 @@ test("the module map in AGENTS.md names every module, so it cannot drift from th
 	assert.deepEqual(ghosts, [], `AGENTS.md describes modules that no longer exist: ${ghosts.join(", ")}`);
 });
 
-test("the test script runs every test file on disk, and names none that is gone", () => {
+test("every suite file on disk runs under `npm test`, whatever it is named, and nothing listed is gone", () => {
 	const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
 	const listed = pkg.scripts.test.split(/\s+/).filter((t) => t.startsWith("test/"));
-	const onDisk = readdirSync(join(here, "test")).filter((f) => f.endsWith(".test.mjs")).map((f) => `test/${f}`);
-	assert.deepEqual([...listed].sort(), [...onDisk].sort(), "a test that is not in `npm test` never runs — add it, or delete it");
+	const onDisk = readdirSync(join(here, "test"), { withFileTypes: true })
+		.filter((e) => e.isFile() && e.name.endsWith(".mjs"))
+		.map((e) => `test/${e.name}`);
+	assert.deepEqual([...listed].sort(), [...onDisk].sort(), "a suite file that is not in `npm test` never runs — the name alone decides nothing, so add it or delete it");
 	assert.equal(new Set(listed).size, listed.length, "the script must not list a file twice");
 	for (const f of listed) assert.ok(existsSync(join(here, f)), `${f} is listed but does not exist`);
+});
+
+test("every listed suite really is a suite: it declares at least one test, so a helper dropped into test/ is caught too", () => {
+	const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
+	const listed = pkg.scripts.test.split(/\s+/).filter((t) => t.startsWith("test/"));
+	const bare = listed.filter((f) => !/(?:^|[^\w$])test\s*\(/m.test(readFileSync(join(here, f), "utf8")));
+	assert.deepEqual(bare, [], "a file under test/ with no test() proves nothing — it belongs outside test/ or in a real suite");
 });

@@ -1,5 +1,7 @@
 import { type Spec } from "./types.ts";
-import { baseLang, DEFAULT_GOAL_LANG } from "./human-language.ts";
+import { CHROME_TEXT_MAX, chromeSet, cleanChromeText } from "./chrome-text.ts";
+
+export { CHROME_TEXT_MAX };
 
 export type GoalGateState = "unconfirmed" | "confirmed";
 
@@ -42,6 +44,8 @@ export type GoalAskOutcome = "confirmed" | "declined" | "unavailable" | "timeout
 export const GOAL_CONFIRM_TITLE = "▚ confirm this goal once";
 export const GOAL_CONFIRM_KEYS = "y / enter = confirm  •  n / esc = decline";
 
+export const GOAL_SCROLL_KEYS = "↑↓ / wheel = scroll  •  space = read the chat without closing";
+
 export interface GoalChrome {
 	title: string;
 	keys: string;
@@ -54,7 +58,7 @@ export interface GoalChrome {
 const EN_CHROME: GoalChrome = {
 	title: GOAL_CONFIRM_TITLE,
 	keys: GOAL_CONFIRM_KEYS,
-	keysLine: "↑↓ / wheel = scroll  •  space = read the chat without closing",
+	keysLine: GOAL_SCROLL_KEYS,
 	header: "the goal is met when every case below is true of the real result:",
 	note: "after you confirm: no further approval, no token or cost ceiling — every case is verified and the report comes once.",
 	emptyGoal: "(no goal stated)",
@@ -73,24 +77,11 @@ const CHROME: Record<string, GoalChrome> = { en: EN_CHROME, th: TH_CHROME };
 
 export type GoalChromeOverrides = Partial<Record<keyof GoalChrome, string>>;
 
-export const CHROME_TEXT_MAX = 120;
+export const GOAL_CHROME_KEYS: readonly (keyof GoalChrome)[] = ["title", "keys", "keysLine", "header", "note", "emptyGoal"];
 
-const usable = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.trim().length <= CHROME_TEXT_MAX && !/[\n\r\t]/.test(v) && !/[\u0000-\u001F\u007F]/.test(v);
+export const cleanChrome = (overrides: GoalChromeOverrides | undefined): GoalChromeOverrides => cleanChromeText(GOAL_CHROME_KEYS, overrides);
 
-export const cleanChrome = (overrides: GoalChromeOverrides | undefined): GoalChromeOverrides => {
-	const out: GoalChromeOverrides = {};
-	for (const [key, value] of Object.entries(overrides ?? {})) {
-		if (!usable(value)) continue;
-		out[key as keyof GoalChrome] = value.trim();
-	}
-	return out;
-};
-
-export const goalChrome = (lang?: string, overrides?: GoalChromeOverrides): GoalChrome => {
-	const tag = lang ?? DEFAULT_GOAL_LANG;
-	const base = CHROME[tag] ?? CHROME[baseLang(tag)] ?? EN_CHROME;
-	return { ...base, ...cleanChrome(overrides) };
-};
+export const goalChrome = (lang?: string, overrides?: GoalChromeOverrides): GoalChrome => ({ ...chromeSet(lang, CHROME, EN_CHROME), ...cleanChrome(overrides) });
 
 export const GOAL_TOO_MANY_CASES = 24;
 

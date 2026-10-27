@@ -34,7 +34,13 @@ const ROLE_WIDTH = 18;
 
 const ROLE_TAG: Record<string, string> = { coder: "CODER", swarm: "CODER" };
 
-export const roleTag = (role: string): string => ROLE_TAG[role] ?? role.slice(0, 3).toUpperCase();
+const ROLE_LABEL: Record<string, string> = { coder: "coder", swarm: "coder" };
+
+const roleKey = (role: string): string => String(role ?? "").trim().toLowerCase();
+
+export const roleTag = (role: string): string => ROLE_TAG[roleKey(role)] ?? String(role ?? "").slice(0, 3).toUpperCase();
+
+export const roleLabel = (role: string): string => ROLE_LABEL[roleKey(role)] ?? String(role ?? "");
 
 export const elapsedLabel = (ms: number): string => {
 	const s = Math.max(0, Math.round(ms / 1000));
@@ -89,7 +95,7 @@ export const panelRowEntries = (runs: PanelRun[], opts: PanelOptions = {}): Pane
 export const panelRows = (runs: PanelRun[], opts: PanelOptions = {}): PanelRow[] => panelRowEntries(runs, opts).map((e) => e.row);
 
 export const formatPanelRow = (row: PanelRow, width = 100, maxTail = 40): string => {
-	const head = `${row.tag.padEnd(5)} ${row.state} ${row.role.padEnd(ROLE_WIDTH).slice(0, ROLE_WIDTH)}`;
+	const head = `${row.tag.padEnd(5)} ${row.state} ${roleLabel(row.role).padEnd(ROLE_WIDTH).slice(0, ROLE_WIDTH)}`;
 	const meta = [row.slot, row.model, row.elapsed].filter(Boolean).join(" ") || "";
 	const room = Math.max(0, width - head.length - meta.length - 3);
 	const tail = row.tail ? clip(row.tail, Math.min(maxTail, room)) : "";

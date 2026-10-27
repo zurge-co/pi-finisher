@@ -1,7 +1,7 @@
 import { Key, Text, matchesKey, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { panelize } from "./models.ts";
-import { goalChrome, goalConfirmLines, type GoalAskOutcome, type GoalChromeOverrides, type GoalConfirmLine, type GoalConfirmLineKind } from "./goal-confirm.ts";
+import { GOAL_SCROLL_KEYS, goalChrome, goalConfirmLines, type GoalAskOutcome, type GoalChromeOverrides, type GoalConfirmLine, type GoalConfirmLineKind } from "./goal-confirm.ts";
 import { graphemes, breakGraphemes, DEFAULT_GOAL_LANG } from "./human-language.ts";
 import { type CustomDialogOptions, type FinisherCustom, type HarnessContext } from "./kit.ts";
 import { MAX_TIMER_MS, readConfirmTimeout } from "./goal-run.ts";
@@ -17,7 +17,7 @@ export const GOAL_DIALOG_CHROME_ROWS = 6;
 
 export const GOAL_DIALOG_MIN_VIEWPORT = 1;
 
-export const GOAL_DIALOG_SCROLL_KEYS = "↑↓ / wheel = scroll  •  space = read the chat without closing";
+export const GOAL_DIALOG_SCROLL_KEYS = GOAL_SCROLL_KEYS;
 
 export type GoalDialogAction = "confirm" | "decline" | "up" | "down" | "pageUp" | "pageDown" | "top" | "bottom" | "none";
 

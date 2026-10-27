@@ -11,6 +11,10 @@ export const CHECK_SCRIPT_PATHS_MAX = 8;
 
 export const CHECK_CACHE_MAX = 240;
 
+export const CHECK_CUSTOM_MAX = 8;
+
+export const CASE_CHECK_PREFIX = "case:";
+
 export interface DeterministicCheck {
 	name: string;
 	command: string;
@@ -29,15 +33,31 @@ export interface CheckResult {
 	cached?: boolean;
 }
 
+const CHECK_NAME = /^(?:typecheck|types?|lint|test|tests|e2e|spec|unit|functional|integration|coverage|jest|vitest|mocha|ava|tap|cypress|playwright)(?:[-:][\w:-]+)?$/i;
+
+const TEST_RUNNER = /(?:^|[\s;&|(])(?:jest|vitest|mocha|ava|tap|playwright|cypress)\b|node\s+--?[\w-]*\s*--test\b|--test\b/;
+
+export const isCheckScript = (name: string, body?: unknown): boolean => {
+	const scriptName = String(name ?? "").trim();
+	if (!scriptName) return false;
+	if (CHECK_NAME.test(scriptName)) return true;
+	return typeof body === "string" && TEST_RUNNER.test(body);
+};
+
+const checkRank = (name: string): number => {
+	const at = (CHECK_ORDER as readonly string[]).indexOf(name);
+	return at >= 0 ? at : CHECK_ORDER.length;
+};
+
 export const detectChecks = (pkg: { scripts?: Record<string, unknown> } | undefined): DeterministicCheck[] => {
 	const scripts = pkg?.scripts ?? {};
 	const found: DeterministicCheck[] = [];
-	for (const name of CHECK_ORDER) {
-		const body = scripts[name];
+	for (const [name, body] of Object.entries(scripts)) {
 		if (typeof body !== "string" || !body.trim()) continue;
+		if (!isCheckScript(name, body)) continue;
 		found.push({ name, command: "npm", args: ["run", "--silent", name] });
 	}
-	return found;
+	return found.sort((a, b) => checkRank(a.name) - checkRank(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 };
 
 export const readPackage = (cwd: string): { scripts?: Record<string, unknown> } | undefined => {
@@ -72,6 +92,42 @@ export const scriptPaths = (body: string): string[] => {
 	return out.slice(0, CHECK_SCRIPT_PATHS_MAX);
 };
 
+export interface CustomCheckRequest {
+	name?: unknown;
+	command?: unknown;
+}
+
+export interface CustomCheckEntry {
+	check: DeterministicCheck;
+	command: string;
+}
+
+const CUSTOM_ID = /^[a-z0-9][a-z0-9._-]*$/i;
+
+const uniqueName = (base: string, used: Set<string>): string => {
+	let name = base;
+	for (let n = 2; used.has(name); n++) name = `${base}-${n}`;
+	return name;
+};
+
+export const customCheckEntries = (list: unknown): CustomCheckEntry[] => {
+	const out: CustomCheckEntry[] = [];
+	const used = new Set<string>();
+	for (const raw of Array.isArray(list) ? list : []) {
+		const entry = (typeof raw === "string" ? { command: raw } : raw) as CustomCheckRequest | undefined;
+		const command = typeof entry?.command === "string" ? entry.command.trim() : "";
+		if (!command || out.length >= CHECK_CUSTOM_MAX) continue;
+		const given = typeof entry?.name === "string" ? entry.name.trim().replace(CASE_CHECK_PREFIX, "") : "";
+		const base = `${CASE_CHECK_PREFIX}${given && CUSTOM_ID.test(given) ? given : `check-${out.length + 1}`}`;
+		const name = uniqueName(base, used);
+		used.add(name);
+		out.push({ check: { name, command: "bash", args: ["-lc", command] }, command });
+	}
+	return out;
+};
+
+export const customChecks = (list: unknown): DeterministicCheck[] => customCheckEntries(list).map((entry) => entry.check);
+
 export const checkTask = (check: DeterministicCheck, pkg?: { scripts?: Record<string, unknown> }): PlanTask => {
 	const body = pkg?.scripts?.[check.name];
 	const derived = scriptPaths(typeof body === "string" ? body : "");
@@ -104,12 +160,41 @@ const fresh = (call: RecordedCall, after?: number): boolean => !Number.isFinite(
 
 export const freshCalls = (calls: RecordedCall[], after?: number): RecordedCall[] => (Array.isArray(calls) ? calls : []).filter((call) => fresh(call, after));
 
-const checkCommandForms = (name: string): string[] => [`npm run --silent ${name}`, `npm run ${name}`, ...(name === "test" ? ["npm test"] : [])];
+export const checkCommandForms = (name: string): string[] => [
+	`npm run --silent ${name}`,
+	`npm run ${name}`,
+	`npm run-script ${name}`,
+	...(name === "test" ? ["npm test"] : []),
+];
 
-export const recordedCheckOk = (calls: RecordedCall[], check: DeterministicCheck, after?: number): boolean => {
-	const wanted = new Set(checkCommandForms(check.name).map(normalizeCommand));
-	return freshCalls(calls, after).some((call) => call.ok && wanted.has(normalizeCommand(call.command)));
+export const runsScript = (command: string, check: DeterministicCheck, body?: unknown): boolean => {
+	const normalized = normalizeCommand(command);
+	if (!normalized) return false;
+	if (checkCommandForms(check.name).map(normalizeCommand).includes(normalized)) return true;
+	const script = normalizeCommand(typeof body === "string" ? body : "");
+	return !!script && normalized === script;
 };
+
+export const recordedCheckOk = (calls: RecordedCall[], check: DeterministicCheck, after?: number, body?: unknown): boolean =>
+	freshCalls(calls, after).some((call) => call.ok && runsScript(call.command, check, body));
+
+export const provesCommand = (checks: CheckResult[], command: string): boolean => provenByRun(checks, command) !== undefined;
+
+const runForms = (run: CheckResult): string[] => [...checkCommandForms(run.name), run.command].map(normalizeCommand).filter(Boolean);
+
+export const provesRun = (run: CheckResult, command: string): boolean => {
+	const wanted = normalizeCommand(command);
+	if (!wanted || checkStatusOf(run) !== "pass") return false;
+	return runForms(run).includes(wanted);
+};
+
+export const provenByRun = (checks: CheckResult[], command: string): CheckResult | undefined =>
+	(Array.isArray(checks) ? checks : []).find((run) => provesRun(run, command));
+
+export const caseProvenCommands = (checks: CheckResult[]): string[] =>
+	(Array.isArray(checks) ? checks : [])
+		.filter((run) => String(run.name ?? "").startsWith(CASE_CHECK_PREFIX) && checkStatusOf(run) === "pass")
+		.map((run) => run.command);
 
 const checkCache = new Map<string, PlanResult>();
 
@@ -134,13 +219,15 @@ const cacheFor = (): Map<string, PlanResult> => {
 	return checkCache;
 };
 
-const label = (check: DeterministicCheck): string => `${check.command} ${check.args.join(" ")}`;
+const label = (check: DeterministicCheck): string =>
+	check.name.startsWith(CASE_CHECK_PREFIX) ? String(check.args[check.args.length - 1] ?? "") : `${check.command} ${check.args.join(" ")}`;
 
 export interface CheckStageOptions {
 	cwd: string;
 	timeoutMs: number;
 	lastModifiedAt?: number;
 	changed?: string[];
+	custom?: CustomCheckRequest[];
 	calls?: RecordedCall[];
 	pkg?: { scripts?: Record<string, unknown> };
 	concurrency?: number;
@@ -158,12 +245,15 @@ export const checkFingerprint = (cwd: string, lastModifiedAt?: number): string =
 
 export const runCheckStage = async (checks: DeterministicCheck[], opts: CheckStageOptions): Promise<CheckStage> => {
 	const list = Array.isArray(checks) ? checks : [];
-	const tasks = checkTasks(list, opts.pkg);
-	const recorded = tasks.filter((task) => {
-		const check = list.find((c) => c.name === task.id);
-		return check ? recordedCheckOk(opts.calls ?? [], check, opts.lastModifiedAt) : false;
-	}).map((task) => task.id);
-	const pending = tasks.filter((task) => !recorded.includes(task.id));
+	const bodyOf = (check: DeterministicCheck): unknown => opts.pkg?.scripts?.[check.name];
+	const covered = new Set(list.flatMap((check) => checkCommandForms(check.name)).map(normalizeCommand));
+	const custom = customCheckEntries(opts.custom).filter((entry) => !covered.has(normalizeCommand(entry.command)));
+	const all = [...custom.map((entry) => entry.check), ...list];
+	const bodies: unknown[] = [...custom.map((entry) => entry.command), ...list.map(bodyOf)];
+	const tasks = [...custom.map((entry) => ({ id: entry.check.name, command: entry.check.command, args: entry.check.args })), ...checkTasks(list, opts.pkg)];
+	const recordedAt = tasks.map((task, at) => recordedCheckOk(opts.calls ?? [], all[at], opts.lastModifiedAt, bodies[at]));
+	const recorded = tasks.filter((task, at) => recordedAt[at]).map((task) => task.id);
+	const pending = tasks.filter((task, at) => !recordedAt[at]);
 	const inScope = scopedPlan(pending, opts.changed ?? []);
 	const scoped = pending.filter((task) => !inScope.includes(task)).map((task) => task.id);
 	const ran = inScope.length
@@ -176,12 +266,13 @@ export const runCheckStage = async (checks: DeterministicCheck[], opts: CheckSta
 				...(opts.run ? { run: opts.run } : {}),
 			})
 		: [];
-	const results = list.map((check): CheckResult => {
-		if (recorded.includes(check.name)) return { name: check.name, command: label(check), exitCode: 0, tail: "", status: "pass", ms: 0, cached: true };
-		if (scoped.includes(check.name)) return { name: check.name, command: label(check), exitCode: 0, tail: "", status: "scoped", ms: 0, cached: false };
-		const hit = ran.find((r) => r.id === check.name);
+	const results = all.map((check, at): CheckResult => {
+		const task = tasks[at];
+		if (recordedAt[at]) return { name: check.name, command: label(check), exitCode: 0, tail: "", status: "pass", ms: 0, cached: true };
+		if (scoped.includes(task.id)) return { name: check.name, command: label(check), exitCode: 0, tail: "", status: "scoped", ms: 0, cached: false };
+		const hit = ran.find((r) => r.id === task.id);
 		if (!hit) return { name: check.name, command: label(check), exitCode: 1, tail: "the check never ran", status: "fail", ms: 0, cached: false };
-		return { name: check.name, command: hit.command, exitCode: hit.exitCode, tail: hit.output, status: hit.status, ms: hit.ms, cached: hit.cached };
+		return { name: check.name, command: label(check), exitCode: hit.exitCode, tail: hit.output, status: hit.status, ms: hit.ms, cached: hit.cached };
 	});
 	return { results, ran, recorded, scoped };
 };
@@ -197,6 +288,9 @@ export const skippedChecks = (results: CheckResult[]): CheckResult[] =>
 		const status = checkStatusOf(r);
 		return status !== "fail" && status !== "pass";
 	});
+
+export const provedByChecks = (checks: CheckResult[], commands: Map<string, string>): string[] =>
+	[...commands].filter(([, command]) => provesCommand(checks, command)).map(([caseId]) => caseId);
 
 export const runCheck = (check: DeterministicCheck, cwd: string, timeoutMs: number): CheckResult => {
 	const name = `${check.command} ${check.args.join(" ")}`;

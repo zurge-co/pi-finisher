@@ -9,13 +9,18 @@ import {
 	caseCheckEntries,
 	checkFileLines,
 	checkStatusOf,
+	CHECK_CUSTOM_MAX,
+	checkSummaryMark,
 	checkTask,
 	clearCheckCache,
+	customCheckEntries,
 	detectChecks,
 	failingChecks,
 	judgeDeterministic,
 	readChecks,
 	readPackage,
+	reuseLine,
+	reusedCommands,
 	runCheckStage,
 	scriptPaths,
 	skippedChecks,
@@ -151,4 +156,88 @@ test("the check file keeps one line per case, and only a PASS case may say PASS"
 	assert.ok(kept.every((e) => e.goal === "ship it" && e.at === 1_000), "every line belongs to this goal, all at once");
 	assert.equal(kept.find((e) => e.case === "case PASS").command, "node check.mjs");
 	assert.deepEqual(checkFileLines(kept, ["case PASS", "case FAIL"]), ["PASS  case PASS", "FAIL  case FAIL"]);
+});
+
+test("every test-kind script is detected, in a stable order, and a script that proves nothing is never run", () => {
+	const names = (scripts) => detectChecks({ scripts }).map((c) => c.name);
+	assert.deepEqual(names({ "test:e2e": "playwright test", jest: "jest", vitest: "vitest run", unit: "node -e 0", functional: "node -e 0" }), ["functional", "jest", "test:e2e", "unit", "vitest"]);
+	assert.deepEqual(names({ verify: "node -e 0", build: "tsc", release: "bash scripts/release.sh", watch: "vitest" }), ["watch"], "the two signals are a check name and a test runner in the body — nothing else");
+	assert.deepEqual(names({ check: "node scripts/check.mjs" }), [], "an ordinary npm script is not a proof of behaviour");
+	const scripted = names({ gate: "node --no-warnings --test test/*.test.mjs", style: "eslint ." });
+	assert.deepEqual(scripted, ["gate"], "a script that only runs a test runner is a check wherever it is named");
+	assert.deepEqual(detectChecks({ scripts: { test: "   " } }), [], "a blank script is never a check");
+});
+
+test("a case whose command the deterministic stage already ran green is proven without running it again, and only a real pass counts", () => {
+	const pass = { name: "test", command: "npm run --silent test", exitCode: 0, tail: "", status: "pass" };
+	const red = { ...pass, exitCode: 1, status: "fail" };
+	const skipped = { ...pass, status: "scoped" };
+	const commands = new Map([["c1", "npm test"], ["c2", "node custom.mjs"]]);
+	const green = judgeDeterministic(["c1", "c2"], commands, [], [pass]);
+	assert.deepEqual(green.map((c) => c.result), ["PASS", "UNVERIFIED"], "a proven check answers its case, an unproven one proves nothing");
+	assert.match(green[0].reason, /already ran/);
+	assert.deepEqual(judgeDeterministic(["c1"], new Map([["c1", "npm test."]]), [], [pass]).map((c) => c.result), ["UNVERIFIED"], "an equivalent-looking command is not the command that ran");
+	assert.deepEqual(judgeDeterministic(["c1"], new Map([["c1", "npm test"]]), [], [red]).map((c) => c.result), ["FAIL"]);
+	const live = judgeDeterministic(["c1"], new Map([["c1", "npm test"]]), [], [skipped], (command) => {
+		assert.equal(command, "npm test");
+		return { name: command, command, exitCode: 0, tail: "" };
+	});
+	assert.deepEqual(live.map((c) => c.result), ["PASS"], "a check that was not run cannot answer in its place");
+	assert.deepEqual(reusedCommands([pass], commands), ["npm test"]);
+	assert.match(reuseLine([pass], commands), /not run a second time/);
+	assert.equal(reuseLine([red], commands), "", "a red check is never reported as reused");
+});
+
+test("a check the model decides itself runs for real beside the package checks, and the command it names proves its case", async () => {
+	const seen = [];
+	const stage = await runCheckStage([], {
+		cwd: repo({}),
+		timeoutMs: 5_000,
+		custom: [{ name: "bound", command: "node --test test/a.test.mjs" }, { command: "node b.mjs" }],
+		run: async (task) => {
+			seen.push([task.command, task.args]);
+			return { exitCode: 0, output: "" };
+		},
+	});
+	assert.deepEqual(seen, [["bash", ["-lc", "node --test test/a.test.mjs"]], ["bash", ["-lc", "node b.mjs"]]], "a custom check is executed as written, in the same stage as the repo's own checks");
+	assert.deepEqual(stage.results.map((r) => r.status), ["pass", "pass"]);
+	assert.deepEqual(stage.results.map((r) => r.command), ["node --test test/a.test.mjs", "node b.mjs"], "the command itself is what a case names, never a wrapped script name");
+	const commands = new Map([["c1", "node --test test/a.test.mjs"], ["c2", "node b.mjs"]]);
+	assert.deepEqual(judgeDeterministic(["c1", "c2"], commands, [], stage.results).map((c) => c.result), ["PASS", "PASS"], "a green custom check proves the case that names the same command");
+	assert.deepEqual(reusedCommands(stage.results, commands), ["node --test test/a.test.mjs", "node b.mjs"]);
+	assert.match(checkSummaryMark(stage.results[0]), /^custom `node --test test\/a\.test\.mjs` ok$/, "the summary names the command, not an internal id");
+});
+
+test("a red custom check fails every case exactly like a red package check, so a custom check is a real gate and not a decoration", async () => {
+	const red = await runCheckStage([], {
+		cwd: repo({}),
+		timeoutMs: 5_000,
+		custom: [{ name: "bound", command: "node -e 1" }],
+		run: async () => ({ exitCode: 1, output: "1 failing" }),
+	});
+	assert.deepEqual(failingChecks(red.results).map((r) => r.exitCode), [1]);
+	assert.deepEqual(judgeDeterministic(["c1"], new Map([["c1", "node -e 1"]]), [{ command: "node -e 1", ok: true }], red.results).map((c) => c.result), ["FAIL"], "a green recording cannot outvote the check that just failed");
+	const skipped = await runCheckStage([], { cwd: repo({}), timeoutMs: 5_000, custom: [{ command: "missing-tool --x" }], run: async () => ({ exitCode: 127, output: "sh: missing-tool: command not found" }) });
+	assert.deepEqual(failingChecks(skipped.results), [], "a toolchain that cannot run here is not the repo being broken");
+});
+
+test("the model's checks are bounded, deduped and never shadow a package check", async () => {
+	const many = Array.from({ length: CHECK_CUSTOM_MAX + 6 }, (_, i) => ({ command: `node c${i}.mjs` }));
+	assert.equal(customCheckEntries(many).length, CHECK_CUSTOM_MAX, "an unbounded list would run unbounded work in the deterministic stage");
+	assert.deepEqual(customCheckEntries([{ command: " node a.mjs " }, { command: "node a.mjs" }, { command: "" }, { name: "!!", command: "node b.mjs" }]).map((e) => e.command), ["node a.mjs", "node a.mjs", "node b.mjs"], "a nameless or junk-named check is still a real check");
+	const names = customCheckEntries([{ name: "x", command: "node a.mjs" }, { name: "x", command: "node b.mjs" }]).map((e) => e.check.name);
+	assert.deepEqual(names, ["case:x", "case:x-2"], "two checks never collapse into one id");
+	assert.deepEqual(customCheckEntries(undefined), []);
+	let ran = 0;
+	await runCheckStage([CHECK], {
+		cwd: repo({ test: "node -e 0" }),
+		timeoutMs: 5_000,
+		pkg: { scripts: { test: "node -e 0" } },
+		custom: [{ command: "npm test" }],
+		run: async () => {
+			ran++;
+			return { exitCode: 0, output: "" };
+		},
+	});
+	assert.equal(ran, 1, "a custom check that is the package check already running is not a second run of it");
 });

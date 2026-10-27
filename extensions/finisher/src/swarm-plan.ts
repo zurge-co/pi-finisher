@@ -1,4 +1,4 @@
-import { isSafeSliceId, normalizeScope, scopesOverlap } from "./swarm-code.ts";
+import { acceptanceBlock, contractBlock, isSafeSliceId, normalizeScope, scopesOverlap } from "./swarm-code.ts";
 
 export interface PlanSlice {
 	id: string;
@@ -101,11 +101,14 @@ export const coderFloor = (slices: number): { spawn: boolean; coders: number } =
 	return { spawn: n >= CODER_FLOOR, coders: n };
 };
 
+export const MAIN_ALONGSIDE_LINE =
+	"A fan-out only happens while the main agent codes its own slice in the same turn — main works alongside the coders and never sits idle waiting for them.";
+
 export const coderFloorNote = (slices: number): string =>
 	[
-		`code refused: ${slices} slice(s) is a lone CODER, and one CODER is slower than doing it yourself.`,
-		`A fan-out only pays off when at least ${CODER_FLOOR} coders run side by side while the main agent keeps working its own lap.`,
-		"Do this slice yourself in the main agent instead. If the work really splits into independent slices, call code again with the slices as separate items in one call — never several one-slice calls.",
+		`code refused: ${slices} slice(s) is a lone CODER, and a lone CODER is never spawned — one CODER is slower than doing it yourself.`,
+		`A fan-out only pays off when at least ${CODER_FLOOR} coders run side by side while the main agent codes its own slice in the same turn.`,
+		"Do this slice yourself in the main agent instead. If the work really splits into independent slices, call code again with every slice as a separate item in ONE call — never several one-slice calls.",
 	].join("\n");
 
 export const planRefusalText = (refusals: Refusal[], spawned: string): string =>
@@ -145,11 +148,6 @@ export const blockedBy = (slices: PlanSlice[], failed: string[]): Record<string,
 	return out;
 };
 
-export const contractLines = (slices: PlanSlice[], sharedContract?: string): string[] => {
-	const shared = (sharedContract ?? "").trim();
-	if (!shared) return [];
-	return ["SHARED CONTRACT (decided before you started — follow it exactly, do not redesign it):", shared];
-};
+export const contractLines = (_slices: PlanSlice[], sharedContract?: string): string[] => contractBlock(sharedContract);
 
-export const acceptanceLines = (slice: PlanSlice): string[] =>
-	slice.acceptance.length ? ["Your slice is done when these hold:", ...slice.acceptance.map((a) => `  - ${a}`)] : [];
+export const acceptanceLines = (slice: PlanSlice): string[] => acceptanceBlock(slice.acceptance);

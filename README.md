@@ -51,6 +51,26 @@ missing most often, so the plan can be made better instead of guessed.
 - **Five models in parallel.** `priority1..priority5` in `.finisher/models.json` are the slots; the
   harness uses as many as you set, all at the same time.
 
+## Install
+
+One command, no build step and no config file needed afterwards:
+
+```bash
+pi install npm:pi-finisher          # latest release
+pi install git:github.com/zurge-co/pi-finisher@v1.0.3   # pinned tag
+pi install ./pi-finisher            # a local checkout, loaded in place
+```
+
+The package declares what it ships, so one install brings all of it: the extension
+(`extensions/finisher`), the two skills (`skills/goal-intake`, `skills/verify-checks`) and the
+`finisher` theme (`themes/`). Nothing has to be enabled — the tools, the HUD, the two commands and the
+confirm dialog are live the moment pi starts. Confirm it worked with `pi list` (the package is listed)
+and `/finisher models` (the ladder, without editing anything). Remove it with `pi remove npm:pi-finisher`;
+reconcile an update with `pi update --extensions`. Want to try it for a single run instead?
+`pi -e npm:pi-finisher`.
+
+Optional: `/settings` → theme → `finisher`.
+
 ## Quick start
 
 ```text
@@ -72,8 +92,11 @@ re-ask — and asked again once it has closed, because a finished goal's yes can
 message and remembered; Latin text never overrides it, and a `lang` tag the agent passes only refines
 it within the same script (`pt-BR` vs `es`). Every turn the system prompt names that language, so the
 goal, the cases and the report are written in it — no translation step, no second copy of the goal to
-drift from the evidence. The dialog chrome (title, header, note, key hints) comes from the agent's own
-`chrome` strings in the same language, falling back to English. A goal that carries no letters of the
+drift from the evidence. Every chrome string — the confirm dialog's (`chrome`: title, header, note, key
+hints) and the clarify round's (`clarifyChrome`: title, escape, later, note) — comes from the agent's
+own words in that language, and anything it does not supply falls back to English: never to another
+language, so a Spanish reader is never handed Thai. Anything that is not one readable line (empty, over
+120 chars, or carrying a newline/control character) is dropped instead of shown. A goal that carries no letters of the
 human's script is **refused before the dialog opens**, with a note telling the agent to write it again,
 and long lines are wrapped between graphemes so a Thai or Devanagari mark is never orphaned.
 
@@ -81,7 +104,7 @@ and long lines are wrapped between graphemes so a Thai or Devanagari mark is nev
 
 | Tool | What it does |
 |---|---|
-| `goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` make the dialog the human's language. |
+| `goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` + `clarifyChrome` make both the dialog and the clarify round the human's language. |
 | `steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
 | `code` | **coders only**: one git worktree + branch per slice, merged back in dependency order, overlapping declared files never merged silently. Every slice names the `files` it owns and the `depends_on` slices it waits for. |
 | `verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts through a scoped, parallel, cached plan, then judges each case from the commands the harness recorded, and writes one `PASS`/`FAIL` line per case to `.finisher/checks`. No sub-agent is spawned to grade your work. |
@@ -176,7 +199,7 @@ looking at:
 
 ```
 ▚ sub-agent session — 2/3 · VERIFIER · ▶ 12s · provider/c · c2 · 1 steer
-▚ pages 1:SWARM s1 provider/a ▶ · [2:VERIFIER c2 provider/c ▶] · 3:SWARM s3 ✓
+▚ pages 1:CODER s1 provider/a ▶ · [2:VERIFIER c2 provider/c ▶] · 3:CODER s3 ✓
 .finisher/subagents/…-verifier.log • live — closing this page never interrupts the run
   ▸ task — what this agent was told
     prove case c1: the scheduler bound holds for every input
@@ -214,6 +237,16 @@ steer count and log path.
 | Command | What it does |
 |---|---|
 | `/finisher models` | set the **model priority ladder** (`priority1` … `priority5`) — there are no per-role overrides: every sub-agent auto-picks from the ladder |
+| `/finisher gaps` | the **extra-lap journal**: every fix lap a failed verify appended, ranked so the most-often-missed kind of lap comes first — the plan gets better instead of guessed |
+
+`/finisher models` opens the ladder picker in the TUI and prints the same ladder, the main model and any
+ignored per-role key outside it; `/finisher gaps` prints the digest of `~/.pi/finisher/laps.jsonl` (goal,
+round, `lap n/n`, the added fix laps and each case result with its reason — one JSON line per replan).
+Both are read-only until you pick a slot, and an unset slot is simply not used.
+
+| Shortcut | What it does |
+|---|---|
+| `ctrl+_` | open a sub-agent's live session page — ←/→ switches between the running agents |
 
 There is nothing else to switch: fresh context, handoff and verification are automatic.
 
@@ -221,9 +254,10 @@ There is nothing else to switch: fresh context, handoff and verification are aut
 
 Install it and the fast path is already on — no key, no flag, no dialog:
 
-- **The goal comes before the code.** The human's message is drafted into a goal plus its cases, and
-  `goal` is asked for before exploration: two pre-goal calls of grace, then the harness
-  refuses to read or grep until the goal is confirmed. Nothing is explored on a guess.
+- **The goal comes before the work.** The human's message is drafted into a goal plus its cases, and
+  `goal` is asked for before the run starts. Nothing is gated and nothing is counted: reading the code
+  to understand the request is the agent's own call, and the harness never reads the human's words
+  behind its back.
 - **Verify runs checks, not the whole suite every time.** The repo's own `typecheck`/`lint`/`test`
   scripts are scoped to what changed, run in parallel, and cached by fingerprint — a repeat round
   with the same change set reads the recorded result instead of paying for it again. A missing
@@ -294,9 +328,13 @@ Asking a question, getting an answer, or any other reply is never a boundary eit
 
 What a lap compaction carries is **not** a transcript or a statistic — it is the lap tracker: the
 goal, the confirmed cases, every lap with its mark and its own spent time, and the latest status of
-each recorded command. It is written to `.finisher/tracker.json` while the goal is open, removed the
-moment the goal closes, and appended as a hidden tracker message so the fresh context still knows
-where the goal stands.
+each recorded command. It is appended as one JSON line per turn to
+`.finisher/<sessionId>/tracker.jsonl` while the goal is open (the newest line wins, and the file is
+pruned to `TRACKER_RECORDS_MAX` lines and the newest 8 sessions),
+removed the moment the goal closes, and appended as a hidden tracker message so the fresh context
+still knows where the goal stands. Two sessions on the same repo never share a tracker: each reads
+its own file per turn, so a session whose context was cleared resumes the lap from disk instead of
+guessing it, and the newest 8 trackers are the ones kept.
 
 The reset is bounded by design: once per lap, never twice for the same lap, never for a plan that has
 just closed its last lap (it hands straight over to verify), and never while a `halted`/`needs-human`
@@ -397,6 +435,6 @@ pi-finisher/
 ```
 
 A run's own state lives in `.finisher/`: `checks/checks.jsonl` (the evidence), `report.md` (the
-report), `tracker.json` (the lap tracker) and `models.json` (the ladder).
+report), `sessions/` (one lap tracker per session) and `models.json` (the ladder).
 
 Theme (optional): `/settings` → theme → `finisher`.
