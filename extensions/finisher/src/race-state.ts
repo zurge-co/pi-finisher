@@ -126,10 +126,18 @@ export const raceStagePaint = (race: Race | undefined): string => raceStageToken
 
 export const raceSegment = (race: Race): string => (race.phase === "idle" ? "" : race.totalClock);
 
+export const raceLoaderCaption = (race: Race): string => {
+	if (race.phase === "run") return `LAP ${race.lap}/${race.laps} ${race.lapClock}`;
+	if (race.phase === "verify") return `VERIFY ${race.lapClock}`;
+	if (race.phase === "win") return `FINISH ${race.totalClock}`;
+	if (race.phase === "dnf") return `DNF ${race.totalClock}`;
+	return `PLAN ${race.totalClock}`;
+};
+
 export const raceLoaderFrames = (race: Race, fg: (token: string, text: string) => string): { frames: string[] } => {
 	const token = raceStageToken(race);
 	if (!token) return { frames: [] };
-	return { frames: [fg(token, race.totalClock)] };
+	return { frames: [fg(token, raceLoaderCaption(race))] };
 };
 
 export const raceIdleLine = (race: Race, mark: string, name = "", tally = ""): string => {

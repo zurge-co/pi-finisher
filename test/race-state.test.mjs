@@ -12,6 +12,7 @@ import {
 	hudLines,
 	pitMs,
 	raceIdleLine,
+	raceLoaderCaption,
 	raceLoaderFrames,
 	raceStagePaint,
 	raceStageToken,
@@ -45,7 +46,7 @@ const phases = () => [
 ];
 
 const CIRCLE = /[●○✕]/;
-const STAGE_WORD = /\b(LAP|VERIFY|PLAN|READY|P1|DNF)\b/;
+const STAGE_WORD = /\b(LAP|VERIFY|PLAN|READY|P1|FINISH|DNF)\b/;
 
 test("a finished race is exactly partitioned: laps + verification + pit = total, with nothing lost", () => {
 	const plan = plan3();
@@ -75,12 +76,13 @@ test("the verified shape the harness always produces shows its verification wind
 	assert.equal(race2.pitClock, "0:14", "time outside every lap and the verify window is pit time: 60 − 30 − 16");
 });
 
-test("the HUD and the loader carry the goal's clock and nothing else: no circle, no stage word, in any phase", () => {
+test("the loader names the phase it is in and the time spent there, while the HUD carries only the goal's total clock", () => {
+	const word = { plan: "PLAN", run: "LAP", verify: "VERIFY", win: "FINISH", dnf: "DNF" };
 	for (const { label, input } of phases()) {
 		const race = raceState({ ...input, now: 62_000 });
 		for (const text of [...hudLines({ ...input, width: 120, now: 62_000 }), hudIdleLine({ ...input, width: 120, now: 62_000 })]) {
 			assert.ok(!CIRCLE.test(text), `${label}: a circle must never appear: ${text}`);
-			assert.ok(!STAGE_WORD.test(text), `${label}: a stage word must never appear: ${text}`);
+			assert.ok(!STAGE_WORD.test(text), `${label}: the HUD carries no stage word: ${text}`);
 		}
 		const { frames } = raceLoaderFrames(race, (_token, text) => text);
 		if (race.phase === "idle") {
@@ -88,9 +90,16 @@ test("the HUD and the loader carry the goal's clock and nothing else: no circle,
 			assert.equal(hudIdleLine({ ...input, width: 120, now: 62_000 }), HUD_MARK, "idle is the mark alone");
 			continue;
 		}
-		assert.deepEqual(frames, [race.totalClock], `${label}: the loader line is the goal's clock, exactly once`);
-		assert.ok(hudLines({ ...input, width: 120, now: 62_000 })[0].includes(race.totalClock), `${label}: the HUD's first line carries the same clock`);
+		assert.deepEqual(frames, [raceLoaderCaption(race)], `${label}: the loader shows the phase line itself, exactly once`);
+		const [head, ...tail] = frames[0].split(" ");
+		assert.equal(head, word[label], `${label}: the loader names its own phase`);
+		const spent = label === "run" || label === "verify" ? race.lapClock : race.totalClock;
+		assert.ok(tail.join(" ").endsWith(spent), `${label}: the loader shows the time spent in this phase (${spent}): ${frames[0]}`);
+		assert.ok(hudLines({ ...input, width: 120, now: 62_000 })[0].includes(race.totalClock), `${label}: the HUD's first line carries the total clock and nothing else`);
 	}
+	const running = raceState({ ...phases()[2].input, now: 62_000 });
+	assert.match(raceLoaderCaption(running), /^LAP 2\/3 /, "a running lap still says which lap of the plan it is");
+	assert.equal(raceLoaderCaption(running).includes("P1"), false, "a finished run is never P1");
 });
 
 test("six phases own six colours: the stage paint is total and one-to-one, plan is neither grey nor the failure colour, and a lap is not the accent", () => {
