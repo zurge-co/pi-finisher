@@ -9,6 +9,7 @@ import { type Persist, type RescheduleTicker, type UpdateWidget, type HarnessCon
 import { handoffInjectionFor, handoffStackFor } from "./handoff-gate.ts";
 import { type State, type SubagentRun } from "./types.ts";
 import { recordCall, type RecordedCall } from "./evidence-record.ts";
+import { stateLabel } from "./project-dir.ts";
 
 export const createSubagentLaunch = (ctx: HarnessContext) => {
 	const state = ctx.state;
@@ -77,7 +78,7 @@ export const createSubagentLaunch = (ctx: HarnessContext) => {
 			run.streamTail = undefined;
 			if (r.usedModel) run.model = r.usedModel;
 			if (modelPattern && r.usedModel && !modelMatchesPattern(r.usedModel, modelPattern)) {
-				ctx.ui.notify(`⚠ sub-agent model mismatch: ${role} — ladder asked for "${modelPattern}" but it actually ran "${r.usedModel}" (pi fallback? check .finisher/models.json / /finisher models)`, "warning");
+				ctx.ui.notify(`⚠ sub-agent model mismatch: ${role} — ladder asked for "${modelPattern}" but it actually ran "${r.usedModel}" (pi fallback? check ${stateLabel(ctx.cwd, "models.json")} / /finisher models)`, "warning");
 			}
 			if (r.ok && r.output.trim()) {
 				const captured = parseDecisions(role, r.output);

@@ -1,7 +1,5 @@
 import { Key, Text, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { DynamicBorder, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { relative } from "node:path";
-import { existsSync, readFileSync, statSync } from "node:fs";
 import { panelize } from "./models.ts";
 import { roleTag } from "./agent-panel.ts";
 import { GOAL_PAGE_CLOSE, GOAL_PAGE_KEYS, goalPageBody, goalPageLines, goalPageRowOf, goalPageSummary, goalPageTitle, type GoalPageGoal, type GoalPageLine } from "./goal-page.ts";
@@ -9,8 +7,9 @@ import { REPORT_PAGE_CLOSE, REPORT_PAGE_KEYS, reportPageLines, reportPageSummary
 import { SCROLL_CLOSE, createScrollPage, scrollCloses, scrollProgress, scrollRange } from "./scroll-page.ts";
 import { liveReport, readReportFile, reportMetaFromFile } from "./report-file.ts";
 import { goalDriverDone } from "./goal-driver.ts";
-import { orderedSessionRuns, sessionBody, sessionKeyLine, sessionNoteLine, sessionSummaryLine, sessionTabs, sessionTitle, sessionToolCount, startSessionIndex, stepSessionIndex } from "./agent-session.ts";
+import { createLogReader, orderedSessionRuns, sessionBody, sessionKeyLine, sessionNoteLine, sessionSummaryLine, sessionTabs, sessionTitle, sessionToolCount, startSessionIndex, stepSessionIndex } from "./agent-session.ts";
 import { type HarnessContext, type OpenAgentsViewer } from "./kit.ts";
+import { stateLabel, shortHome } from "./project-dir.ts";
 import { type SubagentRun } from "./types.ts";
 
 export const createViewers = (ctx: HarnessContext) => {
@@ -22,15 +21,6 @@ export const createViewers = (ctx: HarnessContext) => {
 
 	const runLabel = (r: SubagentRun) =>
 		`${r.status === "running" ? "▶" : r.ok ? "✅" : "❌"} ${roleTag(r.role).toLowerCase()} @ ${new Date(r.startedAt ?? r.at).toLocaleTimeString()}`;
-
-	const logLines = (run: SubagentRun): string[] => {
-		if (!run.logPath || !existsSync(run.logPath)) return ["(waiting for the first output…)"];
-		try {
-			return readFileSync(run.logPath, "utf8").split("\n");
-		} catch {
-			return ["(the log could not be read)"];
-		}
-	};
 
 	const sessionSummary = (runs: SubagentRun[], cwd: string): string =>
 		runs
@@ -53,12 +43,25 @@ export const createViewers = (ctx: HarnessContext) => {
 			let index = wanted;
 			let expanded = state.toolOutputExpanded === true;
 			let cache: { key: string; wrapped: string[] } = { key: "", wrapped: [] };
+			let tools: { key: string; count: number } = { key: "", count: 0 };
+			const logs = createLogReader();
 			const current = (): SubagentRun | undefined => runs[Math.min(index, runs.length - 1)];
+			const frameKey = (run: SubagentRun, width: number): string =>
+				`${run.role}:${run.at}:${run.prompt?.length ?? 0}:${(run.steers ?? []).length}:${width}:${expanded ? "x" : "c"}:${logs.logKeyOf(run)}`;
+			const rememberTools = (run: SubagentRun, lines: string[]): string[] => {
+				tools = { key: logs.logKeyOf(run), count: sessionToolCount(lines) };
+				return lines;
+			};
 			const wrappedFor = (run: SubagentRun, width: number): string[] => {
-				const st = run.logPath && existsSync(run.logPath) ? statSync(run.logPath) : null;
-				const key = `${run.role}:${run.at}:${run.prompt?.length ?? 0}:${(run.steers ?? []).length}:${width}:${expanded ? "x" : "c"}:${st ? `${st.size}:${Math.round(st.mtimeMs)}` : "none"}`;
-				if (key !== cache.key) cache = { key, wrapped: sessionBody(run, logLines(run), width, { expanded }).flatMap((ln) => wrapTextWithAnsi(ln, width)) };
+				const key = frameKey(run, width);
+				if (key !== cache.key) cache = { key, wrapped: sessionBody(run, rememberTools(run, logs(run)), width, { expanded }).flatMap((ln) => wrapTextWithAnsi(ln, width)) };
 				return cache.wrapped;
+			};
+			const toolCount = (): number => {
+				const run = current();
+				if (!run) return 0;
+				if (tools.key !== logs.logKeyOf(run)) rememberTools(run, logs(run));
+				return tools.count;
 			};
 			const page = createScrollPage<{ run?: SubagentRun; index: number }, string>({
 				requestRender: () => tui.requestRender(),
@@ -71,7 +74,7 @@ export const createViewers = (ctx: HarnessContext) => {
 					return [
 						...new Text(theme.fg("accent", theme.bold(sessionTitle(run, shown.index, runs.length, w))), 1, 0).render(w),
 						...new Text(theme.fg("muted", sessionTabs(runs, shown.index, w)), 1, 0).render(w),
-						...new Text(theme.fg("dim", `${run.logPath ? relative(ctx.cwd, run.logPath) : "(no log)"} • ${sessionNoteLine(run)}`), 1, 0).render(w),
+						...new Text(theme.fg("dim", `${run.logPath ? shortHome(run.logPath) : "(no log)"} • ${sessionNoteLine(run)}`), 1, 0).render(w),
 					];
 				},
 				body: (w) => {
@@ -81,7 +84,7 @@ export const createViewers = (ctx: HarnessContext) => {
 				bodyOf: (lines) => lines,
 				keyLine: (w, view) => [
 					...new Text(theme.fg("dim", scrollProgress(view)), 1, 0).render(w),
-					...new Text(theme.fg("dim", sessionKeyLine(runs.length, sessionToolCount(logLines(current() ?? { logPath: undefined } as SubagentRun)), expanded)), 1, 0).render(w),
+					...new Text(theme.fg("dim", sessionKeyLine(runs.length, toolCount(), expanded)), 1, 0).render(w),
 				],
 				onClose: (data) => {
 					if (!scrollCloses(data, SCROLL_CLOSE)) return false;
@@ -113,13 +116,17 @@ export const createViewers = (ctx: HarnessContext) => {
 				},
 				pageKey: () => index,
 				startFollowing: true,
-				footerRows: (w) => new Text(theme.fg("dim", sessionKeyLine(runs.length, sessionToolCount(logLines(current() ?? ({} as SubagentRun))), expanded)), 1, 0).render(w).length,
+				footerRows: (w) => new Text(theme.fg("dim", sessionKeyLine(runs.length, toolCount(), expanded)), 1, 0).render(w).length,
 				dispose: () => clearInterval(tick),
 			});
 			return {
-				render: (w: number) => panelize(theme, page.render(w), w),
+				render: (w: number) => {
+					logs.beginFrame();
+					return panelize(theme, page.render(w), w);
+				},
 				invalidate: () => {
 					cache = { key: "", wrapped: [] };
+					logs.invalidate();
 					page.invalidate();
 				},
 				handleInput: (data: string) => page.handleInput(data),
@@ -185,7 +192,7 @@ export const createViewers = (ctx: HarnessContext) => {
 		const recorded = state.lastReport;
 		const meta = recorded && liveReport(recorded) ? recorded : reportMetaFromFile(ctx.cwd);
 		if (!meta) {
-			ctx.ui.notify(recorded ? `the report file is gone: ${recorded.path}` : "no report yet — verify writes one to .finisher/report.md when a goal closes", "info");
+			ctx.ui.notify(recorded ? `the report file is gone: ${recorded.path}` : `no report yet — verify writes one to ${stateLabel(ctx.cwd, "report.md")} when a goal closes`, "info");
 			return Promise.resolve(null);
 		}
 		const text = readReportFile(meta.path);

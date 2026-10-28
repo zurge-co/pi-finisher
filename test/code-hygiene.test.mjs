@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HYGIENE_MAX_LINES, buildCodeRulesPrompt, countLines, formatHygieneViolations, scanComments, scanLength } from "../extensions/finisher/index.ts";
+import { HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, buildCodeRulesPrompt, countLines, formatHygieneViolations, scanComments, scanLength, textBytes } from "../extensions/finisher/index.ts";
 
 const atLimit = Array.from({ length: HYGIENE_MAX_LINES }, (_, i) => `const v${i} = ${i};`).join("\n");
 
@@ -18,6 +18,34 @@ test("the length rule is exact at the boundary and needs a reason to be waived",
 	assert.equal(scanLength(`${atLimit}\nconst one = 1;`, "a.ts").length, 1);
 	assert.deepEqual(scanLength(`${atLimit}\nconst one = 1;\n// finisher-hygiene-allow: generated table`, "a.ts"), []);
 	assert.equal(scanLength(`${atLimit}\nconst one = 1;\n// finisher-hygiene-allow`, "a.ts")[0].kind, "exempt-without-reason");
+});
+
+test("the byte rule is exact at the same boundary: a file the reader returns whole is not over budget", () => {
+	const exact = "x".repeat(HYGIENE_MAX_BYTES);
+	const oneMore = `${exact}x`;
+	assert.equal(textBytes(exact), HYGIENE_MAX_BYTES);
+	assert.equal(countLines(exact), 1, "the boundary case is one line, so this bound is not the line count in disguise");
+	assert.deepEqual(scanLength(exact, "a.ts"), [], "exactly at the ceiling still comes back in one read");
+	assert.equal(scanLength(oneMore, "a.ts").length, 1, "one byte past it does not");
+	assert.match(scanLength(oneMore, "a.ts")[0].detail, new RegExp(`${HYGIENE_MAX_BYTES + 1} bytes > ${HYGIENE_MAX_BYTES}`));
+	assert.deepEqual(scanLength(`${oneMore}\n// finisher-hygiene-allow: generated table`, "a.ts"), [], "one waiver covers the size, not one waiver per bound");
+});
+
+test("the two size bounds are independent: few long lines are over on bytes, many short lines over on count", () => {
+	const longLines = Array.from({ length: 3 }, () => "x".repeat(Math.ceil(HYGIENE_MAX_BYTES / 3))).join("\n");
+	assert.ok(countLines(longLines) < HYGIENE_MAX_LINES, "the byte case carries almost no lines");
+	assert.ok(textBytes(longLines) > HYGIENE_MAX_BYTES);
+	const bytes = scanLength(longLines, "a.ts");
+	assert.equal(bytes.length, 1);
+	assert.match(bytes[0].detail, /bytes >/, "the report names the bound that was actually broken");
+	assert.doesNotMatch(bytes[0].detail, /lines >/);
+
+	const shortLines = Array.from({ length: HYGIENE_MAX_LINES + 1 }, () => "a").join("\n");
+	assert.ok(textBytes(shortLines) < HYGIENE_MAX_BYTES, "and the line case carries almost no bytes");
+	const lines = scanLength(shortLines, "a.ts");
+	assert.equal(lines.length, 1);
+	assert.match(lines[0].detail, /lines >/);
+	assert.doesNotMatch(lines[0].detail, /bytes >/);
 });
 
 test("comment detection is a string-aware scan: what looks inside a literal is not a comment", () => {
@@ -68,9 +96,10 @@ test("a violation report names the file, the line and the rule it broke", () => 
 	assert.equal(formatHygieneViolations([]), "");
 });
 
-test("the rule text the agent is given states both rules and the waiver form", () => {
+test("the rule text the agent is given states both bounds and the waiver form", () => {
 	const p = buildCodeRulesPrompt();
 	assert.match(p, /No comments in code/);
 	assert.match(p, new RegExp(String(HYGIENE_MAX_LINES)));
+	assert.match(p, new RegExp(`${HYGIENE_MAX_BYTES / 1024}KB`), "the size the prompt promises is the size the scanner enforces");
 	assert.match(p, /finisher-hygiene-allow: <why>/);
 });

@@ -86,6 +86,9 @@ test("the page tells the human the toggle exists, and only when there is somethi
 test("the viewer really wires the toggle and reads the log through the parser", () => {
 	const views = readFileSync(join(here, "extensions/finisher/src/viewers.ts"), "utf8");
 	assert.match(views, /expanded = !expanded/, "t must flip the fold");
-	assert.match(views, /sessionBody\(run, logLines\(run\), width, \{ expanded \}\)/, "the fold must reach the renderer");
+	assert.match(views, /sessionBody\(run, rememberTools\(run, logs\(run\)\), width, \{ expanded \}\)/, "the fold must reach the renderer, and the log must come through the cached reader");
+	assert.match(views, /createLogReader\(\)/, "one frame reads a log once, not once per widget");
+	assert.match(views, /logs\.beginFrame\(\)/, "the frame boundary is what makes the cache a per-frame cache");
+	assert.equal(/readFileSync/.test(views), false, "a per-frame full re-read of a log is what froze the HUD");
 	assert.match(views, /state\.toolOutputExpanded/, "the choice survives reopening the page");
 });

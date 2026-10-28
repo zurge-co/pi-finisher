@@ -1,4 +1,4 @@
-import { isHygieneChecked, scanSource, type HygieneViolation } from "./code-hygiene.ts";
+import { HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, isHygieneChecked, scanSource, type HygieneViolation } from "./code-hygiene.ts";
 
 export interface CodeSlice {
 	id: string;
@@ -202,7 +202,7 @@ export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; w
 		`You work ALONE in your own checkout: ${opts.worktreeDir}. Other coders are editing other checkouts of the same repo at the same time.`,
 		opts.scopes.length ? `Stay inside your slice's paths: ${opts.scopes.join(", ")}. Touching a file outside them is a conflict with another coder.` : "No explicit paths were given: keep the change as narrow as the instruction.",
 		"Write the code for YOUR slice only, then stop. Do not try to merge, commit, rebase or touch another slice's files.",
-		"Code rules: no comments in code (line or block). Names and structure carry the intent. A file you create must stay at or under 500 lines.",
+		`Code rules: no comments in code (line or block). Names and structure carry the intent. A file you create must stay at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB, so one read of its path returns all of it.`,
 		"Dependencies are already available in your checkout (shared from the main repo) — never run an install, and never write inside node_modules.",
 		opts.testCommand
 			? `Before you finish, run \`${opts.testCommand}\` in your checkout and read the result.`

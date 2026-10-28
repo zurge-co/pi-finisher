@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
-import { consultMode, readConsultMode, turnIntent } from "./src/consult.ts";
+import { modeSwitchNote, readConsultMode, turnIntent } from "./src/consult.ts";
 import { consentLifts, humanResumes, sessionIdFrom } from "./src/goal-confirm.ts";
 import { claimGoalStopAbort, clearGoalStop, goalStopGate, stopLanguage } from "./src/goal-stop.ts";
 import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
@@ -37,6 +37,7 @@ export * from "./src/panel-widget.ts";
 export * from "./src/state-box.ts";
 
 export * from "./src/types.ts";
+export * from "./src/project-dir.ts";
 export * from "./src/worktree.ts";
 export * from "./src/pending-apply.ts";
 export * from "./src/cycle.ts";
@@ -237,13 +238,15 @@ export default function (pi: ExtensionAPI) {
 			live.humanLang = lang;
 			persist();
 		}
-		const mode = consultMode(live.consultMode ?? readConsultMode(ctx?.cwd ?? process.cwd()));
+		const mode = readConsultMode(ctx?.cwd ?? process.cwd());
 		const intent = turnIntent(mode);
-		if (mode !== live.consultMode || intent !== live.turnIntent) {
+		const switched = live.consultMode !== undefined && live.consultMode !== mode;
+		if (live.consultMode !== mode || live.turnIntent !== intent) {
 			live.consultMode = mode;
 			live.turnIntent = intent;
 			persist();
 		}
+		if (switched) ctx.ui?.notify?.(modeSwitchNote(mode, live.humanLang), "info");
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {

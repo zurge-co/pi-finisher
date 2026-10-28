@@ -2,12 +2,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const JOURNAL_DIR = "finisher";
+import { finisherHome } from "./project-dir.ts";
+
 export const JOURNAL_FILE = "laps.jsonl";
 export const JOURNAL_MAX_TEXT = 240;
 export const JOURNAL_MAX_RECORDS = 5_000;
 
-export const globalFinisherDir = (home = homedir()): string => join(home, ".pi", JOURNAL_DIR);
+export const globalFinisherDir = (home = homedir()): string => finisherHome(home);
 export const journalPath = (home = homedir()): string => join(globalFinisherDir(home), JOURNAL_FILE);
 
 export interface GapCase {

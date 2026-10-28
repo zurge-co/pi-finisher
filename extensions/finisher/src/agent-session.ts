@@ -1,7 +1,9 @@
+import { statSync } from "node:fs";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { clip, elapsedLabel, roleTag } from "./agent-panel.ts";
 import { parseLogItems, renderLogItems, toolItemCount, toolToggleHint, TOOL_TOGGLE_KEY } from "./tool-log.ts";
 import { scrollKeysLine } from "./scroll-page.ts";
+import { readTailLines } from "./subagent-log.ts";
 import { type State, type SubagentRun } from "./types.ts";
 
 export const SESSION_MIN_BODY_ROWS = 4;
@@ -143,6 +145,74 @@ export const sessionBody = (run: SubagentRun, logLines: string[], width: number,
 };
 
 export const sessionToolCount = (logLines: string[]): number => toolItemCount(parseLogItems(logLines));
+
+export const LOG_WAIT_LINE = "(waiting for the first output…)";
+export const LOG_ERROR_LINE = "(the log could not be read)";
+export const LOG_CACHE_MAX = 8;
+
+export interface LogStat {
+	size: number;
+	mtimeMs: number;
+}
+
+export const logKeyOf = (path: string | undefined, st?: LogStat): string =>
+	`${path ?? "none"}@${st ? `${Math.floor(Number(st.size) || 0)}:${Math.floor(Number(st.mtimeMs) || 0)}` : "missing"}`;
+
+export interface LogReaderOptions {
+	stat?: (path: string) => LogStat | undefined;
+	read?: (path: string) => string[] | undefined;
+}
+
+export interface LogReader {
+	(run: Pick<SubagentRun, "logPath">): string[];
+	logKeyOf: (run: Pick<SubagentRun, "logPath">) => string;
+	beginFrame: () => void;
+	invalidate: () => void;
+}
+
+const statOfPath = (path: string): LogStat | undefined => {
+	try {
+		const st = statSync(path);
+		return { size: st.size, mtimeMs: st.mtimeMs };
+	} catch {
+		return undefined;
+	}
+};
+
+export const createLogReader = (opts: LogReaderOptions = {}): LogReader => {
+	const stat = opts.stat ?? statOfPath;
+	const read = opts.read ?? ((path: string) => readTailLines(path));
+	const frame = new Map<string, LogStat | undefined>();
+	const kept = new Map<string, { key: string; lines: string[] }>();
+	const statInFrame = (path: string): LogStat | undefined => {
+		if (frame.has(path)) return frame.get(path);
+		const st = stat(path);
+		frame.set(path, st);
+		return st;
+	};
+	const linesFor = (path: string, st: LogStat | undefined): string[] => {
+		if (!st) return [LOG_WAIT_LINE];
+		const key = logKeyOf(path, st);
+		const hit = kept.get(path);
+		if (hit && hit.key === key) return hit.lines;
+		const lines = read(path) ?? [LOG_ERROR_LINE];
+		if (!kept.has(path) && kept.size >= LOG_CACHE_MAX) {
+			const oldest = kept.keys().next();
+			if (!oldest.done) kept.delete(oldest.value);
+		}
+		kept.set(path, { key, lines });
+		return lines;
+	};
+	const reader = ((run: Pick<SubagentRun, "logPath">): string[] =>
+		run.logPath ? linesFor(run.logPath, statInFrame(run.logPath)) : [LOG_WAIT_LINE]) as LogReader;
+	reader.logKeyOf = (run: Pick<SubagentRun, "logPath">) => (run.logPath ? logKeyOf(run.logPath, statInFrame(run.logPath)) : "none");
+	reader.beginFrame = () => frame.clear();
+	reader.invalidate = () => {
+		frame.clear();
+		kept.clear();
+	};
+	return reader;
+};
 
 export const sessionSummaryLine = (run: SubagentRun): string => `${clip((run.prompt ?? "").replace(/\s+/g, " "), 100) || "(task text not captured)"}${run.logPath ? ` → ${run.logPath}` : ""}`;
 

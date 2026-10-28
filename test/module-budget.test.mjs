@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { HYGIENE_MAX_LINES, countLines } from "../extensions/finisher/index.ts";
+import { HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, countLines, textBytes } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const walk = (dir) =>
@@ -16,8 +16,14 @@ const sources = walk(join(here, "extensions")).filter((f) => /\.(ts|mjs)$/.test(
 
 test("every extension source file stays under the read-in-one-go budget", () => {
 	assert.ok(sources.length > 10, `expected the extension sources to be found, got ${sources.length}`);
-	const over = sources.map((f) => [f.replace(here, ""), countLines(readFileSync(f, "utf8")), statSync(f).size]).filter(([, n]) => n > HYGIENE_MAX_LINES);
+	const over = sources.map((f) => [f.replace(here, ""), countLines(readFileSync(f, "utf8"))]).filter(([, n]) => n > HYGIENE_MAX_LINES);
 	assert.deepEqual(over.map(([f, n]) => `${f}: ${n}`), [], `files over ${HYGIENE_MAX_LINES} lines must be split`);
+});
+
+test("every extension source file also fits the byte budget, so one read of its path returns all of it", () => {
+	assert.ok(HYGIENE_MAX_BYTES < 50 * 1024, "the ceiling must sit inside the reader's page or the rule is false");
+	const over = sources.map((f) => [f.replace(here, ""), textBytes(readFileSync(f, "utf8"))]).filter(([, n]) => n > HYGIENE_MAX_BYTES);
+	assert.deepEqual(over.map(([f, n]) => `${f}: ${n} bytes`), [], `files over ${HYGIENE_MAX_BYTES} bytes cannot come back whole in one read — split them`);
 });
 
 test("the entry point is only wiring: no file carries the whole harness", () => {
@@ -32,6 +38,8 @@ test("the budget is a real bound: a synthetic file just over it is rejected", ()
 	const over = `${atLimit}\nx`;
 	assert.equal(countLines(atLimit), HYGIENE_MAX_LINES);
 	assert.ok(countLines(over) > HYGIENE_MAX_LINES);
+	assert.ok(textBytes("x".repeat(HYGIENE_MAX_BYTES)) === HYGIENE_MAX_BYTES, "the ceiling is counted in bytes");
+	assert.equal(textBytes("é".repeat(3)), 6, "and a byte is the unit, not a character: a Thai comment costs more than it looks");
 });
 
 test("shell scripts keep their shebang and stay executable (a comment stripper must never eat line 1)", async () => {

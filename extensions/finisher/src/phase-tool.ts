@@ -1,7 +1,7 @@
 import { declarePlan, completeLap, currentLap, allLapsDone, lapLabel, phaseListLines, planOf, verifyGate } from "./goal-phase.ts";
 import { goalDriverDone, type GoalRunState } from "./goal-driver.ts";
 import { type HarnessContext } from "./kit.ts";
-import { consultOnly, noGoalNeededNote } from "./consult.ts";
+import { consultOnly, goalOpenFor, noGoalNeededNote } from "./consult.ts";
 
 export interface PhaseCall {
 	plan?: string[];
@@ -90,7 +90,7 @@ export const registerPhaseTool = (ctx: HarnessContext): void => {
 			},
 		},
 		async execute(_id: string, params: PhaseCall) {
-			if (consultOnly(state.turnIntent, false) && !state.goalDriver)
+			if (consultOnly(state.turnIntent, false) && !goalOpenFor(state.goalDriver))
 				return { content: [{ type: "text", text: noGoalNeededNote("lap", state.humanLang) }], details: { action: "consult", lap: 0, laps: 0 } };
 			const before = state.goalDriver;
 			const action = applyPhaseCall(state, params ?? {});

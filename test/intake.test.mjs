@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DRAFT_CASES_MAX, DRAFT_GOAL_MAX, draftCases, draftGoal, intakeDirective, intakeDraft, intakeOpen } from "../extensions/finisher/src/intake.ts";
+import { DRAFT_CASES_MAX, DRAFT_GOAL_MAX, draftCases, draftDirective, draftGoal, intakeDirective, intakeDraft, intakeOpen } from "../extensions/finisher/src/intake.ts";
+import { CONSULT_MODES, decideDirective, turnIntent } from "../extensions/finisher/src/consult.ts";
 import { consultDirective } from "../extensions/finisher/src/consult.ts";
 
 const collapse = (text) => text.replace(/\s+/g, " ").trim();
@@ -93,4 +94,29 @@ test("the directive carries every drafted case and points at goal, and never a c
 	assert.ok(!intakeDirective(prompt, "th", "consult").includes("case ="), "no draft case list is pushed in consult mode");
 	assert.ok(intakeDirective(prompt, "th", "work").includes("case ="), "a work turn still carries the drafted cases");
 	assert.equal(intakeDirective(prompt, undefined, "work"), intakeDirective(prompt), "no intent keeps the goal-first directive unchanged");
+});
+
+test("every mode owns one directive, and only the forced-work mode pushes a drafted case list", () => {
+	const prompt = "ทำไมหน้า report ถึงช้า";
+	const directives = CONSULT_MODES.map((mode) => [mode, intakeDirective(prompt, "th", turnIntent(mode))]);
+	assert.deepEqual(directives, [
+		["auto", decideDirective(prompt, "th")],
+		["always", intakeDirective(prompt, "th", "consult")],
+		["off", draftDirective(prompt, "th")],
+	], "the mode alone picks the directive");
+	for (const [mode, text] of directives)
+		assert.equal(text.includes("case ="), mode === "off", `mode ${mode} is the only one that drafts cases`);
+	assert.notEqual(decideDirective(prompt, "th"), draftDirective(prompt, "th"), "decide asks first instead of drafting");
+});
+
+test("the decide directive is the model's own call in either language, never the harness forcing a run", () => {
+	const prompt = "how does the report page scroll";
+	for (const lang of ["th", "en", undefined]) {
+		const text = decideDirective(prompt, lang);
+		assert.ok(text.includes(prompt), `${lang}: the human's own words ride in the directive, not a paraphrase`);
+		assert.match(text, /start: true/, `${lang}: the go condition is stated`);
+	}
+	assert.match(decideDirective(prompt, "th"), /[\u0E00-\u0E7F]/, "Thai human gets Thai chrome");
+	assert.ok(!/[\u0E00-\u0E7F]/.test(decideDirective(prompt, "en")), "English human gets English chrome");
+	assert.ok(decideDirective("  ").length > 0, "a blank prompt still yields a directive");
 });

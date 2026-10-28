@@ -6,12 +6,11 @@ import { GOAL_HIT } from "./goal-page.ts";
 import { REPORT_HIT } from "./report-page.ts";
 import { currentReport } from "./report-file.ts";
 import { panelTickMs } from "./agent-panel.ts";
-import { raceLoaderFrames, raceLoaderMessage, raceState } from "./race-state.ts";
+import { raceLoaderFrames, raceState } from "./race-state.ts";
 import { type HarnessContext } from "./kit.ts";
 import { type SubagentRun } from "./types.ts";
 
 export const RACE_TICK_MS = 1_000;
-const LANES = 5;
 
 export const createPanelWidget = (ctx: HarnessContext) => {
 	const state = ctx.state;
@@ -43,7 +42,6 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		runs: state.subagentRuns,
 		goal: goalOf(),
 		report: currentReport(lastCtx?.cwd, state.lastReport),
-		lanes: LANES,
 		maxRows: HUD_MAX_ROWS,
 	});
 
@@ -64,15 +62,14 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 	const syncLoader = (ctx: ExtensionContext): void => {
 		const goal = goalOf();
 		if (!goal?.goal) return;
-		const race = raceState({ goal, runs: state.subagentRuns, lanes: LANES });
+		const race = raceState({ goal, runs: state.subagentRuns });
 		const frames = raceLoaderFrames(race, colorize(ctx));
-		const message = raceLoaderMessage(race);
-		const key = `${frames.frames.join("|")}·${frames.intervalMs ?? 0}·${message}`;
+		const key = frames.frames.join("|");
 		if (key === lastLoader) return;
 		lastLoader = key;
 		try {
-			ctx.ui.setWorkingIndicator(frames);
-			ctx.ui.setWorkingMessage(message);
+			ctx.ui.setWorkingIndicator({ frames: frames.frames });
+			ctx.ui.setWorkingMessage("");
 		} catch {
 		}
 	};

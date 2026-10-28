@@ -1,9 +1,12 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { PLAN_DEFAULT_CONCURRENCY, type PlanResult, type PlanRunner, type PlanStatus, type PlanTask, runPlan, scopedPlan, statusOf } from "./check-runner.ts";
 import { normalizeCommand, type RecordedCall } from "./evidence-record.ts";
 import { gitOk } from "./worktree.ts";
+
+const execFileAsync = promisify(execFile);
 
 export const CHECK_ORDER = ["typecheck", "lint", "test"] as const;
 
@@ -292,35 +295,52 @@ export const skippedChecks = (results: CheckResult[]): CheckResult[] =>
 export const provedByChecks = (checks: CheckResult[], commands: Map<string, string>): string[] =>
 	[...commands].filter(([, command]) => provesCommand(checks, command)).map(([caseId]) => caseId);
 
-export const runCheck = (check: DeterministicCheck, cwd: string, timeoutMs: number): CheckResult => {
+interface SpawnedFailure {
+	code?: number | string | null;
+	status?: number | null;
+	signal?: string | null;
+	stdout?: unknown;
+	stderr?: unknown;
+	message?: string;
+}
+
+const numericStatus = (e: SpawnedFailure): number | undefined => {
+	for (const value of [e.status, e.code]) if (typeof value === "number") return value;
+	return undefined;
+};
+
+const spawnFailure = (err: unknown): { exitCode: number; tail: string; timedOut: boolean } => {
+	const e = err as SpawnedFailure;
+	const stdout = typeof e.stdout === "string" ? e.stdout : "";
+	const stderr = typeof e.stderr === "string" ? e.stderr : "";
+	const killed = !!e.signal;
+	const status = numericStatus(e);
+	const exitCode = status ?? (killed ? 124 : 1);
+	return { exitCode, tail: `${stdout}\n${stderr}`.trim() || (e.message ?? "the command produced no output"), timedOut: status === undefined && killed };
+};
+
+const SPAWN_OPTS = { encoding: "utf8" as const, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 };
+
+export const runCheck = async (check: DeterministicCheck, cwd: string, timeoutMs: number): Promise<CheckResult> => {
 	const name = `${check.command} ${check.args.join(" ")}`;
 	try {
-		const out = execFileSync(check.command, check.args, { cwd, timeout: Math.max(1_000, timeoutMs), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 });
-		return { name: check.name, command: name, exitCode: 0, tail: String(out ?? "").trim(), status: "pass" };
+		const out = await execFileAsync(check.command, check.args, { ...SPAWN_OPTS, cwd, timeout: Math.max(1_000, timeoutMs) });
+		return { name: check.name, command: name, exitCode: 0, tail: String(out.stdout ?? "").trim(), status: "pass" };
 	} catch (err) {
-		const e = err as { status?: number | null; signal?: string | null; stdout?: unknown; stderr?: unknown; message?: string };
-		const stdout = typeof e.stdout === "string" ? e.stdout : "";
-		const stderr = typeof e.stderr === "string" ? e.stderr : "";
-		const timedOut = typeof e.status !== "number" && !!e.signal;
-		const exitCode = typeof e.status === "number" ? e.status : e.signal ? 124 : 1;
-		const tail = `${stdout}\n${stderr}`.trim() || (e.message ?? "the check produced no output");
+		const { exitCode, tail, timedOut } = spawnFailure(err);
 		return { name: check.name, command: name, exitCode, tail, status: statusOf({ exitCode, output: tail, ...(timedOut ? { timedOut: true } : {}) }) };
 	}
 };
 
-export const runChecks = (checks: DeterministicCheck[], cwd: string, timeoutMs: number): CheckResult[] =>
-	(Array.isArray(checks) ? checks : []).map((check) => runCheck(check, cwd, timeoutMs));
+export const runChecks = async (checks: DeterministicCheck[], cwd: string, timeoutMs: number): Promise<CheckResult[]> =>
+	Promise.all((Array.isArray(checks) ? checks : []).map((check) => runCheck(check, cwd, timeoutMs)));
 
-export const runCommand = (command: string, cwd: string, timeoutMs: number): CheckResult => {
+export const runCommand = async (command: string, cwd: string, timeoutMs: number): Promise<CheckResult> => {
 	try {
-		const out = execFileSync("bash", ["-lc", command], { cwd, timeout: Math.max(1_000, timeoutMs), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 });
-		return { name: command, command, exitCode: 0, tail: String(out ?? "").trim(), status: "pass" };
+		const out = await execFileAsync("bash", ["-lc", command], { ...SPAWN_OPTS, cwd, timeout: Math.max(1_000, timeoutMs) });
+		return { name: command, command, exitCode: 0, tail: String(out.stdout ?? "").trim(), status: "pass" };
 	} catch (err) {
-		const e = err as { status?: number | null; signal?: string | null; stdout?: unknown; stderr?: unknown; message?: string };
-		const stdout = typeof e.stdout === "string" ? e.stdout : "";
-		const stderr = typeof e.stderr === "string" ? e.stderr : "";
-		const exitCode = typeof e.status === "number" ? e.status : e.signal ? 124 : 1;
-		const tail = `${stdout}\n${stderr}`.trim() || (e.message ?? "the command produced no output");
+		const { exitCode, tail } = spawnFailure(err);
 		return { name: command, command, exitCode, tail, status: exitCode === 0 ? "pass" : "fail" };
 	}
 };

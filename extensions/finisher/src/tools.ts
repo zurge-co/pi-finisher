@@ -12,6 +12,7 @@ import { clearOtherGoals } from "./handoff-stack.ts";
 import { handoffOff } from "./handoff-gate.ts";
 import { withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./timeout.ts";
 import { budgetNote, capNeededFor, effortFor, SWARM_TOOL, wavesFor } from "./budget.ts";
+import { STATE_HOME_LABEL, stateLabel } from "./project-dir.ts";
 import { subagentTimeout } from "./subagent-config.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
@@ -24,7 +25,7 @@ import { applyAnswers, clarifyPlan, CLARIFY_CHROME_KEYS, markClarify, type Clari
 import { cleanChromeText } from "./chrome-text.ts";
 import { askClarify } from "./clarify-dialog.ts";
 import { caseKey } from "./goal-confirm.ts";
-import { consultOnly, goalConsultNote, worksTurn } from "./consult.ts";
+import { codeConsultNote, consultOnly, decideGoalNote, goalConsultNote, goalOpenFor, worksTurn } from "./consult.ts";
 
 export const SWARM_MODES = ["code"] as const;
 export const RETIRED_MODES = ["explore", "verify"] as const;
@@ -80,7 +81,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		name: "code",
 		label: "finisher · code",
 		description:
-			"Run CODER sub-agents in parallel on your configured model ladder (priority1..priority5 in .finisher/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then merges the slices back in deterministic order and refuses to merge silently when two slices touched the same path. Explore, plan and verify are NOT this tool — you do those yourself, and verification is verify.",
+			`Run CODER sub-agents in parallel on your configured model ladder (priority1..priority5 in ${STATE_HOME_LABEL}/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then merges the slices back in deterministic order and refuses to merge silently when two slices touched the same path. Explore, plan and verify are NOT this tool — you do those yourself, and verification is verify.`,
 		promptSnippet: "Fan out parallel CODERS across the model priority ladder (one worktree per slice)",
 		promptGuidelines: [
 			"This tool only codes. Do the exploring and the planning yourself first — decide the slices, the files each one owns and the interface they share — because every slice you add is paid for by a coder reading context you already have.",
@@ -111,6 +112,8 @@ export const registerTools = (ctx: HarnessContext) => {
 		async execute(_id, p, sig, _on, ctx) {
 			const mode = (p.mode ?? "code").trim();
 			if (mode !== "code") return { content: [{ type: "text", text: retiredModeNote(mode) }], details: { refused: true, mode }, isError: true };
+			if (consultOnly(state.turnIntent, false) && !goalOpenFor(state.goalDriver))
+				return { content: [{ type: "text", text: codeConsultNote(state.humanLang) }], details: { consult: true, spawned: 0 } };
 			if (!p.subtasks.length) return { content: [{ type: "text", text: "code: subtasks must contain at least one slice" }], details: {}, isError: true };
 			if (p.subtasks.length > 8) return { content: [{ type: "text", text: `code: at most 8 slices per call (got ${p.subtasks.length}) — split into several calls` }], details: {}, isError: true };
 			const floor = coderFloor(p.subtasks.length);
@@ -132,7 +135,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			const slots = swarmSlots(ladder);
 			if (!slots.length)
 				return {
-					content: [{ type: "text", text: "code: no model to run — set priority1..priority5 in .finisher/models.json (each a pi model pattern like \"provider/model\"), or run the CODERS from a session whose model resolves; it uses as many slots as are set" }],
+					content: [{ type: "text", text: `code: no model to run — set priority1..priority5 in ${stateLabel(ctx.cwd, "models.json")} (each a pi model pattern like \"provider/model\"), or run the CODERS from a session whose model resolves; it uses as many slots as are set` }],
 					details: { missingLadder: true },
 					isError: true,
 				};
@@ -304,9 +307,10 @@ export const registerTools = (ctx: HarnessContext) => {
 								...(gate === "reopen" ? [GOAL_UNCHANGED_NOTE, ""] : []),
 								"the goal is confirmed — work until every case holds, then call verify ONCE at the end:",
 								...next.map((c, i) => `  ${i + 1}. ${c}`),
+								...(intent === "decide" ? ["", decideGoalNote(state.humanLang)] : []),
 								...(clarifyNotes.length ? ["", "kept from the human's own answer, so they are never guessed again:", ...clarifyNotes.map((note) => `  ${note}`)] : []),
 								"",
-								"verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from a command the harness recorded, and each case's result lands in .finisher/checks — never in a new test file.",
+								`verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from a command the harness recorded, and each case's result lands in ${stateLabel(ctx.cwd, "checks")} — never in a new test file.`,
 								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",
 								"a case only a human can check is separated, never failed: declare it in verify as { id, human: true, note } and it is listed for them in the final report.",
 							].join("\n"),

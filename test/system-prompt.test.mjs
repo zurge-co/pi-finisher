@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CLARIFY_GUIDELINE, GOAL_FIRST_GUIDELINE, CONSULT_GUIDELINE, GOAL_DIALOG_SCROLL_KEYS, GOAL_SCROLL_KEYS, HARNESS_GUIDELINES, HARNESS_TOOLS, INTENT_GUIDELINE, SURFACE_TOOLS, countOccurrences, harnessSystemPrompt, SWARM_ROUTING_GUIDELINE } from "../extensions/finisher/index.ts";
+import { CLARIFY_GUIDELINE, GOAL_FIRST_GUIDELINE, CONSULT_GUIDELINE, GOAL_DIALOG_SCROLL_KEYS, GOAL_SCROLL_KEYS, GOAL_WHEN_WORK_GUIDELINE, HARNESS_GUIDELINES, HARNESS_TOOLS, HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, INTENT_GUIDELINE, READ_WHOLE_FILE_GUIDELINE, SURFACE_TOOLS, WORK_FORCED_GUIDELINE, countOccurrences, harnessSystemPrompt, SWARM_ROUTING_GUIDELINE } from "../extensions/finisher/index.ts";
 import { languageGuideline } from "../extensions/finisher/src/human-language.ts";
 
 const base = "you are a coding agent";
@@ -27,7 +27,7 @@ test("the language directive is the human's, and it is the last rule the agent r
 });
 
 test("the goal-first rule is followed by the clarify rule, which confirms understanding instead of inviting an interview", () => {
-	const guidelines = HARNESS_GUIDELINES("th");
+	const guidelines = HARNESS_GUIDELINES("th", "work");
 	const at = guidelines.findIndex((rule) => /at most 3 questions/.test(rule));
 	assert.equal(guidelines[at - 1], GOAL_FIRST_GUIDELINE, "the clarify rule sits directly behind the goal-first rule");
 	assert.ok(at > 0, "and the goal-first rule is the thing in front of it");
@@ -64,30 +64,41 @@ test("the routing guideline states the coder floor and that main codes alongside
 	assert.ok(goalAt >= 0 && goalAt < lapAt && lapAt < verifyAt, "the fixed workflow still reads goal → lap → verify");
 });
 
-test("the work turn states that the model decides the turn, and consult mode swaps that for the conversation rule", () => {
+test("the three turns differ in exactly their own rules, and no turn is told to decide and ordered to run at once", () => {
+	const intentOwning = [INTENT_GUIDELINE, GOAL_WHEN_WORK_GUIDELINE, GOAL_FIRST_GUIDELINE, WORK_FORCED_GUIDELINE, CLARIFY_GUIDELINE, CONSULT_GUIDELINE];
 	for (const lang of ["th", "en", undefined]) {
-		const consult = HARNESS_GUIDELINES(lang, "consult");
-		const work = HARNESS_GUIDELINES(lang, "work");
-		assert.ok(consult.includes(CONSULT_GUIDELINE));
-		assert.ok(!consult.includes(INTENT_GUIDELINE), "the conversation is forced by the human, so there is nothing left to decide");
-		assert.ok(!consult.includes(GOAL_FIRST_GUIDELINE), "and no goal is demanded in it");
-		assert.ok(!consult.includes(CLARIFY_GUIDELINE), "and the clarify round is not run");
-		assert.ok(work.includes(INTENT_GUIDELINE), "a normal turn tells the model that the decision is its own");
-		assert.ok(work.includes(GOAL_FIRST_GUIDELINE), "and that the run starts at goal");
-		assert.deepEqual(
-			consult.filter((rule) => rule !== CONSULT_GUIDELINE),
-			work.filter((rule) => rule !== INTENT_GUIDELINE && rule !== GOAL_FIRST_GUIDELINE && rule !== CLARIFY_GUIDELINE),
-			"only the first rules differ: hygiene, routing, proof, timeout and language are the same",
-		);
+		const [decide, consult, work] = [HARNESS_GUIDELINES(lang, "decide"), HARNESS_GUIDELINES(lang, "consult"), HARNESS_GUIDELINES(lang, "work")];
+		const rest = (rules) => rules.filter((rule) => !intentOwning.includes(rule));
+		assert.deepEqual(rest(decide), rest(consult), "only the leading rules differ between a decided turn and a conversation");
+		assert.deepEqual(rest(decide), rest(work), "and between a decided turn and a forced one");
+
+		assert.deepEqual(decide.slice(0, 3), [INTENT_GUIDELINE, GOAL_WHEN_WORK_GUIDELINE, CLARIFY_GUIDELINE], "a decided turn reads the decision first, then the goal it owes only once decided");
+		assert.deepEqual(consult.slice(0, 1), [CONSULT_GUIDELINE], "a conversation is one rule");
+		assert.deepEqual(work.slice(0, 3), [WORK_FORCED_GUIDELINE, GOAL_FIRST_GUIDELINE, CLARIFY_GUIDELINE], "a forced turn reads the order first and never the decision");
+
+		for (const rules of [decide, consult, work]) {
+			assert.ok(!(rules.includes(INTENT_GUIDELINE) && rules.includes(WORK_FORCED_GUIDELINE)), "decide and forced-work are never both stated");
+			assert.ok(!(rules.includes(CONSULT_GUIDELINE) && (rules.includes(GOAL_FIRST_GUIDELINE) || rules.includes(GOAL_WHEN_WORK_GUIDELINE))), "a conversation is never also told to confirm a goal");
+			assert.ok(!(rules.includes(GOAL_FIRST_GUIDELINE) && rules.includes(GOAL_WHEN_WORK_GUIDELINE)), "a turn is never given two goal rules");
+		}
+
+		assert.match(GOAL_WHEN_WORK_GUIDELINE, /only once/i, "the decided turn's goal rule is conditional on the decision");
+		assert.match(GOAL_WHEN_WORK_GUIDELINE, /conversation is answered, never armed/, "and it says what happens when the read is a conversation");
+		assert.match(WORK_FORCED_GUIDELINE, /consultMode: off/, "the forced rule names the setting that forces it");
 	}
-	for (const intent of [undefined, "work"]) {
+	for (const [intent, goalRule] of [
+		[undefined, GOAL_WHEN_WORK_GUIDELINE],
+		["decide", GOAL_WHEN_WORK_GUIDELINE],
+		["work", GOAL_FIRST_GUIDELINE],
+	]) {
 		const prompt = harnessSystemPrompt(base, "th", "", intent);
-		assert.equal(countOccurrences(prompt, GOAL_FIRST_GUIDELINE), 1, `goal-first reaches the prompt exactly once for ${String(intent)}`);
-		assert.equal(countOccurrences(prompt, INTENT_GUIDELINE), 1, `the decision rule reaches the prompt exactly once for ${String(intent)}`);
+		assert.equal(countOccurrences(prompt, goalRule), 1, `exactly one goal rule reaches the prompt for ${String(intent)}`);
+		assert.equal(countOccurrences(prompt, INTENT_GUIDELINE), intent === undefined || intent === "decide" ? 1 : 0, `the decision rule is stated only where the model decides (${String(intent)})`);
+		assert.equal(harnessSystemPrompt(base, "th", "", intent).endsWith(languageGuideline("th")), true, "the language rule still closes the prompt");
 	}
 	assert.equal(countOccurrences(harnessSystemPrompt(base, "th", "", "consult"), CONSULT_GUIDELINE), 1, "the conversation rule reaches the prompt exactly once");
-	assert.equal(countOccurrences(harnessSystemPrompt(base, "th", "", "consult"), GOAL_FIRST_GUIDELINE), 0);
-	assert.ok(harnessSystemPrompt(base, "th", "", "consult").endsWith(languageGuideline("th")), "the language rule still closes the prompt");
+	for (const rule of [GOAL_FIRST_GUIDELINE, GOAL_WHEN_WORK_GUIDELINE, INTENT_GUIDELINE, CLARIFY_GUIDELINE]) assert.equal(countOccurrences(harnessSystemPrompt(base, "th", "", "consult"), rule), 0);
+	assert.equal(countOccurrences(harnessSystemPrompt(base, "th", "", "work"), WORK_FORCED_GUIDELINE), 1, "the forced rule reaches the forced prompt exactly once");
 });
 
 test("the decision rule names the model as the decider and never mentions a word list or a call budget", () => {
@@ -95,8 +106,21 @@ test("the decision rule names the model as the decider and never mentions a word
 	assert.match(INTENT_GUIDELINE, /nothing in the harness inspects their words/, "and the harness promises it is not reading the words behind its back");
 	assert.doesNotMatch(INTENT_GUIDELINE, /budget|grace|blocked|refused/i, "no call budget and no refusal survives in the rule the model reads");
 	for (const forbidden of [/keyword/, /regex/, /match(es)? the word/i]) assert.doesNotMatch(INTENT_GUIDELINE, forbidden);
-	assert.match(GOAL_FIRST_GUIDELINE, /you may read to understand the message/, "reading to understand the request is allowed before goal");
-	assert.doesNotMatch(GOAL_FIRST_GUIDELINE, /blocked|budget/i, "and is never gated by a spent budget");
+	for (const goalRule of [GOAL_FIRST_GUIDELINE, GOAL_WHEN_WORK_GUIDELINE]) {
+		assert.match(goalRule, /read (the code|to understand)/, "reading to understand the request is allowed before goal");
+		assert.doesNotMatch(goalRule, /blocked|budget/i, "and is never gated by a spent budget");
+	}
+});
+
+test("the read-whole-file rule reaches every turn and promises exactly the bound the scanner enforces", () => {
+	for (const intent of [undefined, "decide", "consult", "work"]) {
+		const prompt = harnessSystemPrompt(base, "th", "", intent);
+		assert.equal(countOccurrences(prompt, READ_WHOLE_FILE_GUIDELINE), 1, `every turn is told a module comes back whole (${String(intent)})`);
+	}
+	assert.match(READ_WHOLE_FILE_GUIDELINE, new RegExp(`at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB`), "the number it promises is the number scanLength enforces");
+	assert.match(READ_WHOLE_FILE_GUIDELINE, /offset/, "the call it rules out is named");
+	assert.match(READ_WHOLE_FILE_GUIDELINE, /limit/, "both ways of paging a file that already fits");
+	assert.doesNotMatch(READ_WHOLE_FILE_GUIDELINE, /usually|most files|sometimes/i, "a bound the agent may decide to ignore is not a bound");
 });
 
 test("no sentence the harness says out loud is written down twice, so a rename cannot leave a copy behind", () => {

@@ -12,6 +12,7 @@ import { subagentTimeout } from "./subagent-config.ts";
 import { type State } from "./types.ts";
 import { excludeFromGitStatus, gitOk, linkDeps } from "./worktree.ts";
 import { finisherDir } from "./types.ts";
+import { stateLabel } from "./project-dir.ts";
 import { mkdirSync } from "node:fs";
 
 export const createCodeSwarm = (ctx: HarnessContext) => {
@@ -168,7 +169,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		if (failedApplies.length) lines.push(`apply failed (resolve by hand): ${failedApplies.join(" · ")}`);
 		if (mergePlan.overlaps.length) lines.push("overlapping slices were NOT merged — split the work so each file has one owner, or merge those by hand");
 		lines.push(metricsLine(metrics));
-		lines.push("leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under .finisher/worktree/swarm/");
+		lines.push(`leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under ${stateLabel(ctx.cwd, "worktree", "swarm")}/`);
 		lines.push("keep working: the coders are done, so the next lap is yours — do not sit idle waiting for them");
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],

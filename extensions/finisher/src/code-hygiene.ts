@@ -1,4 +1,5 @@
 export const HYGIENE_MAX_LINES = 500;
+export const HYGIENE_MAX_BYTES = 48 * 1024;
 export const HYGIENE_EXEMPT = "finisher-hygiene-allow";
 
 export interface HygieneViolation {
@@ -10,6 +11,7 @@ export interface HygieneViolation {
 
 export interface HygieneOptions {
 	maxLines?: number;
+	maxBytes?: number;
 	exemptMarker?: string;
 }
 
@@ -186,18 +188,27 @@ export const countLines = (text: string): number => {
 	return lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
 };
 
+export const textBytes = (text: string): number => Buffer.byteLength(text, "utf8");
+
 export const scanLength = (text: string, path: string, opts: HygieneOptions = {}): HygieneViolation[] => {
 	if (!isHygieneChecked(path)) return [];
-	const max = opts.maxLines ?? HYGIENE_MAX_LINES;
+	const maxLines = opts.maxLines ?? HYGIENE_MAX_LINES;
+	const maxBytes = opts.maxBytes ?? HYGIENE_MAX_BYTES;
 	const total = countLines(text);
-	if (total <= max) return [];
+	const size = textBytes(text);
+	const overLines = total > maxLines;
+	const overBytes = size > maxBytes;
+	if (!overLines && !overBytes) return [];
 	const marker = opts.exemptMarker ?? HYGIENE_EXEMPT;
 	const exemptLine = text.split("\n").find((l) => l.includes(marker));
 	if (exemptLine) {
 		const reason = reasonOf(exemptLine, marker);
 		return reason ? [] : [{ path, kind: "exempt-without-reason", detail: `${marker} needs a reason after it` }];
 	}
-	return [{ path, kind: "length", detail: `${total} lines > ${max} — split this file (a fresh file must fit in one read)` }];
+	const violations: HygieneViolation[] = [];
+	if (overLines) violations.push({ path, kind: "length", detail: `${total} lines > ${maxLines} — split this file (a fresh file must fit in one read)` });
+	if (overBytes) violations.push({ path, kind: "length", detail: `${size} bytes > ${maxBytes} — split this file (a read page is bounded, so a module must fit one)` });
+	return violations;
 };
 
 export const scanSource = (text: string, path: string, opts: HygieneOptions = {}) => {
@@ -217,7 +228,10 @@ export const formatHygieneViolations = (violations: HygieneViolation[], limit = 
 		list.push(v);
 		byFile.set(v.path, list);
 	}
-	const out: string[] = [`${violations.length} code-hygiene violation(s) in ${byFile.size} file(s)`, "rules: no comments in code, no file over 500 lines"];
+	const out: string[] = [
+		`${violations.length} code-hygiene violation(s) in ${byFile.size} file(s)`,
+		`rules: no comments in code, no file over ${HYGIENE_MAX_LINES} lines or ${HYGIENE_MAX_BYTES / 1024}KB`,
+	];
 	let shown = 0;
 	for (const [path, list] of byFile) {
 		if (shown >= limit) break;
@@ -238,7 +252,7 @@ export const buildCodeRulesPrompt = (): string =>
 		"Code rules for everything you write (enforced by the harness after your edit):",
 		"- No comments in code: no line comments and no block comments. Names and structure carry the intent. Only a load-bearing reason may stay, and it must carry the marker " +
 			`${HYGIENE_EXEMPT}: <why>.`,
-		`- A file you create or rewrite must stay at or under ${HYGIENE_MAX_LINES} lines; split it instead of growing past that.`,
+		`- A file you create or rewrite must stay at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB; split it instead of growing past that. Size is the page a reader gets back, and both bounds decide whether one call returns the whole module.`,
 		"- Tests are proof, not coverage. Write the few that establish a real property — a bound holds for every input, an ordering is total, a boundary is exact, an invariant survives a transformation — and skip whatever only re-states the code. A test that would still pass if the logic were wrong is worse than no test.",
 		"- Prefer one property that must hold over many examples that merely happen to: name the property in the test, assert the law, not the screenplay.",
 		"- A test with no assertion, a tautology (assert(true), assert.equal(x, x)) or nothing but existence/type checks is REJECTED by the harness — it can never fail, so it is filler. Delete it or assert a real law.",

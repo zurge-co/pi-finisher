@@ -1,5 +1,5 @@
 import { baseLang, DEFAULT_GOAL_LANG, type HumanLang } from "./human-language.ts";
-import { consultDirective, type TurnIntent } from "./consult.ts";
+import { consultDirective, decideDirective, type TurnIntent } from "./consult.ts";
 
 export interface IntakeGoal {
 	goal?: string;
@@ -65,8 +65,7 @@ export const intakeDraft = (prompt: string): IntakeDraft => {
 	return { goal, cases: draftCases(prompt, goal) };
 };
 
-export const intakeDirective = (prompt: string, lang?: string, intent?: TurnIntent): string => {
-	if (intent === "consult") return consultDirective(prompt, lang);
+export const draftDirective = (prompt: string, lang?: string): string => {
 	const draft = intakeDraft(prompt);
 	const numbered = draft.cases.map((c, i) => `${i + 1}. ${c}`).join("  ");
 	if (!draft.goal)
@@ -76,4 +75,10 @@ export const intakeDirective = (prompt: string, lang?: string, intent?: TurnInte
 	if (thaiLang(lang))
 		return `ถ้าข้อความนี้เป็นงานที่ต้องลงมือ — ฉบับร่างจากคำพูดของมนุษย์: goal = ${draft.goal} | case = ${numbered}. เรียก goal ด้วย goal และ case ชุดนี้ ไม่ต้องเดา มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
 	return `if this message is a work order — the draft from the human's own words: goal = ${draft.goal} | cases = ${numbered}. Call goal with this goal and these cases instead of guessing; the human confirms once and the same goal is never asked again`;
+};
+
+export const intakeDirective = (prompt: string, lang?: string, intent?: TurnIntent): string => {
+	if (intent === "consult") return consultDirective(prompt, lang);
+	if (intent === "decide") return decideDirective(prompt, lang);
+	return draftDirective(prompt, lang);
 };

@@ -1,12 +1,13 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { type GoalOutcome } from "./compaction-guard.ts";
+import { statePath } from "./project-dir.ts";
 
 export const REPORT_FILE = "report.md";
 export const REPORT_MAX_BYTES = 96 * 1024;
 export const REPORT_HEAD_BYTES = 512;
 
-export const reportPath = (cwd: string): string => join(cwd, ".finisher", REPORT_FILE);
+export const reportPath = (cwd: string): string => statePath(cwd, REPORT_FILE);
 
 export interface ReportMeta {
 	path: string;

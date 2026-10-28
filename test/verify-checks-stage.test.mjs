@@ -94,23 +94,23 @@ test("only a check that names its own paths can be scoped away, and a scoped che
 	assert.deepEqual(stage.results.map(checkStatusOf), ["scoped", "scoped"]);
 	assert.deepEqual(failingChecks(stage.results), [], "not running is not failing");
 	assert.equal(skippedChecks(stage.results).length, 2);
-	const evidence = judgeDeterministic(["c1"], new Map([["c1", "node check.mjs"]]), [{ command: "node check.mjs", ok: true }], stage.results);
+	const evidence = await judgeDeterministic(["c1"], new Map([["c1", "node check.mjs"]]), [{ command: "node check.mjs", ok: true }], stage.results);
 	assert.deepEqual(evidence.map((c) => c.result), ["PASS"], "a skipped check leaves the case to its own recording");
 });
 
-test("a toolchain that cannot run here, or a check cut by its deadline, never fails the cases the harness can still judge", () => {
+test("a toolchain that cannot run here, or a check cut by its deadline, never fails the cases the harness can still judge", async () => {
 	const cases = ["c1", "c2"];
 	const calls = [{ command: "node a.mjs", ok: true }];
 	const commands = new Map([["c1", "node a.mjs"], ["c2", "node b.mjs"]]);
 	const missing = { name: "typecheck", command: "npm run --silent typecheck", exitCode: 127, tail: "sh: tsc: command not found", status: "infra" };
 	const killed = { ...missing, status: "deadline", exitCode: 124, tail: "" };
 	for (const check of [missing, killed]) {
-		const evidence = judgeDeterministic(cases, commands, calls, [check]);
+		const evidence = await judgeDeterministic(cases, commands, calls, [check]);
 		assert.deepEqual(evidence.map((c) => c.result), ["PASS", "UNVERIFIED"], `${check.status} is not the repo being broken`);
 		assert.deepEqual(failingChecks([check]), []);
 	}
 	const broken = { ...missing, status: "fail", exitCode: 1, tail: "1 failing" };
-	assert.deepEqual(judgeDeterministic(cases, commands, calls, [broken]).map((c) => c.result), ["FAIL", "FAIL"], "a real failure still fails every case");
+	assert.deepEqual((await judgeDeterministic(cases, commands, calls, [broken])).map((c) => c.result), ["FAIL", "FAIL"], "a real failure still fails every case");
 });
 
 test("an edit is what changes the tree: a search never invalidates the checks, a write always does", () => {
@@ -168,17 +168,17 @@ test("every test-kind script is detected, in a stable order, and a script that p
 	assert.deepEqual(detectChecks({ scripts: { test: "   " } }), [], "a blank script is never a check");
 });
 
-test("a case whose command the deterministic stage already ran green is proven without running it again, and only a real pass counts", () => {
+test("a case whose command the deterministic stage already ran green is proven without running it again, and only a real pass counts", async () => {
 	const pass = { name: "test", command: "npm run --silent test", exitCode: 0, tail: "", status: "pass" };
 	const red = { ...pass, exitCode: 1, status: "fail" };
 	const skipped = { ...pass, status: "scoped" };
 	const commands = new Map([["c1", "npm test"], ["c2", "node custom.mjs"]]);
-	const green = judgeDeterministic(["c1", "c2"], commands, [], [pass]);
+	const green = await judgeDeterministic(["c1", "c2"], commands, [], [pass]);
 	assert.deepEqual(green.map((c) => c.result), ["PASS", "UNVERIFIED"], "a proven check answers its case, an unproven one proves nothing");
 	assert.match(green[0].reason, /already ran/);
-	assert.deepEqual(judgeDeterministic(["c1"], new Map([["c1", "npm test."]]), [], [pass]).map((c) => c.result), ["UNVERIFIED"], "an equivalent-looking command is not the command that ran");
-	assert.deepEqual(judgeDeterministic(["c1"], new Map([["c1", "npm test"]]), [], [red]).map((c) => c.result), ["FAIL"]);
-	const live = judgeDeterministic(["c1"], new Map([["c1", "npm test"]]), [], [skipped], (command) => {
+	assert.deepEqual((await judgeDeterministic(["c1"], new Map([["c1", "npm test."]]), [], [pass])).map((c) => c.result), ["UNVERIFIED"], "an equivalent-looking command is not the command that ran");
+	assert.deepEqual((await judgeDeterministic(["c1"], new Map([["c1", "npm test"]]), [], [red])).map((c) => c.result), ["FAIL"]);
+	const live = await judgeDeterministic(["c1"], new Map([["c1", "npm test"]]), [], [skipped], async (command) => {
 		assert.equal(command, "npm test");
 		return { name: command, command, exitCode: 0, tail: "" };
 	});
@@ -203,7 +203,7 @@ test("a check the model decides itself runs for real beside the package checks, 
 	assert.deepEqual(stage.results.map((r) => r.status), ["pass", "pass"]);
 	assert.deepEqual(stage.results.map((r) => r.command), ["node --test test/a.test.mjs", "node b.mjs"], "the command itself is what a case names, never a wrapped script name");
 	const commands = new Map([["c1", "node --test test/a.test.mjs"], ["c2", "node b.mjs"]]);
-	assert.deepEqual(judgeDeterministic(["c1", "c2"], commands, [], stage.results).map((c) => c.result), ["PASS", "PASS"], "a green custom check proves the case that names the same command");
+	assert.deepEqual((await judgeDeterministic(["c1", "c2"], commands, [], stage.results)).map((c) => c.result), ["PASS", "PASS"], "a green custom check proves the case that names the same command");
 	assert.deepEqual(reusedCommands(stage.results, commands), ["node --test test/a.test.mjs", "node b.mjs"]);
 	assert.match(checkSummaryMark(stage.results[0]), /^custom `node --test test\/a\.test\.mjs` ok$/, "the summary names the command, not an internal id");
 });
@@ -216,7 +216,7 @@ test("a red custom check fails every case exactly like a red package check, so a
 		run: async () => ({ exitCode: 1, output: "1 failing" }),
 	});
 	assert.deepEqual(failingChecks(red.results).map((r) => r.exitCode), [1]);
-	assert.deepEqual(judgeDeterministic(["c1"], new Map([["c1", "node -e 1"]]), [{ command: "node -e 1", ok: true }], red.results).map((c) => c.result), ["FAIL"], "a green recording cannot outvote the check that just failed");
+	assert.deepEqual((await judgeDeterministic(["c1"], new Map([["c1", "node -e 1"]]), [{ command: "node -e 1", ok: true }], red.results)).map((c) => c.result), ["FAIL"], "a green recording cannot outvote the check that just failed");
 	const skipped = await runCheckStage([], { cwd: repo({}), timeoutMs: 5_000, custom: [{ command: "missing-tool --x" }], run: async () => ({ exitCode: 127, output: "sh: missing-tool: command not found" }) });
 	assert.deepEqual(failingChecks(skipped.results), [], "a toolchain that cannot run here is not the repo being broken");
 });

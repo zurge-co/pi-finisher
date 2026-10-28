@@ -1,6 +1,6 @@
 import { Key } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
-import { relative } from "node:path";
+import { stateLabel } from "./project-dir.ts";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SURFACE_COMMANDS } from "./goal-run.ts";
 import { availableModelChoices, ignoredModelKeys, modelsPath, readLadderSlots, writeLadderSlot } from "./models.ts";
@@ -49,7 +49,7 @@ export const registerCommands = (ctx: HarnessContext) => {
 			pattern = typed;
 		}
 		writeLadderSlot(ctx.cwd, key, pattern);
-		ctx.ui.notify(`✅ ${key}: ${pattern} — wrote ${relative(ctx.cwd, modelsPath(ctx.cwd))} (sub-agents pick it up on their next run)`, "info");
+		ctx.ui.notify(`✅ ${key}: ${pattern} — wrote ${stateLabel(ctx.cwd, "models.json")} (sub-agents pick it up on their next run)`, "info");
 	};
 
 	pi.registerCommand("finisher", {
@@ -76,12 +76,12 @@ export const registerCommands = (ctx: HarnessContext) => {
 				const cfgPath = modelsPath(ctx.cwd);
 				if (ctx.mode !== "tui") {
 					const lines = [
-						`▚ priority ladder — config: ${existsSync(cfgPath) ? relative(ctx.cwd, cfgPath) : "(no .finisher/models.json — every sub-agent uses the main model)"}`,
+						`▚ priority ladder — config: ${existsSync(cfgPath) ? stateLabel(ctx.cwd, "models.json") : "(no models.json in the state dir — every sub-agent uses the main model)"}`,
 						`main agent: ${mainModel}`,
 						...rows.map((r, i) => `  ${r.key}: ${r.pattern ?? "— (unused)"}${i === 0 && r.pattern ? "  ← first pick" : ""}`),
 						`effective order: ${ladder.length ? ladder.join(" > ") : "(none — main model)"}`,
 						"a sub-agent runs the highest-priority rung that is set; the next rung runs only when that one fails.",
-						"edit by creating .finisher/models.json, e.g. { \"priority1\": \"anthropic/claude-sonnet\", \"priority2\": \"openai/gpt-5\" } — or open the TUI and use /finisher models",
+						`edit by creating ${stateLabel(ctx.cwd, "models.json")}, e.g. { \"priority1\": \"anthropic/claude-sonnet\", \"priority2\": \"openai/gpt-5\" } — or open the TUI and use /finisher models`,
 						...(ignored.length ? [`⚠ keys with no meaning here (ignored, delete when you like): ${ignored.join(", ")}`] : []),
 					];
 					ctx.ui.notify(lines.join("\n"), "info");

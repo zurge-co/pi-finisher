@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { finisherDir } from "./types.ts";
+import { STATE_HOME_LABEL } from "./project-dir.ts";
 import { withTimeout } from "./timeout.ts";
 import { MAX_EFFORT } from "./budget.ts";
 
@@ -307,7 +308,7 @@ export const swarmSummaryLine = (results: SwarmResult[]): string => {
 export const SWARM_ROUTING_GUIDELINE = [
 	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call code instead of serialising the work through yourself.",
 	"A fan-out report IS the evidence: act on its findings instead of re-reading what a worker already read or re-running what it already ran, and open a file yourself only when the report names a gap.",
-	"The CODERS run the configured model ladder (priority1..priority5 in .finisher/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.",
+	`The CODERS run the configured model ladder (priority1..priority5 in ${STATE_HOME_LABEL}/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.`,
 	"Never spawn a lone CODER: fewer than two slices is refused, because a CODER is only worth its cost when at least two run side by side. If the work does not split into two independent slices, do the slice yourself instead of calling code.",
 	"While the CODERS run you code your own slice IN THE SAME TURN — your own edits and commands in the same tool block as the fan-out — and you never sit idle waiting for them: main works alongside the coders, then finishes its own slice when their reports come back.",
 	"When a command already proves a case, name that command and never run an equivalent again: a script that already passed is evidence, not work to repeat.",

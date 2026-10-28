@@ -1,9 +1,4 @@
-import { allLapsDone, lapLabel, planOf, totalPhases, type GoalPhase } from "./goal-phase.ts";
-
-export const RACE_LANES = 5;
-export const RACE_LIGHT_ON = "●";
-export const RACE_LIGHT_OFF = "○";
-export const RACE_LIGHT_DNF = "✕";
+import { allLapsDone, planOf, totalPhases, type GoalPhase } from "./goal-phase.ts";
 
 export type RacePhase = "idle" | "plan" | "run" | "verify" | "win" | "dnf";
 
@@ -26,18 +21,13 @@ export interface RaceRun {
 export interface RaceInput {
 	goal?: RaceGoal;
 	runs?: RaceRun[];
-	lanes?: number;
 	now?: number;
 }
 
 export interface Race {
 	phase: RacePhase;
-	caption: string;
 	lap: number;
 	laps: number;
-	lanes: number;
-	busy: number;
-	lights: boolean[];
 	lapClock: string;
 	totalClock: string;
 	done: number;
@@ -54,8 +44,6 @@ export const clockLabel = (ms: number): string => {
 	const sec = String(s % 60).padStart(2, "0");
 	return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 };
-
-const clampLanes = (n: number | undefined): number => Math.min(RACE_LANES, Math.max(1, Math.floor(n ?? RACE_LANES)));
 
 const stamp = (value: number | undefined): number => (typeof value === "number" && value > 0 ? value : 0);
 
@@ -81,12 +69,9 @@ export const pitMs = (goal: RaceGoal | undefined, now: number): number => {
 
 export const raceState = (input: RaceInput): Race => {
 	const now = input.now ?? Date.now();
-	const lanes = clampLanes(input.lanes);
-	const busy = Math.min(lanes, (input.runs ?? []).filter((r) => r.status === "running").length);
-	const lights = Array.from({ length: lanes }, (_, i) => i < busy);
 	const goal = input.goal;
-	const base = { lanes, busy, lights, lap: 0, laps: 0, lapClock: "0:00", totalClock: "0:00", done: 0, pitClock: "0:00", racedMs: racedMs(goal), verifyMs: verifyMs(goal, now), totalMs: 0 };
-	if (!goal) return { ...base, phase: "idle", caption: "READY" };
+	const base = { lap: 0, laps: 0, lapClock: "0:00", totalClock: "0:00", done: 0, pitClock: "0:00", racedMs: racedMs(goal), verifyMs: verifyMs(goal, now), totalMs: 0 };
+	if (!goal) return { ...base, phase: "idle" };
 	const plan = planOf(goal);
 	const laps = totalPhases(plan);
 	const started = stamp(goal.confirmedAt);
@@ -102,13 +87,12 @@ export const raceState = (input: RaceInput): Race => {
 			totalMs,
 			done: won ? laps : Math.max(0, Math.min(laps, plan.lap - 1)),
 			phase: won ? "win" : "dnf",
-			caption: won ? "P1" : `DNF · ${goal.outcome === "halted" ? "halted" : "needs you"}`,
 			totalClock,
 			lapClock: totalClock,
 			pitClock,
 		};
 	}
-	if (!laps) return { ...base, totalMs, phase: "plan", caption: "PLAN", totalClock, lapClock: totalClock, pitClock };
+	if (!laps) return { ...base, totalMs, phase: "plan", totalClock, lapClock: totalClock, pitClock };
 	const lap = Math.min(Math.max(1, plan.lap), laps);
 	const lapStart = Math.max(stamp(plan.lapAt), stamp(plan.phases[lap - 1]?.addedAt));
 	const finished = plan.lap > laps;
@@ -116,7 +100,6 @@ export const raceState = (input: RaceInput): Race => {
 		...base,
 		totalMs,
 		phase: finished ? "verify" : "run",
-		caption: finished ? "VERIFY" : lapLabel(plan),
 		lap: finished ? laps : lap,
 		laps,
 		lapClock: clockLabel(lapStart ? Math.max(0, now - lapStart) : 0),
@@ -126,54 +109,35 @@ export const raceState = (input: RaceInput): Race => {
 	};
 };
 
-export const raceLightsText = (race: Race): string => {
-	if (race.phase === "dnf") return RACE_LIGHT_DNF.repeat(race.lanes);
-	if (race.phase === "win") return RACE_LIGHT_ON.repeat(race.lanes);
-	return race.lights.map((on) => (on ? RACE_LIGHT_ON : RACE_LIGHT_OFF)).join("");
+const STAGE_TOKEN: Record<RacePhase, string | undefined> = {
+	idle: undefined,
+	plan: "borderAccent",
+	run: "warning",
+	verify: "accent",
+	win: "success",
+	dnf: "error",
 };
 
-export const raceLampToken = (race: Race): string => {
-	if (race.phase === "dnf") return "error";
-	if (race.phase === "win") return "success";
-	if (race.phase === "verify") return "borderAccent";
-	if (race.phase === "run") return "accent";
-	return "dim";
-};
+export const IDLE_TOKEN = "dim";
 
-export const raceSegment = (race: Race): string => {
-	if (race.phase === "run" || race.phase === "verify") return `${raceLightsText(race)} ${race.caption} ${race.totalClock}`;
-	if (race.phase === "win") return `${raceLightsText(race)} P1 ${race.totalClock}`;
-	if (race.phase === "dnf") return `${raceLightsText(race)} ${race.caption} ${race.totalClock}`;
-	return `${raceLightsText(race)} ${race.caption}`;
-};
+export const raceStageToken = (race: Race | undefined): string | undefined => (race ? STAGE_TOKEN[race.phase] : undefined);
 
-export const raceLoaderCaption = (race: Race): string => {
-	if (race.phase === "run") return `${race.caption} ${race.lapClock}`;
-	if (race.phase === "verify") return `VERIFY ${race.lapClock}`;
-	if (race.phase === "win") return `P1 ${race.totalClock}`;
-	if (race.phase === "dnf") return `DNF ${race.totalClock}`;
-	return `${race.caption} ${race.totalClock}`;
-};
+export const raceStagePaint = (race: Race | undefined): string => raceStageToken(race) ?? IDLE_TOKEN;
 
-export const raceLoaderFrames = (race: Race, fg: (token: string, text: string) => string): { frames: string[]; intervalMs?: number } => {
-	const token = raceLampToken(race);
-	const lit = (on: boolean): string => fg(on ? token : "dim", on ? RACE_LIGHT_ON : RACE_LIGHT_OFF);
-	if (race.phase === "dnf") return { frames: [fg("error", RACE_LIGHT_DNF.repeat(race.lanes))] };
-	if (race.phase === "win") return { frames: [fg("success", RACE_LIGHT_ON.repeat(race.lanes))] };
-	const steady = race.lights.map(lit).join("");
-	if (race.phase === "idle" || race.phase === "plan") return { frames: [steady] };
-	const pulseAt = race.lights.findIndex((on) => !on);
-	if (pulseAt < 0) return { frames: [steady], intervalMs: 900 };
-	const pulse = race.lights.map((on, i) => (i === pulseAt ? fg(token, RACE_LIGHT_ON) : lit(on))).join("");
-	return { frames: [steady, pulse], intervalMs: 520 };
-};
+export const raceSegment = (race: Race): string => (race.phase === "idle" ? "" : race.totalClock);
 
-export const raceLoaderMessage = (race: Race): string => ` ${raceLoaderCaption(race)}`;
+export const raceLoaderFrames = (race: Race, fg: (token: string, text: string) => string): { frames: string[] } => {
+	const token = raceStageToken(race);
+	if (!token) return { frames: [] };
+	return { frames: [fg(token, race.totalClock)] };
+};
 
 export const raceIdleLine = (race: Race, mark: string, name = "", tally = ""): string => {
 	const tail = tally ? ` · ${tally}` : "";
-	if (race.phase === "win") return `${mark} ${raceSegment(race)} · ${race.laps} laps · pit ${race.pitClock}${tail}`;
-	if (race.phase === "dnf") return `${mark} ${raceSegment(race)} · ${race.done}/${race.laps || "?"} laps · pit ${race.pitClock}`;
-	const head = name ? `${mark} ${name} · ` : `${mark} `;
-	return `${head}${raceSegment(race)}`;
+	const head = name ? `${mark} ${name}` : mark;
+	const clock = raceSegment(race);
+	const lead = clock ? `${head} ${clock}` : head;
+	if (race.phase === "win") return `${lead} · ${race.laps} laps · pit ${race.pitClock}${tail}`;
+	if (race.phase === "dnf") return `${lead} · ${race.done}/${race.laps || "?"} laps · pit ${race.pitClock}`;
+	return lead;
 };

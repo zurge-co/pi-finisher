@@ -1,3 +1,5 @@
+import { STATE_HOME_LABEL } from "./project-dir.ts";
+
 export const SWARM_TOOL = "code";
 
 export interface BudgetInput {
@@ -24,7 +26,7 @@ export const budgetNote = (input: BudgetInput): string | undefined => {
 	if (budgetFits(input)) return undefined;
 	const need = Math.round(swarmWallMs(input) / 1000);
 	const have = Math.round(input.toolCapMs / 1000);
-	return `⚠ budget: this fan-out can take up to ${need}s (${input.attempts} attempt(s) × ${Math.round(input.subagentMs / 1000)}s × ${input.waves} wave(s)) but the tool cap is ${have}s — lower maxAttempts, raise toolTimeoutMs in .finisher/config.json, or widen swarmConcurrency`;
+	return `⚠ budget: this fan-out can take up to ${need}s (${input.attempts} attempt(s) × ${Math.round(input.subagentMs / 1000)}s × ${input.waves} wave(s)) but the tool cap is ${have}s — lower maxAttempts, raise toolTimeoutMs in ${STATE_HOME_LABEL}/config.json, or widen swarmConcurrency`;
 };
 
 export const MAX_EFFORT = 5;

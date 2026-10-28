@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { STATE_HOME_LABEL } from "./project-dir.ts";
 
 export interface SuiteSize {
 	files: number;
@@ -80,14 +81,14 @@ export const suiteBudget = (baseline: SuiteSize | undefined, now: SuiteSize): { 
 	return {
 		ok: false,
 		over,
-		note: `the test suite is at its ceiling (${ceiling.files} files, ${ceiling.cases} cases): proof belongs in the check file at .finisher/checks, not in another test`,
+		note: `the test suite is at its ceiling (${ceiling.files} files, ${ceiling.cases} cases): proof belongs in the check file at ${STATE_HOME_LABEL}/checks, not in another test`,
 	};
 };
 
 export const suiteRefusal = (baseline: SuiteSize | undefined, now: SuiteSize, target: string): string | undefined => {
 	const budget = suiteBudget(baseline, now);
 	if (budget.ok) return undefined;
-	return `⚠ ${target}: the test-suite growth ceiling is reached (${budget.over.join(" and ")} over) — ${budget.note}; record PASS/FAIL for each case in .finisher/checks instead`;
+	return `⚠ ${target}: the test-suite growth ceiling is reached (${budget.over.join(" and ")} over) — ${budget.note}; record PASS/FAIL for each case in ${STATE_HOME_LABEL}/checks instead`;
 };
 
 export const suiteWriteGate = (baseline: SuiteSize | undefined, root: string, target: string, exists: boolean): string | undefined => {

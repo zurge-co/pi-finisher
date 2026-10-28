@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+	createLogReader,
+	LOG_WAIT_LINE,
 	orderedSessionRuns,
 	recordSteerOnRun,
 	runningRunFor,
@@ -188,4 +190,45 @@ test("the tab strip keeps the page you are on, and never skips one between the f
 	}
 	const eight = Array.from({ length: 8 }, (_, i) => run("coder", { at: i + 1, slotId: `s${i}` }));
 	assert.equal([...sessionTabs(eight, 3, 200).matchAll(/(?:^|[^\d])(\d+):/g)].length, 8, "a wide page lists every agent");
+});
+
+test("one frame stats a log once and reads it once, whatever the page asks it for", () => {
+	const stats = [];
+	const reads = [];
+	let size = 10;
+	const reader = createLogReader({
+		stat: (path) => {
+			stats.push(path);
+			return { size, mtimeMs: 5 };
+		},
+		read: (path) => {
+			reads.push(path);
+			return [`line for ${path}`];
+		},
+	});
+	const target = { logPath: "/repo/a.log" };
+	const first = reader(target);
+	assert.deepEqual(first, ["line for /repo/a.log"]);
+	reader.beginFrame();
+	for (let i = 0; i < 6; i++) {
+		assert.deepEqual(reader(target), first, "the body, the key line and the footer all see the same lines");
+		assert.equal(reader.logKeyOf(target), "/repo/a.log@10:5");
+	}
+	assert.equal(reads.length, 1, "an unchanged log is read exactly once, not once per widget that asks");
+	assert.equal(stats.length, 2, "one stat per frame: the frame reads the file's identity, not the file");
+
+	reader.beginFrame();
+	size = 11;
+	assert.equal(reader.logKeyOf(target), "/repo/a.log@11:5", "the key carries the size, so a grow is visible");
+	assert.deepEqual(reader(target), ["line for /repo/a.log"], "a grown log is re-read");
+	assert.equal(reads.length, 2);
+
+	reader.beginFrame();
+	assert.deepEqual(reader({}), [LOG_WAIT_LINE], "no log yet is a notice, not a read");
+	assert.equal(reader.logKeyOf({}), "none");
+	reader.invalidate();
+	reader.beginFrame();
+	reader(target);
+	assert.equal(reads.length, 3, "invalidate drops the cache so the next frame reads again");
+	assert.equal(stats.length, 4, "an explicit invalidate is not a frame of its own");
 });

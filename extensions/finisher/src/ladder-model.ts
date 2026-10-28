@@ -1,4 +1,5 @@
 import { readModelLadder, swarmSlots } from "./swarm.ts";
+import { STATE_HOME_LABEL } from "./project-dir.ts";
 
 export const LADDER_PROVIDER = "finisher";
 export const LADDER_MODEL_ID = "auto";
@@ -58,7 +59,7 @@ export const buildVirtualModelDefinition = (opts: {
 			const fallback = request.previous?.model;
 			const physical = fallback ? opts.findModel(fallback.provider ?? "", fallback.id ?? "") : undefined;
 			if (physical) return { model: physical, thinkingLevel: "medium" };
-			throw new Error("finisher ladder: .finisher/models.json has no priority1..priority5 — set one pattern like \"provider/model\"");
+			throw new Error(`finisher ladder: ${STATE_HOME_LABEL}/models.json has no priority1..priority5 — set one pattern like \"provider/model\"`);
 		}
 		const parts = splitPattern(pick.pattern);
 		const physical = parts ? opts.findModel(parts.provider, parts.id) : undefined;
@@ -95,7 +96,7 @@ export const registerLadderModel = (opts: RegisterLadderOpts): boolean => {
 			const fallback = request.previous?.model ? find(request.previous.model.provider ?? "", request.previous.model.id ?? "") : undefined;
 			if (!pick) {
 				if (fallback) return { model: fallback, thinkingLevel: "medium" };
-				throw new Error("finisher ladder: .finisher/models.json has no priority1..priority5 — set one pattern like \"provider/model\"");
+				throw new Error(`finisher ladder: ${STATE_HOME_LABEL}/models.json has no priority1..priority5 — set one pattern like \"provider/model\"`);
 			}
 			const parts = splitPattern(pick.pattern);
 			const physical = parts ? find(parts.provider, parts.id) : undefined;

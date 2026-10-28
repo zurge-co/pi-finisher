@@ -62,6 +62,8 @@ test("a human who does not read Thai is never handed Thai: every system note fal
 		consultNote: (lang) => m.consultNote(lang),
 		noGoalNeededNote: (lang) => m.noGoalNeededNote("verify", lang),
 		goalConsultNote: (lang) => m.goalConsultNote(lang),
+		codeConsultNote: (lang) => m.codeConsultNote(lang),
+		decideGoalNote: (lang) => m.decideGoalNote(lang),
 		consultDirective: (lang) => m.consultDirective("why is it slow", lang),
 		intakeDirective: (lang) => m.intakeDirective("ship the report page", lang, "work"),
 		legacyNote: (lang) => m.legacyNote(["finisher_goal"], lang),

@@ -141,9 +141,9 @@ test("an unproven case that only lacked a command becomes a fix lap, not a human
 	assert.ok(step.state.phases[0].text.startsWith("c1 — "), "the fix lap names the case first, so it can be claimed back verbatim");
 });
 
-test("a human check is reported apart and never counted as a failure", () => {
-	const passing = judgeDeterministic(["c1"], new Map([["c1", "npm test -- lap"]]), [{ command: "npm test -- lap", ok: true }], []);
-	const human = judgeDeterministic(["c2"], new Map(), [], [], undefined, new Map([["c2", "look at the top border"]]));
+test("a human check is reported apart and never counted as a failure", async () => {
+	const passing = await judgeDeterministic(["c1"], new Map([["c1", "npm test -- lap"]]), [{ command: "npm test -- lap", ok: true }], []);
+	const human = await judgeDeterministic(["c2"], new Map(), [], [], undefined, new Map([["c2", "look at the top border"]]));
 	assert.equal(human[0].result, "HUMAN");
 	const report = buildReport([...passing, ...human]);
 	assert.deepEqual(report.humanChecks, ["c2"]);
