@@ -16,6 +16,7 @@ import {
 	themeOf,
 	globalFinisherDir,
 } from "../extensions/finisher/index.ts";
+import { testFinisherHome } from "./helpers/finisher-home.mjs";
 
 const gap = (extra = {}) =>
 	gapRecord({
@@ -31,10 +32,10 @@ const gap = (extra = {}) =>
 	});
 
 test("the journal lives in the global home, not in the repo, and one record is one JSON line", () => {
-	const home = mkdtempSync(join(tmpdir(), "finisher-home-"));
-	assert.equal(globalFinisherDir(home), join(home, ".pi", "finisher"));
-	assert.equal(journalPath(home), join(home, ".pi", "finisher", "laps.jsonl"));
-	const path = journalPath(home);
+	const home = testFinisherHome();
+	assert.equal(globalFinisherDir(), home, "the journal sits at the root of the one finisher home");
+	assert.equal(journalPath(), join(home, "laps.jsonl"));
+	const path = journalPath();
 	assert.equal(appendRecord(path, gap()), true);
 	assert.equal(appendRecord(path, doneRecord({ repo: "/repo/one", goal: "ship the race HUD", rounds: 2, laps: 6, outcome: "verified" })), true);
 	const lines = readFileSync(path, "utf8").trim().split("\n");
@@ -44,7 +45,13 @@ test("the journal lives in the global home, not in the repo, and one record is o
 	assert.deepEqual(back[0].models, ["p/m"], "the model list is deduped");
 	assert.equal(back[1].outcome, "verified");
 	assert.deepEqual(readJournal(home).length, 2, "reading the home journal finds them");
-	assert.deepEqual(readJournal(mkdtempSync(join(tmpdir(), "finisher-empty-"))), [], "no journal is an empty history, not a crash");
+	const before = process.env.FINISHER_HOME;
+	try {
+		process.env.FINISHER_HOME = mkdtempSync(join(tmpdir(), "finisher-empty-"));
+		assert.deepEqual(readJournal(), [], "a home with no journal is an empty history, not a crash");
+	} finally {
+		process.env.FINISHER_HOME = before;
+	}
 });
 
 test("a record is bounded and carries no file contents, so the journal stays small and safe to share", () => {

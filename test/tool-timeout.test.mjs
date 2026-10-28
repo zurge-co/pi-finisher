@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -24,8 +25,7 @@ const here = new URL("..", import.meta.url).pathname;
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-timeout-"));
 
 const writeCfg = (cwd, cfg) => {
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify(cfg));
+	writeState(cwd, "config.json", JSON.stringify(cfg));
 };
 
 test("a bash call that carries no timeout gets one injected — the hole that let a command run forever", () => {
@@ -79,8 +79,7 @@ test("the budget is configurable, and a broken config still yields a safe defaul
 		writeCfg(cwd, junk);
 		assert.equal(readToolTimeout(cwd, "bash"), DEFAULT_TOOL_TIMEOUT_MS, `junk ${JSON.stringify(junk)} must fall back`);
 	}
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", "config.json"), "{not json");
+	writeState(cwd, "config.json", "{not json");
 	assert.equal(readToolTimeout(cwd, "bash"), DEFAULT_TOOL_TIMEOUT_MS, "a corrupt file must not break a tool call");
 });
 

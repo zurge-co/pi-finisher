@@ -1,3 +1,4 @@
+import { stateFile, writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -21,8 +22,7 @@ import { tmpdir } from "node:os";
 
 const repo = (cfg) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-ladder-"));
-	mkdirSync(join(dir, ".finisher"), { recursive: true });
-	if (cfg !== undefined) writeFileSync(join(dir, ".finisher", "models.json"), JSON.stringify(cfg));
+	if (cfg !== undefined) writeState(dir, "models.json", JSON.stringify(cfg));
 	return dir;
 };
 
@@ -105,7 +105,7 @@ test("/finisher models writes ladder keys, never a role key, and clearing one re
 	assert.deepEqual(readLadderSlots(dir).filter((s) => s.pattern).map((s) => s.pattern), ["a/one", "b/two"]);
 	writeLadderSlot(dir, "priority2", null);
 	assert.deepEqual(readLadderSlots(dir).filter((s) => s.pattern).map((s) => s.pattern), ["a/one"], "the ladder always shows all five rungs, so the cleared one is an empty rung");
-	const raw = JSON.parse(readFileSync(join(dir, ".finisher", "models.json"), "utf8"));
+	const raw = JSON.parse(readFileSync(stateFile(dir, "models.json"), "utf8"));
 	assert.equal(raw.priority1, "a/one");
 	assert.ok(!("priority2" in raw), "a cleared rung is removed, not written as empty");
 	assert.equal(raw.swarm, "b/two", "an ignored key is left alone rather than silently rewritten");
@@ -114,7 +114,7 @@ test("/finisher models writes ladder keys, never a role key, and clearing one re
 test("the rung picker is never empty: every config shape still offers all five rungs", () => {
 	for (const cfg of [undefined, {}, { swarm: "b/two" }, { priority: [] }, { priority: ["a/one"] }, { priority1: "a/one" }, "{ not json"]) {
 		const dir = repo(undefined);
-		if (cfg !== undefined) writeFileSync(join(dir, ".finisher", "models.json"), typeof cfg === "string" ? cfg : JSON.stringify(cfg));
+		if (cfg !== undefined) writeState(dir, "models.json", typeof cfg === "string" ? cfg : JSON.stringify(cfg));
 		assert.deepEqual(readLadderSlots(dir).map((s) => s.key), ["priority1", "priority2", "priority3", "priority4", "priority5"], `config ${JSON.stringify(cfg)} must still offer every rung`);
 	}
 });
@@ -124,7 +124,7 @@ test("a legacy priority array is read and migrated on the next write, so no rung
 	assert.deepEqual(readLadderSlots(dir).filter((s) => s.pattern).map((s) => s.pattern), ["a/one", "b/two"]);
 	assert.equal(resolveSubagentModel(dir).pattern, "a/one");
 	writeLadderSlot(dir, "priority3", "c/three");
-	const raw = JSON.parse(readFileSync(join(dir, ".finisher", "models.json"), "utf8"));
+	const raw = JSON.parse(readFileSync(stateFile(dir, "models.json"), "utf8"));
 	assert.ok(!("priority" in raw), "the old array is folded into rungs");
 	assert.deepEqual(readLadderSlots(dir).filter((s) => s.pattern).map((s) => s.pattern), ["a/one", "b/two", "c/three"]);
 });

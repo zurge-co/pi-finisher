@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { finisherDir } from "./helpers/finisher-home.mjs";
 import { declarePlan, completeLap } from "../extensions/finisher/index.ts";
-import { trackerPath, readLapTracker } from "../extensions/finisher/index.ts";
+import { sessionDirKey, trackerPath, readLapTracker } from "../extensions/finisher/index.ts";
 
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-lap-hooks-"));
 
@@ -76,8 +77,8 @@ test("the turn_end hook writes the tracker while a lap is open, and deletes it t
 	assert.ok(written, "an open goal must leave a tracker on disk for the next lap to read");
 	assert.equal(written.lap, 1);
 	assert.equal(written.current.text, "read the parser");
-	assert.equal(trackerPath(cwd, "sess-hooks").endsWith(".finisher/sess-hooks/tracker.jsonl"), false, "the session name alone never names the directory");
-	assert.match(trackerPath(cwd, "sess-hooks"), /\.finisher\/sess-hooks-[0-9a-f]{8}\/tracker\.jsonl$/);
+	assert.equal(trackerPath(cwd, "sess-hooks"), join(finisherDir(cwd), sessionDirKey("sess-hooks"), "tracker.jsonl"), "the tracker lives under the project state dir, in a keyed session dir");
+	assert.ok(sessionDirKey("sess-hooks").startsWith("sess-hooks-"), "the session name alone never names the directory");
 
 	const closed = session(cwd, { ...BASE, goalDriver: { goal: "ship it", confirmedAt: 1_000, attempts: { rounds: 1 }, doneAt: 9_000, outcome: "verified" } });
 	await fire(hooks, "session_start", {}, closed);

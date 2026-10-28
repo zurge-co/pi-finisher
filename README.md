@@ -21,9 +21,9 @@ status it really got, and a case is proven only by the command you named for it.
 deterministic first — the repo's own `typecheck`, `lint` and `test` scripts run before any case is
 judged, scoped to the paths they own, in parallel, and cached by change set; a real failure fails
 every case immediately, while a check that cannot run here or was cut by its deadline is reported as
-`SKIP` and never fakes a failure. Each case's outcome lands in `.finisher/checks`, one line per case.
-Every extra lap is journaled to `~/.pi/finisher/laps.jsonl`; `/finisher gaps` ranks what was
-missing most often, so the plan can be made better instead of guessed.
+`SKIP` and never fakes a failure. Each case's outcome lands in `~/.pi/finisher/<project>/checks`, one
+line per case. Every extra lap is journaled to `~/.pi/finisher/laps.jsonl`; `/finisher gaps` ranks what
+was missing most often, so the plan can be made better instead of guessed.
 
 - **No gates.** No spec signing, no ADR approval, no review packet, no gate switch — nothing to
   click between the goal and the result.
@@ -35,9 +35,10 @@ missing most often, so the plan can be made better instead of guessed.
   text is ever truncated there — with the lap position and the total goal clock on its header.
 - **No budget ceiling.** The run spends what the goal needs; it stops on *evidence*, not on cost.
 - **Nobody answers, nothing starts.** Every goal dialog has a deadline
-  (`confirmTimeoutMs` in `.finisher/config.json`, `FINISHER_CONFIRM_TIMEOUT_MS`, default 120s, `0` = wait
-  forever). A timeout is a refusal: the run stops, complains once, and refuses any further `goal`
-  until the human writes again — it never starts on a guess and never re-opens the dialog by itself.
+  (`confirmTimeoutMs` in `~/.pi/finisher/<project>/config.json`, `FINISHER_CONFIRM_TIMEOUT_MS`, default
+  120s, `0` = wait forever). A timeout is a refusal: the run stops, complains once, and refuses any
+  further `goal` until the human writes again — it never starts on a guess and never re-opens the
+  dialog by itself.
 - **The goal is the human's.** A goal and its case list can only change through the confirm dialog:
   the same goal with the same cases resumes silently, a new case list re-opens the dialog, and a
   declined or unavailable dialog leaves the confirmed goal byte-identical. A verify run can never
@@ -48,8 +49,13 @@ missing most often, so the plan can be made better instead of guessed.
   same confirm dialog opens. One round per goal, never a question that reading the code would answer.
 - **Evidence or it did not happen.** A case with no executed command is `UNVERIFIED`, never `PASS`.
   The loop is bounded: identical evidence stops it, rounds are counted.
-- **Five models in parallel.** `priority1..priority5` in `.finisher/models.json` are the slots; the
-  harness uses as many as you set, all at the same time.
+- **Five models in parallel.** `priority1..priority5` in `~/.pi/finisher/<project>/models.json` are the
+  slots; the harness uses as many as you set, all at the same time.
+- **Your repo stays clean.** Every piece of run state — the ladder, the config, the evidence, the
+  report, the lap trackers and the per-slice worktrees — lives in `~/.pi/finisher/<project>/`, one
+  directory per workspace, so nothing is written into the project and `git status` shows only the work
+  itself. `FINISHER_HOME` moves the whole home; an old in-repo `.finisher/` is not migrated and is
+  simply ignored.
 
 ## Install
 
@@ -107,7 +113,7 @@ and long lines are wrapped between graphemes so a Thai or Devanagari mark is nev
 | `goal` | Asks the human to confirm the goal and its cases once, then the driver owns the run: rounds, evidence, fix-or-stop, and one report at the end. `lang` + `chrome` + `clarifyChrome` make both the dialog and the clarify round the human's language. |
 | `steer` | Push a finding into a sub-agent that is still running — steer or follow-up, no restart. |
 | `code` | **coders only**: one git worktree + branch per slice, merged back in dependency order, overlapping declared files never merged silently. Every slice names the `files` it owns and the `depends_on` slices it waits for. |
-| `verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts through a scoped, parallel, cached plan, then judges each case from the commands the harness recorded, and writes one `PASS`/`FAIL` line per case to `.finisher/checks`. No sub-agent is spawned to grade your work. |
+| `verify` | **main verifies itself**: it runs the repo's `typecheck`/`lint`/`test` scripts through a scoped, parallel, cached plan, then judges each case from the commands the harness recorded, and writes one `PASS`/`FAIL` line per case to `~/.pi/finisher/<project>/checks`. No sub-agent is spawned to grade your work. |
 
 Explore and planning are yours alone: read the files yourself and decide the slices, the files each
 one owns and the interface they share (`shared_contract`). A plan that overlaps files, names an
@@ -169,7 +175,7 @@ A plan longer than the terminal pages instead of clipping: no lap text is ever c
 ### The report page
 
 The moment a goal closes, `verify` writes the report it just gave you to
-**`.finisher/report.md`** — the result first, then the goal, the lap count, the round, when it was written,
+**`~/.pi/finisher/<project>/report.md`** — the result first, then the goal, the lap count, the round, when it was written,
 and every case with the command that proved it. The HUD always advertises it: a `📄 report` row while a
 closed goal is still boxed, and a tail on the idle line otherwise.
 
@@ -200,7 +206,7 @@ looking at:
 ```
 ▚ sub-agent session — 2/3 · VERIFIER · ▶ 12s · provider/c · c2 · 1 steer
 ▚ pages 1:CODER s1 provider/a ▶ · [2:VERIFIER c2 provider/c ▶] · 3:CODER s3 ✓
-.finisher/subagents/…-verifier.log • live — closing this page never interrupts the run
+~/.pi/finisher/<project>/subagents/…-verifier.log • live — closing this page never interrupts the run
   ▸ task — what this agent was told
     prove case c1: the scheduler bound holds for every input
   ▸ steered (1) — what was pushed in while it ran
@@ -264,7 +270,7 @@ Install it and the fast path is already on — no key, no flag, no dialog:
   toolchain (`infra`) or a check cut off by its deadline (`deadline`) is reported as `SKIP` and never
   fails a case.
 - **The evidence is a check file, not a new test.** Every case's result is recorded in
-  `.finisher/checks/checks.jsonl` — `PASS` / `FAIL` / `SKIP` / `UNVERIFIED` per case, newest record
+  `~/.pi/finisher/<project>/checks/checks.jsonl` — `PASS` / `FAIL` / `SKIP` / `UNVERIFIED` per case, newest record
   wins — so proving a goal never means growing the repo's test suite.
 - **The suite has a growth ceiling.** A baseline is taken when the goal starts: one more test file and
   a few more cases at most. Past that, a new test file is refused and the evidence goes to the check
@@ -275,7 +281,7 @@ Install it and the fast path is already on — no key, no flag, no dialog:
 
 ## Configuration
 
-`.finisher/models.json` — the priority ladder. Rung 1 is what a sub-agent runs; later rungs are
+`~/.pi/finisher/<project>/models.json` — the priority ladder. Rung 1 is what a sub-agent runs; later rungs are
 failover, and a gap is skipped:
 
 ```json
@@ -286,7 +292,7 @@ An explicit slot model (a coder slot) outranks the ladder; with no ladder at all
 back to the main session model. A leftover per-role key (`swarm`, `coder`, …) never selects a model any
 more — it is reported as ignored.
 
-`.finisher/config.json`
+`~/.pi/finisher/<project>/config.json`
 
 ```json
 { "swarmConcurrency": 5, "subagentTimeoutMs": { "default": 1200000 }, "freshContext": true }
@@ -307,7 +313,7 @@ stages:
    never a failure of the case.
 2. **evidence** — each case must name the command that exercises it. A case whose command the
    harness never watched succeed is `UNVERIFIED`, never `PASS`. A green suite alone proves nothing.
-   Every result is recorded in `.finisher/checks/checks.jsonl`, one line per case.
+   Every result is recorded in `~/.pi/finisher/<project>/checks/checks.jsonl`, one line per case.
 
 | outcome | what happens |
 |---|---|
@@ -329,17 +335,17 @@ Asking a question, getting an answer, or any other reply is never a boundary eit
 What a lap compaction carries is **not** a transcript or a statistic — it is the lap tracker: the
 goal, the confirmed cases, every lap with its mark and its own spent time, and the latest status of
 each recorded command. It is appended as one JSON line per turn to
-`.finisher/<sessionId>/tracker.jsonl` while the goal is open (the newest line wins, and the file is
-pruned to `TRACKER_RECORDS_MAX` lines and the newest 8 sessions),
-removed the moment the goal closes, and appended as a hidden tracker message so the fresh context
-still knows where the goal stands. Two sessions on the same repo never share a tracker: each reads
-its own file per turn, so a session whose context was cleared resumes the lap from disk instead of
-guessing it, and the newest 8 trackers are the ones kept.
+`~/.pi/finisher/<project>/<sessionId>/tracker.jsonl` while the goal is open (the newest line wins, and
+the file is pruned to `TRACKER_RECORDS_MAX` lines and the newest 8 sessions), removed the moment the
+goal closes, and appended as a hidden tracker message so the fresh context still knows where the goal
+stands. Two sessions on the same repo never share a tracker: each reads its own file per turn, so a
+session whose context was cleared resumes the lap from disk instead of guessing it, and the newest 8
+trackers are the ones kept.
 
 The reset is bounded by design: once per lap, never twice for the same lap, never for a plan that has
 just closed its last lap (it hands straight over to verify), and never while a `halted`/`needs-human`
-report is still unread. `{"freshContext": false}` in `.finisher/config.json` turns the lap reset off;
-with it off the context simply keeps growing, and goal close stays untouched either way.
+report is still unread. `{"freshContext": false}` in `~/.pi/finisher/<project>/config.json` turns the
+lap reset off; with it off the context simply keeps growing, and goal close stays untouched either way.
 
 The handoff stack is **parked** (`HANDOFF_ENABLED = false`): nothing is classified into it, no handoff
 model is called, and it injects nothing. Sub-agents still run under `RpcClient`, so a finding can be
@@ -369,7 +375,8 @@ assumption: yes, keyed by tenant id
 ```
 
 The worker continues with that assumption, the harness collects every declaration, and the single
-report at the end lists them (`decisions made without asking you`) plus `.finisher/decisions.md`.
+report at the end lists them (`decisions made without asking you`) plus
+`~/.pi/finisher/<project>/decisions.md`.
 
 ## Choosing the handoff model
 
@@ -403,7 +410,7 @@ whenever one is missing or invalid.
 
 | call | bound |
 |---|---|
-| `bash` | injected if absent (default 900 s, override with `toolTimeoutMs` in `.finisher/config.json`) |
+| `bash` | injected if absent (default 900 s, override with `toolTimeoutMs` in `~/.pi/finisher/<project>/config.json`) |
 | `goal` / `code` / `steer` | wrapped, reports `⏱ … exceeded its Ns limit` instead of hanging |
 | every RPC call to a sub-agent (`start`, `promptAndWait`, `steer`, `getMessages`, …) | its own deadline |
 | every `git` subprocess | 120 s, `SIGKILL` on expiry |
@@ -434,7 +441,12 @@ pi-finisher/
 └── themes/                          # finisher dark theme (violet / cyan / mint on graphite)
 ```
 
-A run's own state lives in `.finisher/`: `checks/checks.jsonl` (the evidence), `report.md` (the
-report), `sessions/` (one lap tracker per session) and `models.json` (the ladder).
+A run's own state lives **outside the repo**, in `~/.pi/finisher/<project>/`, one directory per
+workspace: `checks/checks.jsonl` (the evidence), `report.md` (the report), `models.json` (the ladder),
+`config.json`, `decisions.md`, `subagents/` (one log per sub-agent), `<sessionId>/tracker.jsonl` (one
+lap tracker per session) and `worktree/` (the per-slice worktrees `code` gives each coder). `<project>`
+is derived from the workspace's absolute path, so two checkouts never share state and nothing is ever
+written into the project itself. `FINISHER_HOME` moves the whole home (`~/.pi/finisher` by default);
+state an earlier version wrote into a repo's `.finisher/` is not migrated and simply ignored.
 
 Theme (optional): `/settings` → theme → `finisher`.

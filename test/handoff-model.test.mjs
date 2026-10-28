@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -18,8 +19,7 @@ import { ladderPatterns } from "../extensions/finisher/index.ts";
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-handoff-model-"));
 
 const writeJson = (cwd, file, cfg) => {
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", file), JSON.stringify(cfg));
+	writeState(cwd, file, cfg);
 };
 
 test("the handoff slot is read from models.json first, then config.json", () => {
@@ -40,8 +40,7 @@ test("a malformed handoff value is ignored instead of crashing the run", () => {
 	assert.equal(readHandoffModel(cwd), undefined);
 	writeJson(cwd, "models.json", { handoff: 42 });
 	assert.equal(readHandoffModel(cwd), undefined);
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", "models.json"), "{not json");
+	writeState(cwd, "models.json", "{not json");
 	assert.equal(readHandoffModel(cwd), undefined, "a corrupt file must not break a sub-agent run");
 });
 

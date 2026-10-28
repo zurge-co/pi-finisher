@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -72,8 +73,7 @@ test("the fan-out says where its concurrency came from, so the ladder size is ne
 	const { tmpdir } = await import("node:os");
 	const repo = (cfg) => {
 		const dir = mkdtempSync(join(tmpdir(), "finisher-conc-"));
-		mkdirSync(join(dir, ".finisher"), { recursive: true });
-		if (cfg) writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(cfg));
+		if (cfg) writeState(dir, "config.json", JSON.stringify(cfg));
 		return dir;
 	};
 	const unset = repo(undefined);

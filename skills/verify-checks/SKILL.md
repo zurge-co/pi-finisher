@@ -1,6 +1,6 @@
 ---
 name: verify-checks
-description: Prove a confirmed goal's cases with scoped, parallel, cached checks and the .finisher/checks check file instead of adding tests. Use before calling verify, and whenever a case needs evidence.
+description: Prove a confirmed goal's cases with scoped, parallel, cached checks and the state home's check file instead of adding tests. Use before calling verify, and whenever a case needs evidence.
 ---
 
 # Verify with checks, not with more tests
@@ -28,7 +28,8 @@ really ran and really failed is `FAIL` — that one fails every case immediately
 
 ## The check file is the evidence
 
-Evidence lives in `.finisher/checks/checks.jsonl`, one JSON record per line: the case, the status,
+Evidence lives in `~/.pi/finisher/<project>/checks/checks.jsonl` — the state home, never the repo —
+with one JSON record per line: the case, the status,
 the command, the time. Per case the newest record wins, and a case with no record is `UNVERIFIED`,
 never `PASS`. The human-readable view is one line per case:
 

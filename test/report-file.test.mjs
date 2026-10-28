@@ -1,3 +1,4 @@
+import { finisherDir, writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -14,9 +15,9 @@ test("a written report always leads with its result and never grows past its byt
 	for (const body of bodies) {
 		const cwd = freshCwd();
 		const meta = writeReportFile(cwd, input(body));
-		assert.ok(meta, "a fresh cwd with no .finisher still gets its report");
-		assert.equal(meta.path, reportPath(cwd), "the report lands at .finisher/report.md");
-		assert.ok(existsSync(join(cwd, ".finisher")), "the directory is created, not required to exist");
+		assert.ok(meta, "a fresh cwd with no state dir still gets its report");
+		assert.equal(meta.path, reportPath(cwd), "the report lands in the state dir");
+		assert.ok(existsSync(finisherDir(cwd)), "the directory is created, not required to exist");
 		const text = readReportFile(meta.path);
 		assert.equal(meta.bytes, statSync(meta.path).size, "the byte count is the file on disk");
 		assert.ok(Buffer.byteLength(text, "utf8") <= REPORT_MAX_BYTES, `a body of ${body.length} chars still fits the ceiling`);
@@ -55,7 +56,7 @@ test("the report on disk is the source of truth: no meta still shows it, and a s
 	assert.deepEqual(currentReport(cwd, meta), liveReport(meta), "a live meta and the disk answer the same");
 	rmSync(meta.path);
 	assert.equal(currentReport(cwd, meta), undefined, "a stale meta is not a report once the file is gone");
-	writeFileSync(join(cwd, ".finisher", "report.md"), "# some other file\n");
+	writeState(cwd, "report.md", "# some other file\n");
 	assert.equal(currentReport(cwd), undefined, "a file that is not a finisher report advertises nothing");
 	rmSync(cwd, { recursive: true, force: true });
 });

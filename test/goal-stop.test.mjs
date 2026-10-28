@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -18,8 +19,7 @@ const BASE = { phase: "requirements", turnsUsed: 0, tokensUsed: 0, escalations: 
 
 const tmpRepo = (config) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-goal-stop-"));
-	mkdirSync(join(dir, ".finisher"), { recursive: true });
-	if (config) writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(config));
+	if (config) writeState(dir, "config.json", JSON.stringify(config));
 	return dir;
 };
 

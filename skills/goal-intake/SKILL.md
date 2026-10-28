@@ -14,7 +14,7 @@ instead of a guess.
 
 The turn itself is yours to classify. A message that asks something is a conversation: answer it, and
 no dialog opens. A message that orders work is a run: `goal` with `start: true`. Only an explicit
-`consultMode: always` in `.finisher/config.json` takes that decision away from you.
+`consultMode: always` in `~/.pi/finisher/<project>/config.json` takes that decision away from you.
 
 Nothing else has to be configured. It is on from install, in every session.
 

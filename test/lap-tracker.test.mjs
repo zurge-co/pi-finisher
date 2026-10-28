@@ -1,3 +1,4 @@
+import { finisherDir } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
@@ -128,8 +129,8 @@ test("a session id never escapes the tracker directory, whatever the id looks li
 	const goal = goalWith(declarePlan(["a"], 0));
 	for (const id of ["../../etc/passwd", "/abs/path", "a b\tc", "..", "", "ÜNICODE-Σ".repeat(40)]) {
 		const path = trackerPath(cwd, id);
-		assert.ok(path.startsWith(`${cwd}/.finisher/`), `${JSON.stringify(id)} stays under the state dir: ${path}`);
-		assert.equal(path, `${cwd}/.finisher/${sessionDirKey(id)}/tracker.jsonl`, `${JSON.stringify(id)} lives in its own session directory`);
+		assert.ok(path.startsWith(`${finisherDir(cwd)}/`), `${JSON.stringify(id)} stays under the state dir: ${path}`);
+		assert.equal(path, join(finisherDir(cwd), sessionDirKey(id), "tracker.jsonl"), `${JSON.stringify(id)} lives in its own session directory`);
 		assert.equal(path.split("/").filter((p) => p === "..").length, 0, `${JSON.stringify(id)} never climbs out`);
 		writeLapTracker(cwd, id, goal, [], 1_000);
 		assert.equal(readLapTracker(cwd, id).goal, "ship the parser", `${JSON.stringify(id)} round-trips`);
@@ -178,7 +179,7 @@ test("the tracker directory is pruned to the newest sessions, so a long-lived re
 	const cwd = tmpRepo();
 	const goal = goalWith(declarePlan(["a"], 0));
 	for (let i = 0; i < TRACKER_SESSIONS_MAX + 6; i++) writeLapTracker(cwd, `sess-${i}`, goal, [], 1_000 + i);
-	const kept = readdirSync(join(cwd, ".finisher")).filter(isSessionDirName);
+	const kept = readdirSync(finisherDir(cwd)).filter(isSessionDirName);
 	assert.equal(kept.length, TRACKER_SESSIONS_MAX, "only the newest sessions keep a tracker");
 	assert.ok(!kept.some((n) => n.startsWith("sess-0")), "the oldest session is the one dropped");
 	for (let i = TRACKER_SESSIONS_MAX + 6 - TRACKER_SESSIONS_MAX; i < TRACKER_SESSIONS_MAX + 6; i++) assert.ok(readLapTracker(cwd, `sess-${i}`), `sess-${i} survives`);

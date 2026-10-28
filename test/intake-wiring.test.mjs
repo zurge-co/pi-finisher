@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -58,7 +59,6 @@ test("nothing in the harness inspects the human's words: exploration is never re
 
 test("the words alone decide nothing: the same message reads as work in auto mode and as a conversation in always mode", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "finisher-consult-"));
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
 	const message = "how would you structure the report page";
 	const plain = await liveHarness({ cwd }).prompt(message);
 	assert.ok(plain.includes(INTENT_GUIDELINE), "with no config the model is told to decide the turn itself");
@@ -66,14 +66,14 @@ test("the words alone decide nothing: the same message reads as work in auto mod
 	assert.ok(!plain.includes(GOAL_FIRST_GUIDELINE), "but never the unconditioned demand, which would contradict the decision it was just given");
 	assert.ok(!plain.includes(CONSULT_GUIDELINE));
 
-	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "always" }));
+	writeState(cwd, "config.json", JSON.stringify({ consultMode: "always" }));
 	const forced = liveHarness({ cwd });
 	await forced.start();
 	const prompt = await forced.prompt(message);
 	assert.ok(prompt.includes(CONSULT_GUIDELINE), "always is the human forcing the conversation, whatever the words");
 	assert.ok(!prompt.includes(GOAL_FIRST_GUIDELINE) && !prompt.includes(GOAL_WHEN_WORK_GUIDELINE), "and no goal rule rides along with it");
 
-	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "off" }));
+	writeState(cwd, "config.json", JSON.stringify({ consultMode: "off" }));
 	const off = liveHarness({ cwd });
 	await off.start();
 	const workTurn = await off.prompt("what do you think about the HUD");
@@ -89,8 +89,7 @@ test("the prompt the model reads carries the decision rule it is meant to apply,
 	assert.ok(!decide.includes(CONSULT_GUIDELINE));
 
 	const offCwd = mkdtempSync(join(tmpdir(), "finisher-off-"));
-	mkdirSync(join(offCwd, ".finisher"), { recursive: true });
-	writeFileSync(join(offCwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "off" }));
+	writeState(offCwd, "config.json", JSON.stringify({ consultMode: "off" }));
 	const off = liveHarness({ cwd: offCwd });
 	await off.start();
 	const work = await off.prompt("add the missing case");
@@ -101,11 +100,10 @@ test("the prompt the model reads carries the decision rule it is meant to apply,
 test("the pre-goal system prompt carries the drafted goal and cases only in the mode that forces work", async () => {
 	const human = "Ship the report page. It must open from the HUD row";
 	const cwd = mkdtempSync(join(tmpdir(), "finisher-draft-"));
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
 	const deciding = await liveHarness({ cwd }).prompt(human);
 	assert.ok(deciding.includes(intakeDirective(human, undefined, "decide")), "auto rides the decide directive, not a draft the model must justify");
 	assert.ok(!deciding.includes("case ="), "a turn still being judged is not handed a case list");
-	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "off" }));
+	writeState(cwd, "config.json", JSON.stringify({ consultMode: "off" }));
 	const forced = liveHarness({ cwd });
 	await forced.start();
 	const text = await forced.prompt(human);
@@ -117,7 +115,6 @@ test("the pre-goal system prompt carries the drafted goal and cases only in the 
 
 test("the mode is re-read from disk every turn: a switch mid-session lands on the next message and is announced once", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "finisher-switch-"));
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
 	const notes = [];
 	const harness = liveHarness({ cwd, ui: { notify: (text, kind) => notes.push({ text, kind }) } });
 	await harness.start();
@@ -126,7 +123,7 @@ test("the mode is re-read from disk every turn: a switch mid-session lands on th
 	assert.ok(deciding.includes(INTENT_GUIDELINE), "the first turn is the model deciding");
 	assert.deepEqual(notes, [], "no switch has happened yet, so nothing is announced");
 
-	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "always" }));
+	writeState(cwd, "config.json", JSON.stringify({ consultMode: "always" }));
 	assert.ok((await harness.prompt("still just asking")).includes(CONSULT_GUIDELINE), "the file is read again, not remembered from session_start");
 	assert.equal(notes.length, 1, "the human is told their switch took effect");
 	assert.match(notes[0].text, /always/, "and told which mode they are in now");
@@ -135,7 +132,7 @@ test("the mode is re-read from disk every turn: a switch mid-session lands on th
 	await harness.prompt("and now what");
 	assert.equal(notes.length, 1, "an unchanged mode is never announced twice");
 
-	writeFileSync(join(cwd, ".finisher", "config.json"), JSON.stringify({ consultMode: "off" }));
+	writeState(cwd, "config.json", JSON.stringify({ consultMode: "off" }));
 	assert.ok((await harness.prompt("keep going")).includes(WORK_FORCED_GUIDELINE), "off is honoured on the very next turn");
 	assert.equal(notes.length, 2);
 	assert.match(notes[1].text, /off/);

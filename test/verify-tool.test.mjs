@@ -1,9 +1,10 @@
+import { stateFile } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, runCheck, runChecks, runCommand, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
+import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, runCheck, runChecks, runCommand, stateLabel, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
 
 const repo = (scripts) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-checks-"));
@@ -111,7 +112,7 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 	await s.run("lap", { done: true });
 	const failing = await s.run("verify", { cases: [{ id: "the check passes", command: "npm test" }] });
 	assert.equal(failing.isError, true, "the deterministic check really failed in a real repo");
-	assert.equal(existsSync(join(s.ctx.cwd, ".finisher", "report.md")), false, "a goal that is still open leaves no report behind");
+	assert.equal(existsSync(stateFile(s.ctx.cwd, "report.md")), false, "a goal that is still open leaves no report behind");
 	assert.equal(s.rounds.length, 1, "a failing verify hands the round back to main — the loop is alive");
 	assert.match(failing.content[0].text, /LAP/i, "and it tells main which lap to work next");
 	assert.ok((s.box.get().goalDriver.phases ?? []).length >= 2, "a fix lap was appended to the plan");
@@ -129,11 +130,11 @@ test("the goal loop survives on main alone: a failing verify re-arms the round, 
 		assert.ok(driver.doneAt, "with the check green and the command recorded, the goal finishes — the loop is not dead");
 		assert.equal(driver.outcome, "verified");
 		assert.equal(passing.isError, undefined);
-		const written = readFileSync(join(s.ctx.cwd, ".finisher", "report.md"), "utf8");
+		const written = readFileSync(stateFile(s.ctx.cwd, "report.md"), "utf8");
 		assert.match(written, /^# finisher report — verified/, "closing the goal writes the report the HUD offers to open");
 		assert.match(written, /the check passes/, "and it carries the case the run was proven against");
 		assert.equal(s.box.get().lastReport.outcome, "verified", "the state keeps the meta the HUD reads");
-		assert.equal(s.box.get().lastReport.path, join(s.ctx.cwd, ".finisher", "report.md"));
+		assert.equal(s.box.get().lastReport.path, stateFile(s.ctx.cwd, "report.md"));
 	} finally {
 		delete process.env.CHECK;
 	}
@@ -204,7 +205,7 @@ test("a check that hangs is cut when the harness runs a case command, so verify 
 	assert.equal((await runCommand("exit 7", dir, 5_000)).exitCode, 7, "and a command's own status is what is reported");
 });
 
-test("verify runs the repo's checks through the plan and writes its evidence to .finisher/checks", async () => {
+test("verify runs the repo's checks through the plan and writes its evidence to the state home", async () => {
 	const dir = repo({ test: `node -e "require('node:fs').appendFileSync('runs.log','x')"` });
 	const s = session({ cwd: dir });
 	clearCheckCache();
@@ -217,7 +218,7 @@ test("verify runs the repo's checks through the plan and writes its evidence to 
 	assert.equal(first.isError, undefined, "the recorded command plus the green check close the goal");
 	assert.equal(runs(), 1, "the check stage really ran the repo's own test script");
 	assert.deepEqual(readChecks(dir).map((e) => [e.case, e.status]), [["the suite passes", "pass"]], "one line per case, and a pass only for a pass");
-	assert.match(first.content[0].text, /evidence: \.finisher\/checks/);
+	assert.ok(first.content[0].text.includes(`evidence: ${stateLabel(dir, "checks", "checks.jsonl")}`), "the evidence line names the check file in the state home, not a workspace dir");
 	await s.run("verify", { cases: [] });
 	assert.equal(runs(), 1, "a second pass over the same edit state is answered from the plan cache — the suite is not re-run");
 });

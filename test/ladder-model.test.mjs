@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -17,8 +18,7 @@ import {
 const tmpRepo = () => mkdtempSync(join(tmpdir(), "finisher-ladder-"));
 
 const writeModels = (cwd, cfg) => {
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", "models.json"), JSON.stringify(cfg));
+	writeState(cwd, "models.json", JSON.stringify(cfg));
 };
 
 test("a pattern splits into provider/model, and a thinking suffix is recognised only when it is a real level", () => {

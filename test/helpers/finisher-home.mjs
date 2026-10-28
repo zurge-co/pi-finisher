@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { finisherDir } from "../../extensions/finisher/src/project-dir.ts";
 
+export { finisherDir };
+
 process.env.FINISHER_HOME ??= mkdtempSync(join(tmpdir(), "finisher-test-home-"));
 
 export const testFinisherHome = () => process.env.FINISHER_HOME;

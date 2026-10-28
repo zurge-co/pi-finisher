@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -77,8 +78,7 @@ test("what a real sub-agent writes is what the next task reads back", () => {
 
 test("a corrupt stack file yields an empty stack instead of throwing the run away", () => {
 	const cwd = tmpRepo();
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", "handoff.jsonl"), '{not json\n\n[]\n{"text":""}\n');
+	writeState(cwd, "handoff.jsonl", '{not json\n\n[]\n{"text":""}\n');
 	assert.deepEqual(readHandoff(cwd), []);
 });
 

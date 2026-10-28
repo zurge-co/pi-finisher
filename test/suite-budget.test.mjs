@@ -13,6 +13,7 @@ import {
 	suiteRefusal,
 	suiteWriteGate,
 } from "../extensions/finisher/src/suite-budget.ts";
+import { STATE_HOME_LABEL } from "../extensions/finisher/index.ts";
 
 const BASELINE = { files: 60, cases: 500 };
 
@@ -54,7 +55,7 @@ test("the refusal names the file and sends the proof to the check file, never to
 	const refusal = suiteRefusal(BASELINE, { files: BASELINE.files, cases: 999 }, "test/extra.test.mjs");
 	assert.equal(typeof refusal, "string");
 	assert.ok(refusal.includes("test/extra.test.mjs"));
-	assert.ok(refusal.includes(".finisher/checks"));
+	assert.ok(refusal.includes(`${STATE_HOME_LABEL}/checks`), "the proof goes to the check file in the state home, never to another test");
 	assert.match(refusal, /PASS/);
 	assert.equal(suiteRefusal(BASELINE, { files: BASELINE.files + 1, cases: BASELINE.cases + SUITE_GROWTH_MIN }, "test/extra.test.mjs"), undefined);
 });

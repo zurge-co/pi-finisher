@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -20,9 +21,8 @@ import {
 
 const repo = (models, config) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-surface-"));
-	mkdirSync(join(dir, ".finisher"), { recursive: true });
-	if (models !== undefined) writeFileSync(join(dir, ".finisher", "models.json"), JSON.stringify(models));
-	if (config !== undefined) writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(config));
+	if (models !== undefined) writeState(dir, "models.json", JSON.stringify(models));
+	if (config !== undefined) writeState(dir, "config.json", JSON.stringify(config));
 	return dir;
 };
 
@@ -60,8 +60,8 @@ test("a missing or broken config degrades to the plain surface instead of throwi
 	assert.deepEqual(readConfigSurface(empty), { priority: [], ignoredKeys: [] });
 	assert.match(surfaceLine(empty), /model ladder: \(main session model only\)/);
 	const broken = repo(undefined, undefined);
-	writeFileSync(join(broken, ".finisher", "models.json"), "{ not json");
-	writeFileSync(join(broken, ".finisher", "config.json"), "[1,2,3]");
+	writeState(broken, "models.json", "{ not json");
+	writeState(broken, "config.json", "[1,2,3]");
 	assert.deepEqual(readConfigSurface(broken).priority, []);
 	assert.deepEqual(costCeilingKeysPresent(broken), []);
 	const junk = repo({ priority: ["x/y"] }, { swarmConcurrency: 0 });

@@ -75,7 +75,7 @@ test("every shipped skill is discoverable by pi: its own directory, its own name
 test("the shipped skills carry the rules they are named for, not a title alone", () => {
 	assert.match(read("skills", "goal-intake", "SKILL.md"), /goal/);
 	assert.match(read("skills", "goal-intake", "SKILL.md"), /before/);
-	assert.match(read("skills", "verify-checks", "SKILL.md"), /\.finisher\/checks/);
+	assert.match(read("skills", "verify-checks", "SKILL.md"), /~\/\.pi\/finisher\/<project>\/checks/);
 	assert.match(read("skills", "verify-checks", "SKILL.md"), /UNVERIFIED/);
 });
 
@@ -101,7 +101,7 @@ test("the skill and the README carry one and the same bound for a vague goal", (
 test("the README states that no configuration is needed after install", () => {
 	const readme = read("README.md");
 	assert.match(readme, /## Nothing to configure/);
-	assert.match(readme, /\.finisher\/checks/);
+	assert.match(readme, /~\/\.pi\/finisher\/<project>\/checks/);
 });
 
 test("the README documents every command the harness registers, and nothing it does not", () => {

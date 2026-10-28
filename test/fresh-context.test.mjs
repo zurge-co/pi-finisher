@@ -1,3 +1,4 @@
+import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -31,8 +32,7 @@ test("the switch is a real off: it survives the round trip and wins over the def
 
 test("a broken config file never blocks the run — it falls back to the default and says so", () => {
 	const cwd = tmpRepo();
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
-	writeFileSync(join(cwd, ".finisher", "config.json"), "{ this is not json");
+	writeState(cwd, "config.json", "{ this is not json");
 	const cfg = readFreshContextConfig(cwd);
 	assert.equal(cfg.enabled, true);
 	assert.equal(cfg.source, "broken-config");

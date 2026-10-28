@@ -1,71 +1,108 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { testFinisherHome } from "./helpers/finisher-home.mjs";
+import { existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import {
 	PROJECT_HASH_LEN,
 	PROJECT_KEY_MAX,
+	STATE_HOME_LABEL,
+	checksDir,
+	decisionsPath,
 	finisherDir,
 	finisherHome,
-	isLiveTool,
+	handoffPath,
+	modelsPath,
 	projectKey,
-	RETIRED_TOOLS,
-	SURFACE_TOOLS,
-	SURFACE_COMMANDS,
+	readConsultMode,
+	reportPath,
+	shortHome,
+	stateLabel,
+	statePath,
+	trackerDir,
 } from "../extensions/finisher/index.ts";
+import { testFinisherHome } from "./helpers/finisher-home.mjs";
 
 const here = new URL("..", import.meta.url).pathname;
 const read = (p) => readFileSync(join(here, p), "utf8");
-const retiredPrefix = RETIRED_TOOLS[0].slice(0, RETIRED_TOOLS[0].indexOf("_"));
-const retiredDir = `.${retiredPrefix}`;
+const inside = (child, parent) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+const CWDS = ["/repo", "/repo/nested/dir", "/repo with space", "/a-b", "/a/b", "/Ünïcode-проект", `/${"deep/".repeat(40)}repo`];
 
-test("harness state lives outside the working directory: one dir per project under the finisher home", () => {
-	const home = testFinisherHome();
-	const one = finisherDir("/repo/one");
-	const two = finisherDir("/repo/two");
-	assert.ok(one.startsWith(`${home}/`), `a project's state sits under FINISHER_HOME, not next to the code: ${one}`);
-	assert.equal(finisherHome(), home, "FINISHER_HOME is the root every project dir hangs under");
-	assert.equal(one, finisherDir("/repo/one"), "one cwd always resolves to the same dir");
-	assert.notEqual(one, two, "two projects never share a state dir");
-	assert.ok(!one.startsWith("/repo/one"), "and nothing is placed inside the project itself");
-	const types = read("extensions/finisher/src/types.ts");
-	assert.ok(!types.includes(`"${retiredDir}"`), "the state dir keeps only one name");
-});
-
-test("a project key is a safe, bounded file name for any cwd, and two cwds never collide", () => {
-	const longest = `/${"x".repeat(400)}`;
-	for (const cwd of ["/repo/one", "/repo one/with space", "/ÜNICODE/Σ", "/", "/a/b/../c", longest]) {
+test("state lives under one home, one directory per project, and never inside the workspace", () => {
+	const home = finisherHome();
+	assert.equal(home, resolve(testFinisherHome()), "the home is FINISHER_HOME when it is set");
+	for (const cwd of CWDS) {
+		const dir = finisherDir(cwd);
+		assert.ok(inside(dir, home), `${dir} escapes the home ${home}`);
+		assert.equal(inside(dir, resolve(cwd)), false, `${dir} is inside the workspace ${cwd}`);
+		assert.equal(dir, join(home, projectKey(cwd)), "the project directory is the home plus its key");
 		const key = projectKey(cwd);
-		assert.match(key, /^[A-Za-z0-9._-]+$/, `${cwd.slice(0, 40)}: the key is safe as a file name: ${key}`);
-		assert.ok(key.length <= PROJECT_KEY_MAX + 1 + PROJECT_HASH_LEN, `${cwd.slice(0, 40)}: the key stays bounded: ${key.length}`);
-	}
-	assert.notEqual(projectKey("/a/b"), projectKey("/a-b"), "two cwds that flatten to the same words stay two dirs");
-	assert.equal(projectKey("/a/b"), projectKey("/a/b/"), "one path spelled two ways is one key");
-	assert.equal(projectKey("/a/b"), projectKey("/a/b/../b"), "and so is a path that walks back to itself");
-});
-
-test("there is no migration: a retired workspace dir is left alone, not read or moved", () => {
-	for (const f of ["extensions/finisher/index.ts", "extensions/finisher/src/types.ts", "extensions/finisher/src/cycle.ts"]) {
-		const src = read(f);
-		assert.ok(!/renameSync|cpSync/.test(src), `${f} must not move anything`);
-		assert.ok(!src.includes(`"${retiredDir}"`), `${f} must not reference the retired workspace`);
+		assert.equal(key.includes(sep), false, `${key} carries a path separator`);
+		assert.equal(key.split(sep).includes(".."), false, `${key} climbs out`);
+		assert.ok(key.length <= PROJECT_KEY_MAX + 1 + PROJECT_HASH_LEN, `${key} is unbounded`);
 	}
 });
 
-test("session state is persisted under the new name only", () => {
-	const index = read("extensions/finisher/index.ts");
-	assert.match(index, /"finisher-state"/);
-	assert.ok(!index.includes(`${retiredPrefix}-state`), "the retired state key must not be persisted or restored");
+test("the project key is stable for one workspace and unique across two, however their paths are spelled", () => {
+	for (const cwd of CWDS) {
+		const key = projectKey(cwd);
+		for (const spelling of [cwd, `${cwd}/`, `${cwd}/./`, `${cwd}/../${cwd.slice(cwd.lastIndexOf("/") + 1)}`]) assert.equal(projectKey(spelling), key, `${spelling} is the same workspace as ${cwd}`);
+	}
+	assert.notEqual(projectKey("/a-b"), projectKey("/a/b"), "two paths that flatten to the same word stay two projects");
+	assert.notEqual(projectKey("/repo"), projectKey("/repo/nested"), "a nested directory is its own project");
+	assert.equal(projectKey("/"), "root-" + projectKey("/").slice(-PROJECT_HASH_LEN), "the root has a name, not an empty one");
 });
 
-test("the live surface carries no prefix at all: no retired name, no finisher_ wrapper", () => {
-	assert.deepEqual([...SURFACE_TOOLS], ["goal", "lap", "code", "verify", "steer"]);
-	assert.deepEqual([...SURFACE_COMMANDS], ["models", "gaps"]);
-	for (const t of SURFACE_TOOLS) {
-		assert.ok(!t.startsWith(`${retiredPrefix}_`), `${t} still carries the retired prefix`);
-		assert.ok(!t.includes("_"), `${t} must be a bare tool name, so a call is goal, not finisher_goal`);
+test("every state file resolves under the one project directory", () => {
+	for (const cwd of CWDS) {
+		const dir = finisherDir(cwd);
+		const files = [statePath(cwd, "config.json"), modelsPath(cwd), reportPath(cwd), decisionsPath(cwd), handoffPath(cwd), checksDir(cwd), trackerDir(cwd, "sess"), stateLabel(cwd)];
+		for (const file of files) assert.ok(inside(file, dir), `${file} escapes ${dir}`);
+		assert.equal(statePath(cwd, "checks", "checks.jsonl"), join(dir, "checks", "checks.jsonl"), "a nested state file keeps its place");
+		assert.equal(modelsPath(cwd), statePath(cwd, "models.json"), "models.json is a state file, not a second root");
 	}
-	for (const t of RETIRED_TOOLS) assert.ok(!SURFACE_TOOLS.includes(t), `${t} is retired but still live`);
-	for (const t of SURFACE_TOOLS) assert.equal(isLiveTool(t), true, `${t} is on the surface, so it must be live`);
+});
+
+test("the home is FINISHER_HOME, else ~/.pi/finisher — a blank or junk setting never falls back to the workspace", () => {
+	const saved = process.env.FINISHER_HOME;
+	try {
+		delete process.env.FINISHER_HOME;
+		assert.equal(finisherHome("/home/me"), join("/home/me", ".pi", "finisher"), "with no setting the home is ~/.pi/finisher");
+		for (const junk of ["", "   ", "\t"]) {
+			process.env.FINISHER_HOME = junk;
+			assert.equal(finisherHome("/home/me"), join("/home/me", ".pi", "finisher"), `${JSON.stringify(junk)} is no home at all`);
+		}
+		process.env.FINISHER_HOME = "  /custom/state  ";
+		assert.equal(finisherHome("/home/me"), resolve("/custom/state"), "a setting wins and is trimmed");
+		assert.equal(STATE_HOME_LABEL, "~/.pi/finisher/<project>", "the one label the tools print names the real home");
+	} finally {
+		if (saved === undefined) delete process.env.FINISHER_HOME;
+		else process.env.FINISHER_HOME = saved;
+	}
+});
+
+test("a label never shortens a path it does not own", () => {
+	assert.equal(shortHome("/home/me/.pi/finisher/k", "/home/me"), "~/.pi/finisher/k");
+	assert.equal(shortHome("/home/me", "/home/me"), "~");
+	assert.equal(shortHome("/home/other/x", "/home/me"), "/home/other/x", "a sibling home is not this home");
+	assert.equal(shortHome("/home/melon/x", "/home/me"), "/home/melon/x", "and a prefix is not a parent");
+});
+
+test("there is no migration: a workspace .finisher is left alone, never read, never moved", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "finisher-legacy-"));
+	const legacy = join(cwd, ".finisher");
+	mkdirSync(legacy, { recursive: true });
+	writeFileSync(join(legacy, "config.json"), JSON.stringify({ consultMode: "off", handoffModel: "legacy/model" }));
+	const before = readdirSync(legacy).sort();
+	assert.equal(readConsultMode(cwd), "auto", "a legacy config is not this harness's config");
+	assert.equal(existsSync(finisherDir(cwd)), false, "reading state never creates the new directory");
+	assert.deepEqual(readdirSync(legacy).sort(), before, "the legacy directory is not moved, copied or pruned");
+});
+
+test("no module recreates a state directory inside the workspace", () => {
+	const root = join(here, "extensions/finisher");
+	const files = [...readdirSync(join(root, "src")).filter((f) => f.endsWith(".ts")).map((f) => join(root, "src", f)), join(root, "index.ts")];
+	const offenders = files.filter((f) => /(?:mkdirSync|writeFileSync|appendFileSync|createWriteStream)\([^)]*\.finisher/.test(readFileSync(f, "utf8")));
+	assert.deepEqual(offenders, [], `these modules write a workspace state dir: ${offenders.join(", ")}`);
 });

@@ -1,3 +1,4 @@
+import { stateFile, writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -397,19 +398,18 @@ test("a dialog nobody answers times out into a refusal, never into a started goa
 
 test("the timeout is configurable, and 0 means wait forever", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-cfg-"));
-	mkdirSync(join(dir, ".finisher"), { recursive: true });
-	writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify({ confirmTimeoutMs: 90_000 }));
+	writeState(dir, "config.json", JSON.stringify({ confirmTimeoutMs: 90_000 }));
 	assert.equal(readConfirmTimeout(dir), 90_000);
-	writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify({ confirmTimeoutMs: 0 }));
+	writeState(dir, "config.json", JSON.stringify({ confirmTimeoutMs: 0 }));
 	assert.equal(readConfirmTimeout(dir), 0, "0 disables the timer instead of silently becoming the default");
 	assert.equal(readConfirmTimeout(dir, { FINISHER_CONFIRM_TIMEOUT_MS: "5000" }), 5_000, "the env wins over the file");
-	writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify({ confirmTimeoutMs: 5e12 }));
+	writeState(dir, "config.json", JSON.stringify({ confirmTimeoutMs: 5e12 }));
 	assert.equal(readConfirmTimeout(dir), 2_147_483_647, "a value past the timer ceiling is clamped, never fired instantly");
 	for (const junk of [{ confirmTimeoutMs: -1 }, { confirmTimeoutMs: "90s" }, { confirmTimeoutMs: null }, { confirmTimeoutMs: Number.NaN }]) {
-		writeFileSync(join(dir, ".finisher", "config.json"), JSON.stringify(junk));
+		writeState(dir, "config.json", JSON.stringify(junk));
 		assert.equal(readConfirmTimeout(dir), DEFAULT_CONFIRM_TIMEOUT_MS, `junk ${JSON.stringify(junk)} falls back`);
 	}
-	rmSync(join(dir, ".finisher", "config.json"));
+	rmSync(stateFile(dir, "config.json"));
 	assert.equal(readConfirmTimeout(dir), DEFAULT_CONFIRM_TIMEOUT_MS, "no config at all keeps the default");
 });
 

@@ -55,7 +55,6 @@ test("the registered hook really cancels: it holds an unread failed report, and 
 	}
 	assert.ok(hooks.has("session_before_compact"), "the hook must be registered or nothing is held");
 	const cwd = mkdtempSync(join(tmpdir(), "finisher-hold-"));
-	mkdirSync(join(cwd, ".finisher"), { recursive: true });
 	const ctxFor = (data) => ({ cwd, mode: "rpc", hasUI: false, ui: { notify: () => {}, setWidget: () => {} }, sessionManager: { getEntries: () => [{ type: "custom", customType: "finisher-state", data }] } });
 	const fire = async (ctx, reason) => {
 		let out;
