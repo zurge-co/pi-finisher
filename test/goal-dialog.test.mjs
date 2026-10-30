@@ -297,8 +297,10 @@ test("the goal can only change through the dialog, while its cases are the agent
 
 	humanLog.turns += 1;
 	answer = "confirmed";
-	await run("goal", { goal: "ship something else entirely", cases: ["c1"] });
-	assert.equal(box.get().goalDriver.goal, "ship something else entirely", "a confirmed new goal replaces the old one");
+	const queuedGoal = await run("goal", { goal: "ship something else entirely", cases: ["c1"] });
+	assert.deepEqual([asked.length, queuedGoal.details.queued, queuedGoal.details.pending], [4, true, "ship the race HUD"], "a queued goal is confirmed by the human first, then waits behind its open predecessor — it never replaces it mid-run");
+	assert.equal(JSON.stringify(box.get().goalDriver), before, "the open goal's run stays byte-identical");
+	assert.deepEqual(box.get().goalQueue?.map(({ goal, cases }) => [goal, cases]), [["ship something else entirely", ["c1"]]], "the confirmed goal waits in the queue with exactly the cases the human confirmed");
 });
 
 test("a verify run can never name, rename or re-case the goal it verifies", async () => {

@@ -16,6 +16,9 @@ import { STATE_HOME_LABEL, stateLabel } from "./project-dir.ts";
 import { appendCheck, checkFileLines, type CheckEntry, type CheckStatus } from "./check-file.ts";
 import { CHECK_ORDER, CASE_CHECK_PREFIX, changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, provesCommand, readPackage, runCheckStage, runCommand, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
 import { type CaseResult } from "./evidence.ts";
+import { advanceGoalQueue, goalPromotedNote } from "./goal-queue.ts";
+import { countSuite } from "./suite-budget.ts";
+import { type QueuedGoal } from "./types.ts";
 
 export const VERIFY_TOOL = "verify";
 
@@ -370,10 +373,25 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 				if (step.action !== "replan")
 					appendRecord(journal, doneRecord({ repo: cwd, goal: driver.goal, rounds: step.round, laps: plan.length, outcome: step.state.outcome ?? "halted" }));
 			}
+			let promotedGoal: QueuedGoal | undefined;
+			if (step.action !== "replan") {
+				promotedGoal = advanceGoalQueue(state);
+				if (promotedGoal) {
+					state.suiteAtStart = countSuite(cwd);
+					if (promotedGoal.cases.length && state.spec) state.spec.crossCheck = promotedGoal.cases;
+					if (promotedGoal.cases.length && !state.spec) {
+						state.spec = { version: 1, title: promotedGoal.goal.slice(0, 80), intent: promotedGoal.goal, crossCheck: promotedGoal.cases, approach: [], scope: [], constraints: [], criteria: [], specDebt: [], approved: true, approvedAt: Date.now(), approvedBy: "goal", createdAt: Date.now() } as any;
+						state.phase = "implementation";
+					}
+					persist();
+					updateWidget(toolCtx);
+				}
+			}
+			const promotedLines = promotedGoal ? ["", goalPromotedNote(promotedGoal.goal, state.humanLang), ...promotedGoal.cases.map((c, i) => `  ${i + 1}. ${c}`)] : [];
 			if (step.action === "replan") armGoalRound(step.text);
 			return {
-				content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), "", summary].join("\n") }],
-				details: { report, checks, decision: { kind: step.action }, step: step.action, outcome: step.state.outcome },
+				content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), "", summary, ...promotedLines].join("\n") }],
+				details: { report, checks, decision: { kind: step.action }, step: step.action, outcome: step.state.outcome, ...(promotedGoal ? { promoted: promotedGoal.goal } : {}) },
 				...(report.allPass ? {} : { isError: true }),
 			};
 		},

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { compactionHold, HELD_OUTCOMES, outcomeNeedsHuman } from "../extensions/finisher/index.ts";
+import { compactionHold, heldGoalFor, HELD_OUTCOMES, outcomeNeedsHuman } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
 const reasons = ["manual", "threshold", "overflow"];
@@ -29,6 +29,14 @@ test("an open goal and a verified goal never hold, whatever the reason", () => {
 		assert.equal(compactionHold({ reason, goal: { outcome: "halted" } }).hold, false, "no doneAt means the run is still open");
 		assert.equal(compactionHold({ reason, goal: { doneAt: DONE, outcome: "verified" } }).hold, false, "a verified run has nothing left to read");
 	}
+});
+
+test("a promotion never drops the hold: the closed run's report still blocks compaction until the human reads it", () => {
+	const state = { goalDriver: { goal: "queued next", confirmedAt: DONE + 10 }, lastReport: { at: DONE, outcome: "halted" } };
+	assert.equal(compactionHold({ reason: "threshold", goal: heldGoalFor(state), humanAt: DONE - 1 }).hold, true);
+	assert.equal(compactionHold({ reason: "threshold", goal: heldGoalFor(state), humanAt: DONE + 20 }).hold, false, "a reply after the close lifts the hold even with a queued goal promoted");
+	assert.equal(compactionHold({ reason: "threshold", goal: heldGoalFor({ lastReport: { at: DONE, outcome: "verified" } }) }).hold, false, "a verified report never holds");
+	assert.equal(compactionHold({ reason: "threshold", goal: heldGoalFor({ goalDriver: { goal: "open" } }) }).hold, false, "an open run with no report never holds");
 });
 
 test("the hold names its reason so the human is told why compaction was skipped", () => {

@@ -24,7 +24,7 @@ export interface State {
 	trajectoryFlags: string[];
 	subagentRuns: SubagentRun[];
 	lastCompileLessons?: number;    	specSource?: "set" | "compile"; 	evalOverrideFails?: { specVersion: number; ids: string[]; count: number }; 	specMdPath?: string;            	specJsonPath?: string;          	contextBulletin?: string;      	verifyLoop?: { round: number; fingerprints: string[]; caseRounds: Record<string, number> };
-	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetLapAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[]; cases?: string[] }; 	goalConsent?: { humanTurns: number; reason: "declined" | "timeout"; sessionId?: string }; goalStop?: GoalStop; humanAt?: number; humanLang?: string; goalLang?: string; goalChrome?: { title?: string; keys?: string; keysLine?: string; header?: string; note?: string; emptyGoal?: string }; clarifyChrome?: { title?: string; asIs?: string; later?: string; note?: string }; toolOutputExpanded?: boolean; verifyCalls?: { command: string; ok: boolean; at?: number }[]; hygieneViolations?: HygieneViolationRef[]; lastReport?: ReportMeta; lastModifiedAt?: number; suiteAtStart?: { files: number; cases: number }; clarify?: { goalKey?: string; at?: number }; turnIntent?: TurnIntent; consultMode?: "auto" | "always" | "off"; }
+	decisions?: { at: number; from: string; question: string; assumption: string }[]; 	freshResetAt?: number; 	freshResetLapAt?: number; 	goalHeld?: boolean; 	goalDriver?: { goal: string; confirmedAt: number; attempts: { rounds: number; lastFingerprint?: string }; doneAt?: number; outcome?: "verified" | "needs-human" | "halted"; phases?: { id: string; text: string; round: number; addedAt: number; lapMs?: number }[]; lap?: number; lapAt?: number; lapMs?: number[]; cases?: string[] }; 	goalQueue?: QueuedGoal[]; 	goalConsent?: { humanTurns: number; reason: "declined" | "timeout"; sessionId?: string }; goalStop?: GoalStop; humanAt?: number; humanLang?: string; goalLang?: string; goalChrome?: { title?: string; keys?: string; keysLine?: string; header?: string; note?: string; emptyGoal?: string }; clarifyChrome?: { title?: string; asIs?: string; later?: string; note?: string }; toolOutputExpanded?: boolean; verifyCalls?: { command: string; ok: boolean; at?: number }[]; hygieneViolations?: HygieneViolationRef[]; lastReport?: ReportMeta; lastModifiedAt?: number; suiteAtStart?: { files: number; cases: number }; clarify?: { goalKey?: string; at?: number }; turnIntent?: TurnIntent; consultMode?: "auto" | "always" | "off"; }
 
 export interface HygieneViolationRef {
 	path: string;
@@ -52,5 +52,14 @@ export interface LongRunRef {
 	trackerVersion: number;
 	activePhase?: string;
 	awaitingFinalApply?: boolean; 	auto?: boolean;              	autoFixRounds?: number;      }
+
+export interface QueuedGoal {
+	goal: string;
+	cases: string[];
+	queuedAt: number;
+	lang?: string;
+	chrome?: { title?: string; keys?: string; keysLine?: string; header?: string; note?: string; emptyGoal?: string };
+	notes?: string[];
+}
 
 export { finisherDir } from "./project-dir.ts";

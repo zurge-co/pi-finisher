@@ -23,6 +23,9 @@ export const reportUnread = (goal: HeldGoal | undefined, humanAt: number | undef
 	return doneAt > (humanAt ?? 0);
 };
 
+export const heldGoalFor = (state: { goalDriver?: HeldGoal; lastReport?: { at: number; outcome: GoalOutcome } }): HeldGoal | undefined =>
+	state.goalDriver?.doneAt ? state.goalDriver : state.lastReport ? { doneAt: state.lastReport.at, outcome: state.lastReport.outcome } : state.goalDriver;
+
 export const compactionHold = (input: CompactionHoldInput): { hold: boolean; note?: string } => {
 	if (input.reason === "manual") return { hold: false };
 	if (!reportUnread(input.goal, input.humanAt)) return { hold: false };

@@ -10,6 +10,7 @@ export const resetCycleState = (s: State): void => {
 	s.specJsonPath = undefined;
 	s.lastCompileLessons = undefined;
 	s.goalDriver = undefined;
+	s.goalQueue = undefined;
 	s.goalConsent = undefined;
 	s.goalStop = undefined;
 	s.verifyLoop = undefined;

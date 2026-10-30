@@ -1,6 +1,8 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildGoalToolText, casesForGate, goalGateAsks, goalGateFor, reopenGoal, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
+import { buildGoalToolText, casesForGate, goalDriverDone, goalGateAsks, goalGateFor, reopenGoal, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
+import { GOAL_QUEUE_MAX, enqueueGoal, goalQueueFullNote, goalQueueOf, goalQueueRefusedNote, goalQueueUpdatedNote, goalQueuedNote, queueIndexOf } from "./goal-queue.ts";
+import { type QueuedGoal } from "./types.ts";
 import { costCeilingKeysPresent, readConfirmTimeout, surfaceLine } from "./goal-run.ts";
 import { GOAL_ALREADY_VERIFIED_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, GOAL_UNCHANGED_NOTE, cleanChrome, consentBlocks, goalCases, humanTurnsFrom, sessionIdFrom, tooManyCasesNote, UNKNOWN_HUMAN_TURNS, type GoalAskOutcome, type GoalChromeOverrides } from "./goal-confirm.ts";
 import { DEFAULT_GOAL_LANG, goalLanguageNote, languageTag, readableIn, resolveGoalLang } from "./human-language.ts";
@@ -220,6 +222,18 @@ export const registerTools = (ctx: HarnessContext) => {
 					content: [{ type: "text", text: GOAL_ALREADY_VERIFIED_NOTE }],
 					details: { goal, confirmed: true, outcome: "already-verified", cases: before },
 				};
+			const openPrevious = previous && !goalDriverDone(previous) ? previous : undefined;
+			const queuedAt = openPrevious ? queueIndexOf(goalQueueOf(state), goal) : -1;
+			if (queuedAt >= 0) {
+				const queued = goalQueueOf(state);
+				const kept: QueuedGoal = { ...queued[queuedAt], ...(cases.length ? { cases } : {}) };
+				state.goalQueue = [...queued.slice(0, queuedAt), kept, ...queued.slice(queuedAt + 1)];
+				persist();
+				return {
+					content: [{ type: "text", text: goalQueueUpdatedNote(kept.goal, queuedAt + 1, state.humanLang) }],
+					details: { goal, confirmed: true, queued: true, updated: true, position: queuedAt + 1, cases: kept.cases },
+				};
+			}
 			const asks = goalGateAsks(gate);
 			const humanTurns = humanTurnsNow(ctx);
 			const sessionId = sessionIdNow(ctx);
@@ -274,7 +288,42 @@ export const registerTools = (ctx: HarnessContext) => {
 				if (askCases.length > GOAL_TOO_MANY_CASES)
 					return { content: [{ type: "text", text: tooManyCasesNote(askCases.length) }], details: { goal, confirmed: false, cases: askCases.length, clarify }, isError: true };
 				const outcome = await askGoalConfirm(ctx, askGoal, askCases);
-				if (outcome !== "confirmed") return refusal(outcome);
+				if (outcome !== "confirmed") {
+					if (gate === "changed" && openPrevious && (outcome === "declined" || outcome === "timeout")) {
+						state.goalConsent = { humanTurns, reason: outcome, sessionId };
+						persist();
+						return {
+							content: [{ type: "text", text: goalQueueRefusedNote(askGoal, openPrevious.goal, outcome, askSeconds, state.humanLang) }],
+							details: { goal, confirmed: false, queued: false, outcome, pending: openPrevious.goal },
+							isError: true,
+						};
+					}
+					return refusal(outcome);
+				}
+				if (gate === "changed" && openPrevious) {
+					const entry: QueuedGoal = {
+						goal: askGoal,
+						cases: askCases,
+						queuedAt: Date.now(),
+						lang,
+						...(state.goalChrome ? { chrome: state.goalChrome } : {}),
+						...(clarifyNotes.length ? { notes: clarifyNotes } : {}),
+					};
+					const enqueued = enqueueGoal(goalQueueOf(state), entry);
+					if (!enqueued.ok)
+						return {
+							content: [{ type: "text", text: goalQueueFullNote(GOAL_QUEUE_MAX, state.humanLang) }],
+							details: { goal, confirmed: true, queued: false, queueFull: true, max: GOAL_QUEUE_MAX },
+							isError: true,
+						};
+					state.goalQueue = enqueued.queue;
+					persist();
+					updateWidget(ctx);
+					return {
+						content: [{ type: "text", text: goalQueuedNote(askGoal, enqueued.position, enqueued.queue.length, openPrevious.goal, state.humanLang) }],
+						details: { goal, confirmed: true, queued: true, position: enqueued.position, pending: openPrevious.goal, cases: askCases, clarify },
+					};
+				}
 				if (handoffOff()) clearOtherGoals(ctx.cwd, goal);
 				state.decisions = [];
 				if (clarifyNotes.length) state.decisions = clarifyNotes.map((note) => ({ at: Date.now(), from: "clarify", question: "the human made the intent concrete", assumption: note }));

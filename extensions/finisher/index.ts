@@ -27,7 +27,7 @@ import { createCodeSwarm } from "./src/code-swarm.ts";
 import { createHygieneHook } from "./src/hygiene-hook.ts";
 import { freshCompactionEntry, freshLapDecision, lapCompactionSummary, readFreshContextConfig, trackerEntryDraft } from "./src/fresh-context.ts";
 import { buildLapTracker, clearLapTracker, renderLapTracker, trackerForSession, writeLapTracker } from "./src/lap-tracker.ts";
-import { compactionHold, reportUnread } from "./src/compaction-guard.ts";
+import { compactionHold, heldGoalFor, reportUnread } from "./src/compaction-guard.ts";
 import { ladderFromConfig, registerLadderModel } from "./src/ladder-model.ts";
 import { enforceDeadline, withTimeout, readToolTimeout, timeoutNote, TOOL_TIMEOUT_LABEL } from "./src/timeout.ts";
 import { registerTools } from "./src/tools.ts";
@@ -77,6 +77,7 @@ export * from "./src/budget.ts";
 export * from "./src/evidence.ts";
 export * from "./src/verify-loop.ts";
 export * from "./src/goal-driver.ts";
+export * from "./src/goal-queue.ts";
 export * from "./src/goal-phase.ts";
 export * from "./src/phase-tool.ts";
 export * from "./src/race-state.ts";
@@ -250,7 +251,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
-		const held = compactionHold({ reason: event.reason, goal: box.get().goalDriver, humanAt: box.get().humanAt });
+		const held = compactionHold({ reason: event.reason, goal: heldGoalFor(box.get()), humanAt: box.get().humanAt });
 		if (!held.hold) return;
 		if (ctx.hasUI && held.note) ctx.ui.notify(held.note, "info");
 		return { cancel: true };
@@ -303,7 +304,7 @@ export default function (pi: ExtensionAPI) {
 			lastResetAt: box.get().freshResetAt,
 			goal,
 			consumedLapAt: box.get().freshResetLapAt,
-			reportUnread: reportUnread(goal, box.get().humanAt),
+			reportUnread: reportUnread(heldGoalFor(box.get()), box.get().humanAt),
 			now: Date.now(),
 		});
 		if (!decision.reset) return;
