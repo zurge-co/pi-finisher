@@ -1,7 +1,7 @@
 import { writeState } from "./helpers/finisher-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,8 @@ import {
 	handoffKeepProbability,
 	isWorthKeeping,
 	pushHandoff,
+	clearOtherGoals,
+	handoffPath,
 	readHandoff,
 	trimStack,
 	writeHandoff,
@@ -74,6 +76,19 @@ test("what a real sub-agent writes is what the next task reads back", () => {
 	assert.equal(back[0].from, "swarm");
 	assert.ok(back[0].text.length <= HANDOFF_LINE_MAX);
 	assert.match(handoffInjection(back) ?? "", /recursively/);
+});
+
+test("an empty stack never creates the file, and clearing an existing one empties it in place", () => {
+	const cwd = tmpRepo();
+	writeHandoff(cwd, []);
+	assert.equal(existsSync(handoffPath(cwd)), false, "writing nothing creates nothing");
+	assert.deepEqual(clearOtherGoals(cwd, "a brand new goal"), []);
+	assert.equal(existsSync(handoffPath(cwd)), false, "the parked goal flow never creates handoff.jsonl");
+	writeHandoff(cwd, [{ at: 1, from: "swarm", text: "a lesson worth keeping past one task boundary" }]);
+	assert.equal(existsSync(handoffPath(cwd)), true);
+	writeHandoff(cwd, []);
+	assert.equal(existsSync(handoffPath(cwd)), true, "an existing stack is emptied in place, not deleted");
+	assert.deepEqual(readHandoff(cwd), []);
 });
 
 test("a corrupt stack file yields an empty stack instead of throwing the run away", () => {

@@ -1,12 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, utimesSync } from "node:fs";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
+	GC_MARKER_AGE_MS,
+	GC_PRUNE_MAX,
 	PROJECT_HASH_LEN,
 	PROJECT_KEY_MAX,
+	PROJECT_MARKER_FILE,
 	STATE_HOME_LABEL,
 	checksDir,
 	decisionsPath,
@@ -15,12 +19,14 @@ import {
 	handoffPath,
 	modelsPath,
 	projectKey,
+	pruneProjectDirs,
 	readConsultMode,
 	reportPath,
 	shortHome,
 	stateLabel,
 	statePath,
 	trackerDir,
+	writeProjectMarker,
 } from "../extensions/finisher/index.ts";
 import { testFinisherHome } from "./helpers/finisher-home.mjs";
 
@@ -105,4 +111,86 @@ test("no module recreates a state directory inside the workspace", () => {
 	const files = [...readdirSync(join(root, "src")).filter((f) => f.endsWith(".ts")).map((f) => join(root, "src", f)), join(root, "index.ts")];
 	const offenders = files.filter((f) => /(?:mkdirSync|writeFileSync|appendFileSync|createWriteStream)\([^)]*\.finisher/.test(readFileSync(f, "utf8")));
 	assert.deepEqual(offenders, [], `these modules write a workspace state dir: ${offenders.join(", ")}`);
+});
+
+const goneWorkspace = () => join(tmpdir(), `finisher-gone-${randomUUID()}`);
+const liveWorkspace = () => mkdtempSync(join(tmpdir(), "finisher-live-"));
+
+const backdate = (path, now = Date.now()) => {
+	const old = new Date(now - GC_MARKER_AGE_MS - 60_000);
+	utimesSync(path, old, old);
+};
+
+const markedDir = (home, name, workspace, { age = true, now = Date.now() } = {}) => {
+	const dir = join(home, name);
+	mkdirSync(dir, { recursive: true });
+	const marker = join(dir, PROJECT_MARKER_FILE);
+	writeFileSync(marker, `${JSON.stringify({ cwd: workspace })}\n`);
+	if (age) backdate(marker, now);
+	return dir;
+};
+
+test("a project directory is pruned only when its marker aged and its workspace is gone", () => {
+	const home = mkdtempSync(join(tmpdir(), "finisher-gc-law-"));
+	const now = Date.now();
+	const stale = markedDir(home, "stale", goneWorkspace(), { now });
+	const keeps = {
+		"workspace alive at any age": markedDir(home, "alive", liveWorkspace(), { now }),
+		"marker fresh with a dead workspace": markedDir(home, "fresh", goneWorkspace(), { age: false, now }),
+		"no marker is never identified": join(home, "foreign"),
+	};
+	mkdirSync(keeps["no marker is never identified"], { recursive: true });
+	writeFileSync(join(home, "not-a-dir"), "x");
+	const pruned = pruneProjectDirs(home, "", now);
+	assert.equal(pruned, 1, "exactly the aged marker with the dead workspace is pruned");
+	assert.equal(existsSync(stale), false, "the stale project is gone");
+	for (const [why, dir] of Object.entries(keeps)) assert.ok(existsSync(dir), `${why} must survive`);
+	assert.ok(existsSync(join(home, "not-a-dir")), "a plain file is never removed");
+});
+
+test("the current project survives even when its record points at a dead workspace", () => {
+	const home = mkdtempSync(join(tmpdir(), "finisher-gc-current-"));
+	const now = Date.now();
+	const dead = goneWorkspace();
+	const self = markedDir(home, "self", dead, { now });
+	const other = markedDir(home, "other", goneWorkspace(), { now });
+	assert.equal(pruneProjectDirs(home, dead, now), 1, "only the non-current stale project is pruned");
+	assert.ok(existsSync(self), "the running session's own project is untouchable");
+	assert.equal(existsSync(other), false);
+	assert.equal(pruneProjectDirs(home, "", now), 1, "without the current-cwd guard the same directory is pruned");
+	assert.equal(existsSync(self), false, "the guard alone is what saved it");
+});
+
+test("a junk or unreadable marker never identifies a directory, however old it is", () => {
+	const home = mkdtempSync(join(tmpdir(), "finisher-gc-junk-"));
+	const now = Date.now();
+	const junk = { empty: "", "not json": "%%{", "cwd not a string": '{"cwd":42}', "cwd blank": '{"cwd":"   "}' };
+	const dirs = Object.entries(junk).map(([name, body]) => {
+		const dir = join(home, `junk-${name}`);
+		mkdirSync(dir, { recursive: true });
+		const marker = join(dir, PROJECT_MARKER_FILE);
+		writeFileSync(marker, body);
+		backdate(marker, now);
+		return dir;
+	});
+	assert.equal(pruneProjectDirs(home, "", now), 0, "no junk marker ever earns a delete");
+	for (const dir of dirs) assert.ok(existsSync(dir));
+	assert.equal(pruneProjectDirs(join(home, "no-such-home"), "", now), 0, "a missing home is not an error");
+});
+
+test("one pass never prunes more than GC_PRUNE_MAX however many candidates exist", () => {
+	const home = mkdtempSync(join(tmpdir(), "finisher-gc-bound-"));
+	const now = Date.now();
+	const total = GC_PRUNE_MAX + 4;
+	for (let i = 0; i < total; i++) markedDir(home, `stale-${i}`, goneWorkspace(), { now });
+	assert.equal(pruneProjectDirs(home, "", now), GC_PRUNE_MAX, "the cap holds");
+	assert.equal(pruneProjectDirs(home, "", now), total - GC_PRUNE_MAX, "a second pass finishes the rest");
+	assert.equal(pruneProjectDirs(home, "", now), 0, "and then the home is clean");
+});
+
+test("the session marker round-trips: written by the project key, read back as the resolved workspace", () => {
+	const cwd = liveWorkspace();
+	const path = writeProjectMarker(cwd);
+	assert.equal(path, join(finisherDir(cwd), PROJECT_MARKER_FILE), "the marker lives in the one project directory");
+	assert.equal(JSON.parse(readFileSync(path, "utf8")).cwd, resolve(cwd), "the record is the workspace itself");
 });

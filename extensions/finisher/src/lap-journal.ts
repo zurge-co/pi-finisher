@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -82,10 +82,26 @@ export const doneRecord = (input: { repo: string; goal: string; rounds: number; 
 	outcome: input.outcome,
 });
 
+const trimJournalFile = (path: string, max = JOURNAL_MAX_RECORDS): void => {
+	let text: string;
+	try {
+		text = readFileSync(path, "utf8");
+	} catch {
+		return;
+	}
+	const lines = text.split("\n").filter((l) => l.trim());
+	if (lines.length <= max) return;
+	try {
+		writeFileSync(path, `${lines.slice(-max).join("\n")}\n`);
+	} catch {
+	}
+};
+
 export const appendRecord = (path: string, record: JournalRecord): boolean => {
 	try {
 		mkdirSync(join(path, ".."), { recursive: true });
 		appendFileSync(path, `${JSON.stringify(record)}\n`);
+		trimJournalFile(path);
 		return true;
 	} catch {
 		return false;

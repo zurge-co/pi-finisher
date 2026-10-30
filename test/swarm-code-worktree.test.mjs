@@ -37,6 +37,18 @@ test("the worker is told to stay in its slice and to report the paths it touched
 	assert.doesNotMatch(p, /another slice's files\.\n\nYour slice/);
 });
 
+test("the worker prompt names the real run deadline in seconds and demands commands that fit inside it", () => {
+	const p = buildCodeWorkerPrompt(slice("s1", ["./src/"]), { worktreeDir: "/tmp/run/s1", scopes: ["src"], deadlineMs: 600_000 });
+	assert.match(p, /killed without warning 600 seconds after you start/, "the exact seconds, not a vague hurry-up");
+	assert.match(p, /split long builds and full test runs into smaller pieces/, "and the instruction that keeps one command from outliving it");
+	for (const bad of [undefined, 0, -5, Number.NaN]) {
+		const q = buildCodeWorkerPrompt(slice("s1", ["./src/"]), { worktreeDir: "/tmp/run/s1", scopes: ["src"], ...(bad === undefined ? {} : { deadlineMs: bad }) });
+		assert.doesNotMatch(q, /killed without warning/, `deadlineMs=${bad} must never print a deadline line`);
+	}
+	const odd = buildCodeWorkerPrompt(slice("s1", ["./src/"]), { worktreeDir: "/tmp/run/s1", scopes: ["src"], deadlineMs: 1 });
+	assert.match(odd, /killed without warning 1 seconds after you start/, "a sub-second bound still rounds to a real, nonzero deadline");
+});
+
 test("scope containment is reflexive, nesting-aware and symmetric", () => {
 	assert.equal(scopesOverlap("src", "src"), true);
 	assert.equal(scopesOverlap("src", "src/a.ts"), true);

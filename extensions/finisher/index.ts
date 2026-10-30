@@ -16,6 +16,7 @@ import { gitOk } from "./src/worktree.ts";
 import { createEscGuard } from "./src/esc-guard.ts";
 import { createStateBox } from "./src/state-box.ts";
 import { finisherDir, type State } from "./src/types.ts";
+import { pruneProjectDirs, writeProjectMarker } from "./src/project-gc.ts";
 import { type HarnessContext } from "./src/kit.ts";
 import { OVERLAY_EXTRA_LARGE, OVERLAY_LARGE, OVERLAY_MEDIUM, REJECT_WITH_REASON_CODE, createGui } from "./src/gui.ts";
 import { createPanelWidget } from "./src/panel-widget.ts";
@@ -38,6 +39,7 @@ export * from "./src/state-box.ts";
 
 export * from "./src/types.ts";
 export * from "./src/project-dir.ts";
+export * from "./src/project-gc.ts";
 export * from "./src/worktree.ts";
 export * from "./src/pending-apply.ts";
 export * from "./src/cycle.ts";
@@ -196,6 +198,8 @@ export default function (pi: ExtensionAPI) {
 			if (e.type === "custom" && e.customType === "finisher-state")
 				box.set({ ...freshState(), ...(e.data as State) });
 		box.get().consultMode = readConsultMode(ctx.cwd);
+		writeProjectMarker(ctx.cwd);
+		pruneProjectDirs(undefined, ctx.cwd);
 		consentLifts(box.get());
 		box.get().goalStop = undefined;
 		kit.updateWidget(ctx);

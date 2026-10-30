@@ -192,7 +192,10 @@ export const acceptanceBlock = (acceptance?: string[]): string[] => {
 	return lines.length ? [ACCEPTANCE_HEADER, ...lines.map((a) => `  - ${a}`)] : [];
 };
 
-export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string; sharedContract?: string; acceptance?: string[] }): string =>
+export const deadlineSecondsOf = (ms: number | undefined): number | undefined =>
+	typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? Math.max(1, Math.round(ms / 1000)) : undefined;
+
+export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; worktreeDir: string; scopes: string[]; testCommand?: string; sharedContract?: string; acceptance?: string[]; deadlineMs?: number }): string =>
 	[
 		`You are CODER ${slice.id}. GOAL: ${opts.goal ?? "(goal supplied by the main agent)"}`,
 		`The main agent is working on the same goal right now, in parallel with you and the other coders — stay inside your slice and do not wait for it.`,
@@ -201,6 +204,9 @@ export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; w
 		...([...contractBlock(opts.sharedContract), ...acceptanceBlock(opts.acceptance)].length ? [""] : []),
 		`You work ALONE in your own checkout: ${opts.worktreeDir}. Other coders are editing other checkouts of the same repo at the same time.`,
 		opts.scopes.length ? `Stay inside your slice's paths: ${opts.scopes.join(", ")}. Touching a file outside them is a conflict with another coder.` : "No explicit paths were given: keep the change as narrow as the instruction.",
+		...(deadlineSecondsOf(opts.deadlineMs)
+			? [`You are killed without warning ${deadlineSecondsOf(opts.deadlineMs)} seconds after you start — keep every command well inside that: split long builds and full test runs into smaller pieces instead of launching one command that can outlive the deadline.`]
+			: []),
 		"Write the code for YOUR slice only, then stop. Do not try to merge, commit, rebase or touch another slice's files.",
 		`Code rules: no comments in code (line or block). Names and structure carry the intent. A file you create must stay at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB, so one read of its path returns all of it.`,
 		"Dependencies are already available in your checkout (shared from the main repo) — never run an install, and never write inside node_modules.",

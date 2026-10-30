@@ -1,12 +1,35 @@
-import { closeSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { finisherDir } from "./types.ts";
 
 export const fmtTok = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 
+export const SUBAGENT_LOG_MAX = 40;
+
+export const pruneSubagentLogs = (dir: string, keep = SUBAGENT_LOG_MAX - 1): number => {
+	let names: string[];
+	try {
+		names = readdirSync(dir)
+			.filter((n) => n.endsWith(".log"))
+			.sort();
+	} catch {
+		return 0;
+	}
+	let removed = 0;
+	for (const n of names.slice(0, Math.max(0, names.length - Math.max(0, Math.floor(keep))))) {
+		try {
+			unlinkSync(join(dir, n));
+			removed++;
+		} catch {
+		}
+	}
+	return removed;
+};
+
 export const subagentLogPath = (cwd: string, role: string): string => {
 	const dir = join(finisherDir(cwd), "subagents");
 	mkdirSync(dir, { recursive: true });
+	pruneSubagentLogs(dir);
 	const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 	return join(dir, `${stamp}-${role}.log`);
 };

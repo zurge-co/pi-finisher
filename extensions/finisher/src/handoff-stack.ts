@@ -107,8 +107,10 @@ export const readHandoff = (cwd: string): HandoffItem[] => {
 };
 
 export const writeHandoff = (cwd: string, items: HandoffItem[]): void => {
+	const list = trimStack(items);
+	if (!list.length && !existsSync(handoffPath(cwd))) return;
 	mkdirSync(finisherDir(cwd), { recursive: true });
-	writeFileSync(handoffPath(cwd), trimStack(items).map((i) => JSON.stringify(i)).join("\n") + (items.length ? "\n" : ""));
+	writeFileSync(handoffPath(cwd), list.map((i) => JSON.stringify(i)).join("\n") + (list.length ? "\n" : ""));
 };
 
 export const appendHandoff = (cwd: string, item: HandoffItem): HandoffItem[] => {

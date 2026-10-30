@@ -99,6 +99,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 				const prompt = buildCodeWorkerPrompt(slice, {
 					worktreeDir: plan.worktreeDir,
 					scopes: plan.scopes,
+					deadlineMs: subagentTimeout("coder", ctx.cwd),
 					...(opts.goal ? { goal: opts.goal } : {}),
 					...(testCommand ? { testCommand } : {}),
 					...(slice.sharedContract ? { sharedContract: slice.sharedContract } : {}),

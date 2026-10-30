@@ -6,7 +6,7 @@ import { consultOnly, goalOpenFor, noGoalNeededNote } from "./consult.ts";
 import { buildReport, freshAttempts, renderVerifyReport, type CaseEvidence, type VerifyReport } from "./verify-loop.ts";
 import { judgeChecks } from "./evidence-record.ts";
 import { appendRecord, doneRecord, gapRecord, journalEnabled, journalPath } from "./lap-journal.ts";
-import { reportWithDecisions, writeDecisionsFile } from "./decisions.ts";
+import { reportWithDecisions, writeDecisionsFile, type AgentDecision } from "./decisions.ts";
 import { planOf, verifyGate } from "./goal-phase.ts";
 import { readToolTimeout } from "./timeout.ts";
 import { type HarnessContext } from "./kit.ts";
@@ -63,7 +63,10 @@ const INSIDE_MIN = 12;
 
 const withoutTruncation = (id: string): string => id.replace(/[…]+|\s*\.{2,}\s*$/g, "").trim();
 
-export const VERB_LEAD = /^(?:fix|make|prove|do|ensure|verify|check|test|rerun|re-run)\s+/i;
+export const VERB_LEAD =
+	/^(?:(?:fix|make|prove|do|ensure|verify|check|test|rerun|re-run)\s+|(?:แก้ไข|ตรวจสอบ|รองรับ|พิสูจน์|ทำให้|แก้|ซ่อม|ทำ|ตรวจ|เพิ่ม|ปรับ|เปลี่ยน|สร้าง|เขียน|ลบ|ย้าย|แยก|รวม|อ่าน)\s*)/i;
+
+export const ORDINAL_ID = /^(?:[c#]|case)\s*#?\s*(\d{1,2})$/i;
 
 export const REMEDY_MARK = /\s+(?:—|–|::|\|)\s+/;
 
@@ -94,6 +97,11 @@ const candidatesFor = (cases: string[], id: string): string[] => {
 	if (!caseKey(id)) return [];
 	const exact = cases.filter((c) => c === id || caseKey(c) === caseKey(id));
 	if (exact.length) return exact;
+	const ordinal = ORDINAL_ID.exec(id.trim());
+	if (ordinal) {
+		const at = Number.parseInt(ordinal[1], 10);
+		return at >= 1 && at <= cases.length ? [cases[at - 1]] : [];
+	}
 	const keys = claimKeys(id);
 	for (const key of keys) {
 		const hits = matchKey(cases, key);
@@ -206,13 +214,22 @@ export const reuseLine = (checks: CheckResult[], commands: Map<string, string>):
 	return reused.length ? `reused: ${reused.join(" · ")} already ran green in the deterministic stage — not run a second time` : "";
 };
 
-export const verifySummaryLines = (checks: CheckResult[], report: VerifyReport, commands: Map<string, string> = new Map()): string[] => {
+export const verifyStageLines = (checks: CheckResult[], commands: Map<string, string> = new Map()): string[] => {
 	const lines = checks.length ? [`deterministic stage: ${checks.map((c) => checkSummaryMark(c)).join(" · ")}`] : ["deterministic stage: no typecheck/lint/test script found in package.json"];
 	const reuse = reuseLine(checks, commands);
 	if (reuse) lines.push(reuse);
 	for (const r of failingChecks(checks)) lines.push("", checkLine(r));
-	return [...lines, "", renderVerifyReport(report)];
+	return lines;
 };
+
+export const verifySummaryLines = (checks: CheckResult[], report: VerifyReport, commands: Map<string, string> = new Map()): string[] => [
+	...verifyStageLines(checks, commands),
+	"",
+	renderVerifyReport(report),
+];
+
+export const verifyReportBody = (checks: CheckResult[], report: VerifyReport, commands: Map<string, string>, decisions: AgentDecision[] = []): string =>
+	reportWithDecisions([renderVerifyReport(report), "", ...verifyStageLines(checks, commands)].join("\n"), decisions);
 
 const CHECK_MARK: Record<CheckOutcome, string> = {
 	pass: "ok",
@@ -274,7 +291,10 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			cases: Type.Optional(
 				Type.Array(
 					Type.Object({
-						id: Type.String({ description: "the case id (or its exact text — a truncated id binds when it matches exactly one case) this claim is about" }),
+						id: Type.String({
+							description:
+								"the case id (or its exact text — a truncated id binds when it matches exactly one case, and C1..Cn / case 2 names a case by its position) this claim is about",
+						}),
 						command: Type.Optional(Type.String({ description: "the command you ran that exercises this case — required unless human is true" })),
 						human: Type.Optional(Type.Boolean({ description: "true when only the human can check this case: it is reported to them at the end and never counted as a failure" })),
 						note: Type.Optional(Type.String({ description: "what the human should look at, when human is true" })),
@@ -346,7 +366,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 					at: step.state.doneAt ?? Date.now(),
 					laps: (step.state.phases ?? []).length,
 					round: step.round,
-					body: [summary, "", finalText].join("\n"),
+					body: verifyReportBody(checks, report, named.commands, state.decisions ?? []),
 				});
 				if (written) state.lastReport = written;
 			}
@@ -366,7 +386,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 							laps: plan.length,
 							added: plan.slice((before.phases ?? []).length).map((ph) => ph.text),
 							cases: report.cases.map((c) => ({ id: c.caseId, result: c.result, ...(c.reason ? { reason: c.reason } : {}) })),
-							models: [],
+							models: (state.subagentRuns ?? []).map((run) => run.model),
 							outcome: step.action,
 						}),
 					);

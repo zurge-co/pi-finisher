@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, runCheck, runChecks, runCommand, stateLabel, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
+import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, readJournal, runCheck, runChecks, runCommand, stateLabel, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
 
 const repo = (scripts) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-checks-"));
@@ -203,6 +203,60 @@ test("a check that hangs is cut when the harness runs a case command, so verify 
 	assert.ok(Date.now() - started < 20_000, "the deadline ends it");
 	assert.equal((await runCommand("exit 0", dir, 5_000)).exitCode, 0, "a command that succeeds is a pass");
 	assert.equal((await runCommand("exit 7", dir, 5_000)).exitCode, 7, "and a command's own status is what is reported");
+});
+
+test("a claim can name a case by position, by a cut id, or past a lead verb — and an ambiguous one still proves nothing", () => {
+	const cases = ["verify-tool writes report.md once", "the journal records real models", "GC prunes a gone project dir"];
+	const bound = (id) => bindClaims(cases, [{ id, command: "true", human: false }]);
+	assert.equal(bound("C1").commands.get(cases[0]), "true", "C1 names the first case");
+	assert.equal(bound("case 2").commands.get(cases[1]), "true", "'case 2' names the second case");
+	assert.equal(bound("#3").commands.get(cases[2]), "true", "'#3' names the third case");
+	assert.deepEqual(bound("C9").unbound.map((u) => u.candidates), [[]], "a position past the end matches nothing instead of guessing");
+	assert.equal(bound("the journal records real…").commands.get(cases[1]), "true", "a truncated id still binds when it fits exactly one case");
+	assert.equal(bound("แก้ the journal records real models").commands.get(cases[1]), "true", "a Thai lead verb is stripped before matching");
+	assert.equal(bindClaims(["C2", "a real case"], [{ id: "C2", command: "true", human: false }]).commands.get("C2"), "true", "an exact text still outranks a position");
+	const shared = ["the lap clock ticks", "the lap clock tocks"];
+	assert.deepEqual(bindClaims(shared, [{ id: "the lap clock", command: "true", human: false }]).unbound[0].candidates, shared, "an ambiguous fragment still names both and proves nothing");
+});
+
+test("the report file carries the verdict exactly once and none of the words aimed at the agent", async () => {
+	const s = session({ cwd: repo({ test: "node -e \"process.exit(0)\"" }) });
+	await s.run("goal", { goal: "report stays clean", cases: ["the check passes"] });
+	await s.run("lap", { plan: ["make it pass"] });
+	await s.run("lap", { done: true });
+	s.box.get().verifyCalls = [{ command: "npm test", ok: true, at: Date.now() }];
+	const out = await s.run("verify", { cases: [{ id: "the check passes", command: "npm test" }] });
+	assert.equal(out.isError, undefined);
+	const written = readFileSync(stateFile(s.ctx.cwd, "report.md"), "utf8");
+	assert.equal(written.split("✅ verified").length - 1, 1, "the verdict line is written once, not once per render path");
+	assert.equal(written.split("the check passes").length - 1, 1, "and the case is listed once, not again per summary section");
+	assert.doesNotMatch(written, /report this once|report exactly this|goal reached|fix lap|do not keep spinning/, "no agent-only directive leaks into the file the human reads");
+	assert.match(written, /deterministic stage: test ok/, "the stage outcome stays in the report");
+});
+
+test("the journal's gap record names the models that actually ran, and stays silent when none did", async () => {
+	const used = session({ cwd: repo({}) });
+	await used.run("goal", { goal: "journal names used models", cases: ["proof lives here"] });
+	await used.run("lap", { plan: ["do it"] });
+	await used.run("lap", { done: true });
+	used.box.get().subagentRuns = [
+		{ role: "coder", ok: true, summary: "", at: 1, model: "p/m" },
+		{ role: "coder", ok: true, summary: "", at: 2, model: "p/m" },
+		{ role: "coder", ok: true, summary: "", at: 3 },
+	];
+	await used.run("verify", { cases: [] });
+	const named = readJournal().filter((r) => r.goal === "journal names used models");
+	assert.ok(named.length >= 1, "the replan wrote a gap record");
+	assert.deepEqual(named.at(-1).models, ["p/m"], "the models that ran are named once each, and a run without a model adds nothing");
+
+	const quiet = session({ cwd: repo({}) });
+	await quiet.run("goal", { goal: "journal stays quiet" , cases: ["proof lives here"] });
+	await quiet.run("lap", { plan: ["do it"] });
+	await quiet.run("lap", { done: true });
+	await quiet.run("verify", { cases: [] });
+	const silent = readJournal().filter((r) => r.goal === "journal stays quiet");
+	assert.ok(silent.length >= 1, "the second replan also wrote a gap record");
+	assert.equal("models" in silent.at(-1), false, "with no recorded run models the key is absent, not an empty list");
 });
 
 test("verify runs the repo's checks through the plan and writes its evidence to the state home", async () => {

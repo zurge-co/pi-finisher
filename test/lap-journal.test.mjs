@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	JOURNAL_MAX_RECORDS,
 	appendRecord,
 	doneRecord,
 	gapRecord,
@@ -133,4 +134,24 @@ test("a record that is only half there is skipped, so a foreign or hand-edited l
 	assert.equal(summary.extraLaps, 0);
 	assert.doesNotThrow(() => summaryLines(summary), "the digest of a partly foreign history still renders");
 	assert.equal(summarizeGaps([{ kind: "gap", at: 1, repo: "r", goal: "g", round: 1, lap: 1, laps: 1, added: undefined, cases: undefined }]).gaps, 1, "and it tolerates a record built by hand without its arrays");
+});
+
+test("the file on disk is trimmed to the record cap on append, keeping the newest records in order", () => {
+	const dir = mkdtempSync(join(tmpdir(), "finisher-journal-cap-"));
+	const path = join(dir, "laps.jsonl");
+	const seed = JOURNAL_MAX_RECORDS + 3;
+	const lines = [];
+	for (let i = 0; i < seed; i++) lines.push(JSON.stringify(doneRecord({ repo: "/repo", goal: `goal ${i}`, rounds: 1, laps: i + 1, outcome: "verified", at: i + 1 })));
+	writeFileSync(path, `${lines.join("\n")}\n`);
+	const last = doneRecord({ repo: "/repo", goal: "the newest goal", rounds: 1, laps: 9_999, outcome: "halted", at: seed + 1 });
+	assert.equal(appendRecord(path, last), true);
+	const onDisk = readFileSync(path, "utf8").trim().split("\n");
+	assert.equal(onDisk.length, JOURNAL_MAX_RECORDS, "the file never outgrows the cap, whatever it held before");
+	assert.equal(JSON.parse(onDisk[0]).laps, 5, "exactly the oldest four were dropped, and order is untouched");
+	assert.deepEqual(JSON.parse(onDisk.at(-1)), JSON.parse(JSON.stringify(last)), "the record just appended is the last line");
+	assert.equal(parseJournal(readFileSync(path, "utf8")).length, JOURNAL_MAX_RECORDS, "and what is left still parses as real records");
+	const under = join(dir, "small.jsonl");
+	assert.equal(appendRecord(under, last), true);
+	assert.equal(appendRecord(under, last), true);
+	assert.equal(readFileSync(under, "utf8").trim().split("\n").length, 2, "under the cap every record stays, nothing is trimmed away");
 });

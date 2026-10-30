@@ -44,6 +44,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | Module | What lives here |
 | --- | --- |
 | `types.ts` | Core interfaces (`Criterion`, `Spec`, `State`, `SubagentRun`, `Worktree`, `PendingApply`, `Tracker`); re-exports `finisherDir` from `project-dir.ts` |
+| `project-gc.ts` | The project-dir GC: `PROJECT_MARKER_FILE`/`writeProjectMarker` (each project dir records its resolved workspace, refreshed at every session start) and `pruneProjectDirs` (a directory is removed only when its marker is older than `GC_MARKER_AGE_MS` and its recorded workspace is gone: no marker, a junk marker, a fresh marker, a live workspace and the current session's own project are all untouchable; one pass scans at most `GC_DIRS_SCAN_MAX` entries, prunes at most `GC_PRUNE_MAX` and stops at `GC_BUDGET_MS`) |
 | `project-dir.ts` | Where all run state lives — never in the workspace: `FINISHER_HOME_ENV`/`FINISHER_HOME`, `finisherHome` (`FINISHER_HOME` → `~/.pi/finisher`, a blank setting never falls back to the cwd), `projectKey` (the workspace's absolute path flattened, tail-clipped to `PROJECT_KEY_MAX` plus an 8-char sha256 so two paths that flatten alike stay two projects), `finisherDir`/`statePath` (the one home every module resolves its files through), `shortHome`/`stateLabel` (`~/…` for the words a tool prints) and `STATE_HOME_LABEL` |
 | `kit.ts` | `HarnessContext` — the shared plumbing type every kit receives |
 | `state-box.ts` | Mutable state holder (`createStateBox`) so kits see one live `State` |
@@ -58,7 +59,7 @@ Each `create…` returns its public members; `index.ts` assigns them back onto t
 | `subagent-config.ts` | Per-role sub-agent argv: exclude-tools, strip flags, timeouts, ext includes, provider diagnosis |
 | `code-swarm.ts` | `runCodeSwarm`: one worktree per slice, coder run, hygiene gate, deterministic merge |
 | `swarm.ts` | Scheduler: ladder reading (`priority`), `clampConcurrency`, `concurrencyFor` (says whether config/slots/tasks limited it), `pickSlot`, `readyTasks`/`runSwarm` (dependency-aware ready frontier, failover, blocked dependents, per-result timing), `swarmMetrics`/`metricsLine` |
-| `swarm-code.ts` | Slice planning/ids, worker prompt, `FILES:` parse, overlap detection, merge plan |
+| `swarm-code.ts` | Slice planning/ids, worker prompt (`buildCodeWorkerPrompt` — a real `deadlineMs` becomes the run's kill deadline in seconds plus the split-long-commands rule), `FILES:` parse, overlap detection, merge plan |
 | `swarm-plan.ts` | The plan-before-spawn contract: `readPlanSlices`, `planRefusals` (missing files, overlapping ownership, unknown/self/cyclic `depends_on`), `planOrder`/`blockedBy` for the dependency scheduler |
 | `evidence.ts` | Reading a verifier's output: `extractCommands` (each command bound to *its own* exit status), `anchoredCommand` (a real command must sit at column 0 or after a `$`/`>` prompt), `pastedSource`/`statusInCode` (a numbered, tab-indented or code-shaped line supplies no status and lends none to a command above it), `cellExitCode`, `declaredVerdict`, `stripFences`/`unclaimedStatus` |
 | `verify-loop.ts` | Evidence-gated verdicts (`judgeCase`), the bounded loop (`decideOnce`, `evidenceFingerprint`, `recordEvidence`, `MAX_LOOP_BATCHES`), report render — plus the `HUMAN` verdict (`humanOnly`: a case only the human can check is reported apart and never fails the run) and `repairableCases` (a case that merely named no command is a bounded fix lap, not a closed goal) |
@@ -71,7 +72,7 @@ The workflow the harness enforces: `goal` (confirm once) → `lap` (declare the 
 | `phase-tool.ts` | `lap` — declare the plan, close one lap at a time, read the plan |
 | `goal-queue.ts` | The goal queue: while a goal is open, a confirmed new goal waits in `State.goalQueue` (the dialog happens at enqueue, never twice); `GOAL_QUEUE_MAX`, `goalQueueOf`/`queueIndexOf`, `enqueueGoal` (dedupe by goal key, hard bound), `advanceGoalQueue` (the head becomes the current goal the moment the old one closes — verified / needs-human / halted — from `verify-tool.ts`), and the notes in the human's language (`goalQueuedNote`/`goalQueueFullNote`/`goalQueueUpdatedNote`/`goalPromotedNote`/`goalQueueRefusedNote` — a declined or timed-out queue dialog never arms the goal stop, the running goal is untouched) |
 | `evidence-record.ts` | The harness recording: `recordCall` (bash calls as they finish, with their real status), `finalStatus`/`recordedFailures`, `judgeChecks` (a case is proven only by the command named for it) |
-| `lap-journal.ts` | The global extra-lap journal: `journalPath` (`~/.pi/finisher/laps.jsonl`), `gapRecord`/`doneRecord`, `parseJournal`/`readJournal`, `themeOf`, `summarizeGaps`/`summaryLines` |
+| `lap-journal.ts` | The global extra-lap journal: `journalPath` (`~/.pi/finisher/laps.jsonl`), `gapRecord`/`doneRecord`, `parseJournal`/`readJournal`, `appendRecord` (every append also trims the file on disk back to `JOURNAL_MAX_RECORDS`, newest kept), `themeOf`, `summarizeGaps`/`summaryLines` |
 | `race-state.ts` | Pure race read: `raceState` (phase/lap/lap clock/total clock/pit time), `raceStageToken`/`raceStagePaint` (the stage colour per phase, never a word: six phases, six distinct tokens — idle=dim, plan=borderAccent, run=warning, verify=accent, win=success, dnf=error — so plan is neither grey nor the failure colour and a running lap is never the accent; `raceStagePaint` is total, `raceStageToken` is `undefined` for idle and the HUD falls back to `IDLE_TOKEN`), `raceSegment` (the HUD's first line: the goal's total clock and nothing else — no lights, no `LAP n/m`, no stage word) and `raceLoaderCaption`/`raceLoaderFrames` (the working indicator beside the editor names the phase it is in and the time spent there: `PLAN 0:29`, `LAP 2/3 0:15`, `VERIFY 0:12`, `FINISH 1:00`, `DNF 1:00`, painted with that phase's own stage token), `raceIdleLine` (no name either), `clockLabel` |
 | `goal-run.ts` | Surface + config contract (`SURFACE_TOOLS`, `readConfigSurface`, `surfaceLine`), ignored ceiling keys, and `readConfirmTimeout`/`DEFAULT_CONFIRM_TIMEOUT_MS`/`MAX_TIMER_MS` (the dialog deadline: env → config → 120s, `0` = wait forever) |
 | `chrome-text.ts` | The one rule every page's own words follow: `usableChrome`/`cleanChromeText` (a label is one readable line, at most `CHROME_TEXT_MAX`, with no newline or control character — anything else is dropped, never truncated) and `chromeSet` (a language tag resolves through its base tag and falls back to **English** — never to another language) |
@@ -103,7 +104,7 @@ The workflow the harness enforces: `goal` (confirm once) → `lap` (declare the 
 | `cycle.ts` | Cycle closure: `resetCycleState`, one-shot bulletins, `freshState` |
 | `models.ts` | The model contract: `readLadderSlots`/`writeLadderSlot` (priority1..5), `resolveSubagentModel` (**ladder first, no per-role keys**), `ignoredModelKeys`, `availableModelChoices` (the virtual ladder model is filtered out), `panelize` |
 | `esc-guard.ts` | Terminal-input ESC guard so dialogs close without aborting the agent |
-| `handoff-stack.ts` | The cross-task knowledge stack: what survives a context reset (dedupe, cap, one-line condensation) |
+| `handoff-stack.ts` | The cross-task knowledge stack: what survives a context reset (dedupe, cap, one-line condensation); `writeHandoff` never creates `handoff.jsonl` for an empty stack — an existing file is emptied in place |
 | `handoff-classify.ts` | The keep/drop verdict (classifier or chat ask) |
 | `handoff-model.ts` | The `handoff` ladder slot: read it, route it to classify() or an ask |
 | `decisions.ts` | `DECISION NEEDED` capture + the report at goal done |
@@ -116,7 +117,7 @@ The workflow the harness enforces: `goal` (confirm once) → `lap` (declare the 
 | `budget.ts` | One verify pass vs the tool cap: `effortFor` (verify always 1 attempt), `wavesFor`, `swarmWallMs`, `budgetFits`, `budgetNote` |
 | `compaction-guard.ts` | `compactionHold`/`reportUnread`: an unread `halted`/`needs-human` report is never compacted away before the human replies |
 | `handoff-gate.ts` | The handoff stack is parked: `HANDOFF_ENABLED = false`, `handoffStackFor` returns `[]`, `handoffInjectionFor` returns `undefined` |
-| `subagent-log.ts` | Sub-agent log paths + `fmtTok` |
+| `subagent-log.ts` | Sub-agent log paths + the per-project log cap (`subagentLogPath` prunes the oldest `.log` files via `pruneSubagentLogs` so the new one lands within `SUBAGENT_LOG_MAX`) + `fmtTok` |
 | `ladder-model.ts` | The `finisher/auto` virtual model that routes each request across the priority ladder |
 | `timeout.ts` | The timeout rule: bash deadline injection, `withTimeout`/`settleWithTimeout`, `readToolTimeout` |
 
