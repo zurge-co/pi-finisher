@@ -140,3 +140,19 @@ test("no plan produced by any entry point has laps but no current lap", () => {
 	assert.equal(grown.lap, 1);
 	assert.equal(grown.lapAt, 2_000, "a grown plan starts its first lap clock");
 });
+
+test("only a finished lap closes: done=false or a blank id reads the plan and never advances it", () => {
+	const declared = declarePlan(["one", "two"], 1_000);
+	const state = () => ({ goalDriver: { ...freshGoalRun("ship it", 1_000), phases: declared.phases, lap: 1, lapAt: declared.lapAt, lapMs: [] } });
+	for (const done of [false, "", "   "]) {
+		const s = state();
+		const out = applyPhaseCall(s, { done }, 2_000);
+		assert.equal(out.action, "none", `done=${JSON.stringify(done)} closes nothing`);
+		assert.equal(s.goalDriver.lap, 1, "the open lap stays open");
+		assert.deepEqual(s.goalDriver.lapMs, [], "and no lap time is credited to work that did not finish");
+	}
+	const closed = state();
+	assert.equal(applyPhaseCall(closed, { done: true }, 2_000).action, "done");
+	assert.equal(closed.goalDriver.lap, 2);
+	assert.deepEqual(closed.goalDriver.lapMs, [1_000]);
+});

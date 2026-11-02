@@ -37,3 +37,10 @@ test("pruning a missing or empty directory removes nothing and never throws", ()
 	assert.equal(existsSync(path), false, "the path is only named — the writer creates the file");
 	assert.equal(readdirSync(join(finisherDir(cwd), "subagents")).length, 0, "an empty directory stays empty");
 });
+
+test("agents spawned in the same second never share a log file", () => {
+	const cwd = tmpRepo();
+	const paths = Array.from({ length: 8 }, () => subagentLogPath(cwd, "coder"));
+	assert.equal(new Set(paths).size, paths.length, "every run names its own file");
+	assert.ok(paths.every((path) => path.endsWith("-coder.log")));
+});

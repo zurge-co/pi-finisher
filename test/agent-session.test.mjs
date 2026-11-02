@@ -232,3 +232,21 @@ test("one frame stats a log once and reads it once, whatever the page asks it fo
 	assert.equal(reads.length, 3, "invalidate drops the cache so the next frame reads again");
 	assert.equal(stats.length, 4, "an explicit invalidate is not a frame of its own");
 });
+
+test("the page order is the tab order: re-ordering an ordered list changes nothing, so the number always names the agent on screen", () => {
+	const finished = [
+		{ role: "coder", status: "done", ok: true, at: 100, startedAt: 100, slotId: "s100" },
+		{ role: "coder", status: "done", ok: true, at: 300, startedAt: 300, slotId: "s300" },
+		{ role: "coder", status: "done", ok: true, at: 200, startedAt: 200, slotId: "s200" },
+	];
+	const once = orderedSessionRuns(finished);
+	assert.deepEqual(once.map((r) => r.at), [300, 200, 100], "newest finished first");
+	assert.deepEqual(orderedSessionRuns(once).map((r) => r.at), once.map((r) => r.at), "the order is a property of the runs, not of the list they arrived in");
+	const mixed = [...finished, { role: "coder", status: "running", ok: false, at: 400, startedAt: 400, slotId: "live" }];
+	const ordered = orderedSessionRuns(mixed);
+	assert.deepEqual(orderedSessionRuns(ordered).map((r) => r.slotId), ordered.map((r) => r.slotId));
+	assert.deepEqual(ordered.map((r) => r.slotId), ["live", "s300", "s200", "s100"], "live agents lead, then the newest finished");
+	assert.match(sessionTabs(mixed, 0, 200), /\[1:[^\]]*live/, "the bracketed tab is the run the page draws at index 0");
+	assert.match(sessionTabs(mixed, 1, 200), /\[2:[^\]]*s300/, "index 1 is the same run in the strip as on the page");
+	assert.match(sessionTabs(ordered, 1, 200), /\[2:[^\]]*s300/, "an already-ordered list shows the same tab");
+});

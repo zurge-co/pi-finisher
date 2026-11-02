@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, buildCodeRulesPrompt, countLines, formatHygieneViolations, scanComments, scanLength, textBytes } from "../extensions/finisher/index.ts";
+import { createHygieneHook } from "../extensions/finisher/src/hygiene-hook.ts";
 
 const atLimit = Array.from({ length: HYGIENE_MAX_LINES }, (_, i) => `const v${i} = ${i};`).join("\n");
 
@@ -102,4 +106,21 @@ test("the rule text the agent is given states both bounds and the waiver form", 
 	assert.match(p, new RegExp(String(HYGIENE_MAX_LINES)));
 	assert.match(p, new RegExp(`${HYGIENE_MAX_BYTES / 1024}KB`), "the size the prompt promises is the size the scanner enforces");
 	assert.match(p, /finisher-hygiene-allow: <why>/);
+});
+
+test("the hygiene hook judges an oversized file from its size, and never scans a target that is not source", () => {
+	const root = mkdtempSync(join(tmpdir(), "finisher-hygiene-hook-"));
+	try {
+		writeFileSync(join(root, "big.ts"), "x".repeat(HYGIENE_MAX_BYTES + 10));
+		writeFileSync(join(root, "run.log"), "x".repeat(HYGIENE_MAX_BYTES * 4));
+		const hook = createHygieneHook({ state: {}, persist: () => {}, updateWidget: () => {}, pi: { on: () => {} } });
+		const ctx = { cwd: root };
+		const big = hook.applyHygieneCheck({ toolName: "bash", input: { command: "printf x > big.ts" } }, ctx);
+		assert.equal(big?.isError, true, "an oversized source file is still rejected");
+		assert.match(big.content.at(-1).text, /bytes >/);
+		assert.equal(hook.applyHygieneCheck({ toolName: "bash", input: { command: "printf x > run.log" } }, ctx), undefined, "a log is not source and is never read for a review");
+		assert.equal(hook.applyHygieneCheck({ toolName: "read", input: { path: "big.ts" } }, ctx), undefined, "a read writes nothing");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });

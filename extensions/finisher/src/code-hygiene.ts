@@ -190,6 +190,9 @@ export const countLines = (text: string): number => {
 
 export const textBytes = (text: string): number => Buffer.byteLength(text, "utf8");
 
+export const lengthDetail = (kind: "lines" | "bytes", value: number, bound: number): string =>
+	kind === "lines" ? `${value} lines > ${bound} — split this file (a fresh file must fit in one read)` : `${value} bytes > ${bound} — split this file (a read page is bounded, so a module must fit one)`;
+
 export const scanLength = (text: string, path: string, opts: HygieneOptions = {}): HygieneViolation[] => {
 	if (!isHygieneChecked(path)) return [];
 	const maxLines = opts.maxLines ?? HYGIENE_MAX_LINES;
@@ -206,8 +209,8 @@ export const scanLength = (text: string, path: string, opts: HygieneOptions = {}
 		return reason ? [] : [{ path, kind: "exempt-without-reason", detail: `${marker} needs a reason after it` }];
 	}
 	const violations: HygieneViolation[] = [];
-	if (overLines) violations.push({ path, kind: "length", detail: `${total} lines > ${maxLines} — split this file (a fresh file must fit in one read)` });
-	if (overBytes) violations.push({ path, kind: "length", detail: `${size} bytes > ${maxBytes} — split this file (a read page is bounded, so a module must fit one)` });
+	if (overLines) violations.push({ path, kind: "length", detail: lengthDetail("lines", total, maxLines) });
+	if (overBytes) violations.push({ path, kind: "length", detail: lengthDetail("bytes", size, maxBytes) });
 	return violations;
 };
 

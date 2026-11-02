@@ -7,13 +7,11 @@ export const PLAN_OUTPUT_MAX = 4000;
 
 export const PLAN_INFRA_MARKERS: readonly string[] = [
 	"command not found",
-	"enoent",
-	"cannot find module",
-	"no such file or directory",
 	"is not recognized as an internal or external command",
-	"permission denied",
 	"not found in path",
 ];
+
+const MISSING_BARE_MODULE = /cannot find module '(?![/.])[^']+'/i;
 
 export interface PlanTask {
 	id: string;
@@ -35,8 +33,9 @@ export interface PlanResult {
 }
 
 export const isInfraOutput = (output: string): boolean => {
-	const text = String(output ?? "").toLowerCase();
-	return PLAN_INFRA_MARKERS.some((marker) => text.includes(marker));
+	const text = String(output ?? "");
+	if (PLAN_INFRA_MARKERS.some((marker) => text.toLowerCase().includes(marker))) return true;
+	return MISSING_BARE_MODULE.test(text);
 };
 
 export type PlanRunner = (task: PlanTask, timeoutMs: number) => Promise<{ exitCode: number; output: string; timedOut?: boolean }>;
@@ -124,7 +123,7 @@ export const runPlan = async (tasks: PlanTask[], opts: PlanOptions = {}): Promis
 			const key = fingerprint === undefined ? "" : cacheKeyOf(task, fingerprint);
 			const hit = cache && fingerprint !== undefined ? cache.get(key) : undefined;
 			if (hit) {
-				results[at] = { ...hit, cached: true };
+				results[at] = { ...hit, id: task.id, command: planKey(task), cached: true };
 				continue;
 			}
 			const started = Date.now();

@@ -131,7 +131,8 @@ const commandsOnLine = (line: string, strict = false): Candidate[] => {
 	const body = stripFences(line);
 	if (!body) return found;
 	const withoutStatus = body.replace(TRAILING_STATUS, "");
-	const piped = body.includes("|") ? withoutStatus.split("|").slice(1).join(" ").trim() : "";
+	const tableRow = /^\s*\|/.test(body);
+	const piped = !tableRow && body.includes("|") ? withoutStatus.split("|").slice(1).join(" ").trim() : "";
 	const whole = anchoredCommand(body) ? commandName(piped || withoutStatus) : undefined;
 	if (whole) found.push({ command: whole, at: 0, explicit: false });
 	if (strict) {
@@ -163,10 +164,13 @@ const exitFor = (lines: string[], index: number, cand: Candidate): number | unde
 		}
 	}
 	for (const line of lines.slice(index + 1, Math.min(index + 4, lines.length))) {
-		if (OUTPUT_INDENT.test(line) && !PURE_STATUS.test(stripFences(line))) return undefined;
+		const body = stripFences(line);
+		if (!body.trim()) continue;
+		if (OUTPUT_INDENT.test(line) && !PURE_STATUS.test(body)) return undefined;
 		if (commandsOnLine(line).length || commandShaped(line)) return undefined;
 		if (statusInCode(line)) continue;
-		const later = stripFences(line).match(EXIT_LINE);
+		if (!PURE_STATUS.test(body)) return undefined;
+		const later = body.match(EXIT_LINE);
 		if (later) return Number(later[1]);
 	}
 	return undefined;

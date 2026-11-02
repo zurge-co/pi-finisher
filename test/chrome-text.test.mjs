@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHROME_TEXT_MAX, CLARIFY_CHROME_KEYS, GOAL_CHROME_KEYS, clarifyChrome, goalChrome } from "../extensions/finisher/index.ts";
+import { CHROME_TEXT_MAX, CLARIFY_CHROME_KEYS, GOAL_CHROME_KEYS, clarifyChrome, cleanChromeText, goalChrome, usableChrome } from "../extensions/finisher/index.ts";
 
 const chromeLangs = ["en", "th", "ja", "zh", "pt-BR", "de", "zz", "!!", "", undefined];
 
@@ -91,4 +91,10 @@ test("an agent-supplied clarify chrome reaches the question page and the note, s
 	assert.match(m.clarifyNote(["meaning"], "pt-BR", chrome), /pergunto uma vez só/, "the rule the note quotes is the agent's own");
 	const plan = m.clarifyPlan({ goal: "make it better", cases: [] }, {}, "k", "pt-BR", chrome);
 	assert.equal(plan.questions[0].options.at(-1), chrome.asIs, "the plan carries the same words to the ask");
+});
+
+test("a chrome label is one readable line: every separator and control character is dropped, never truncated", () => {
+	for (const bad of ["a\u2028b", "a\u2029b", "a\u0085b", "a\tb", "a\nb", "a\u0007b"]) assert.equal(usableChrome(bad), false, JSON.stringify(bad));
+	assert.equal(usableChrome("a normal label"), true);
+	assert.deepEqual(cleanChromeText(["title"], { title: "a\u2028b" }), {}, "an unusable override falls back to the built-in words");
 });

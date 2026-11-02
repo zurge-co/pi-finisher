@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clip, elapsedLabel, formatPanelRow, hudLines, liveRuns, panelLines, panelRows, panelTickMs, sessionTabs, streamTail } from "../extensions/finisher/index.ts";
+import { clip, elapsedLabel, formatPanelRow, graphemes, hudLines, liveRuns, panelLines, panelRows, panelTickMs, sessionTabs, streamTail } from "../extensions/finisher/index.ts";
 
 const run = (role, extra = {}) => ({ role, status: "running", startedAt: 1_000, at: 1_000, ...extra });
 
@@ -72,4 +72,18 @@ test("fan-out work is labelled CODER on every surface, whatever case the role ar
 		assert.ok(!/swarm/i.test(line), `the old role name never reaches a label: ${line}`);
 	}
 	assert.match(sessionTabs(runs, 0, 200), /1:CODER/);
+});
+
+test("clipping and tailing never split a grapheme: no lone surrogate and no lost combining mark", () => {
+	const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+	for (const [text, max] of [["a😀cd", 3], ["😀😀😀", 2], ["ตารางเวลา", 3], ["🇹🇭🇺🇸🇯🇵", 2], ["ééé", 2]]) {
+		const cut = clip(text, max);
+		const tail = streamTail(text, max);
+		assert.equal(loneSurrogate.test(cut), false, `clip(${JSON.stringify(text)}, ${max}) = ${JSON.stringify(cut)}`);
+		assert.equal(loneSurrogate.test(tail), false, `streamTail(${JSON.stringify(text)}, ${max}) = ${JSON.stringify(tail)}`);
+		assert.ok(graphemes(cut.replace(/…$/, "")).length <= Math.max(0, max - 1), "the body fits the asked width");
+		assert.ok(graphemes(tail.replace(/…$/, "")).length <= max, "the tail fits the asked width");
+	}
+	assert.equal(clip("a😀cd", 3), "a😀…", "the emoji is kept whole");
+	assert.equal(streamTail("ab😀", 2), "b😀", "the tail starts on a grapheme boundary");
 });

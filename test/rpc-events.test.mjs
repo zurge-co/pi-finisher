@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { waitForRun, outcomeLabel, childExitReason, promptRefused, isSettledEvent, isChildExitEvent, raceTimeout, attemptDeadlineMs, clampAttempts, MAX_ATTEMPTS_CEILING, effortFor, enforceDeadline, isValidBashTimeout, MAX_BASH_TIMEOUT_SECONDS } from "../extensions/finisher/index.ts";
+import { waitForRun, outcomeLabel, childExitReason, promptRefused, isSettledEvent, isChildExitEvent, raceTimeout, attemptDeadlineMs, clampAttempts, MAX_ATTEMPTS_CEILING, effortFor, enforceDeadline, isValidBashTimeout, MAX_BASH_TIMEOUT_SECONDS, clampTimerMs, MAX_TIMER_MS } from "../extensions/finisher/index.ts";
 
 const manual = () => {
 	const listeners = new Set();
@@ -109,4 +109,11 @@ test("the wait resolves instead of stranding the caller when a subscriber throws
 	bus.emit({ type: "turn_end" });
 	assert.equal((await wait.done).kind, "deadline");
 	await assert.rejects(raceTimeout(quiet(), 10).then(() => Promise.reject(new Error("no"))), /no/);
+});
+
+test("a deadline above the timer ceiling is clamped instead of firing at 1ms", () => {
+	assert.equal(clampTimerMs(3_000_000_000), MAX_TIMER_MS);
+	assert.equal(clampTimerMs(Number.NaN), MAX_TIMER_MS);
+	assert.equal(clampTimerMs(0), 1);
+	assert.equal(clampTimerMs(1_500), 1_500);
 });

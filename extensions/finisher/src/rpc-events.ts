@@ -1,4 +1,5 @@
 import type { JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { MAX_TIMER_MS } from "./goal-run.ts";
 
 export const CHILD_EXIT_EVENT = "agent_exit";
 
@@ -26,6 +27,8 @@ export interface WaitWatchers {
 	pollMs?: number;
 }
 
+export const clampTimerMs = (ms: number): number => (Number.isFinite(ms) ? Math.min(MAX_TIMER_MS, Math.max(1, Math.floor(ms))) : MAX_TIMER_MS);
+
 export const waitForRun = (subscribe: (onEvent: (ev: JsonAgentSessionEvent) => void) => () => void, watchers: WaitWatchers): { done: Promise<WaitOutcome>; stop: () => void } => {
 	let unsubscribe: () => void = () => {};
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -50,7 +53,7 @@ export const waitForRun = (subscribe: (onEvent: (ev: JsonAgentSessionEvent) => v
 			if (isSettledEvent(ev)) settle({ kind: "settled" });
 			else if (isChildExitEvent(ev)) settle({ kind: "exited", why: (ev as { why?: string }).why ?? "the sub-agent process exited before it settled" });
 		});
-		timer = setTimeout(() => settle({ kind: "deadline" }), Math.max(1, watchers.deadlineMs));
+		timer = setTimeout(() => settle({ kind: "deadline" }), clampTimerMs(watchers.deadlineMs));
 		if (watchers.poll) {
 			pollTimer = setInterval(() => {
 				const why = watchers.poll?.();

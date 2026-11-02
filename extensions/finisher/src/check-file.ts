@@ -93,7 +93,9 @@ export const writeChecks = (cwd: string, entries: CheckEntry[]): boolean => {
 	}
 };
 
-export const appendCheck = (cwd: string, entry: CheckEntry): boolean => writeChecks(cwd, [...readChecks(cwd), entry]);
+export const appendChecks = (cwd: string, entries: CheckEntry[]): boolean => writeChecks(cwd, [...readChecks(cwd), ...(Array.isArray(entries) ? entries : [])]);
+
+export const appendCheck = (cwd: string, entry: CheckEntry): boolean => appendChecks(cwd, [entry]);
 
 export const caseStatus = (entries: CheckEntry[], caseId: string): CheckStatus => {
 	const target = caseKey(caseId);

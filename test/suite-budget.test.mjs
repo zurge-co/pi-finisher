@@ -14,6 +14,7 @@ import {
 	suiteWriteGate,
 } from "../extensions/finisher/src/suite-budget.ts";
 import { STATE_HOME_LABEL } from "../extensions/finisher/index.ts";
+import { createHygieneHook } from "../extensions/finisher/src/hygiene-hook.ts";
 
 const BASELINE = { files: 60, cases: 500 };
 
@@ -97,6 +98,26 @@ test("the baseline plus one file is the whole allowance: the second new file is 
 		assert.equal(suiteWriteGate(baseline, root, "test/a.test.mjs", true), undefined, "growing an existing file is not a new file");
 		assert.equal(suiteWriteGate(baseline, root, "extensions/finisher/src/hud.ts", false), undefined, "only test files are gated");
 		assert.equal(suiteWriteGate(undefined, root, "test/d.test.mjs", false), undefined, "no baseline means the gate never fires");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("the suite ceiling blocks a new test file however it is written, bash included", () => {
+	const root = mkdtempSync(join(tmpdir(), "finisher-suite-bash-"));
+	try {
+		mkdirSync(join(root, "test"), { recursive: true });
+		for (const name of ["a", "b", "c"]) writeFileSync(join(root, "test", `${name}.test.mjs`), 'test("x", () => {});');
+		const baseline = { files: 1, cases: 1 };
+		const hook = createHygieneHook({ state: { suiteAtStart: baseline }, persist: () => {}, updateWidget: () => {}, pi: { on: () => {} } });
+		const ctx = { cwd: root };
+		const heredoc = "cat > test/d.test.mjs <<'EOF'\ntest(\"four\", () => {});\nEOF";
+		const blocked = hook.blockedBySuiteBudget({ toolName: "bash", input: { command: heredoc } }, ctx);
+		assert.match(String(blocked?.reason), /test\/d\.test\.mjs/, "a test file created through bash hits the same ceiling as one created through write");
+		assert.equal(blocked?.block, true);
+		assert.equal(hook.blockedBySuiteBudget({ toolName: "bash", input: { command: "echo ok > notes.txt" } }, ctx), undefined, "a bash write that is not a test file is untouched");
+		assert.equal(hook.blockedBySuiteBudget({ toolName: "write", input: { path: "test/a.test.mjs" } }, ctx), undefined, "growing an existing test file is still allowed");
+		assert.equal(hook.blockedBySuiteBudget({ toolName: "read", input: { path: "test/d.test.mjs" } }, ctx), undefined, "a read never writes anything");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

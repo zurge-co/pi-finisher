@@ -39,11 +39,15 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		gitIn(repo, ["branch", "-D", branch]);
 	};
 
-	const sliceDiff = (repo: string, dir: string, paths: string[]): string => {
-		const files = paths.length ? paths : ["."];
-		gitIn(dir, ["add", "-A", "--", ...files]);
-		const tracked = gitIn(dir, ["diff", "--cached", "HEAD", "--", ...files]);
-		return tracked.ok ? tracked.out : "";
+	const sliceDiff = (dir: string): { diff: string; paths: string[] } => {
+		const added = gitIn(dir, ["add", "-A", "--", "."]);
+		if (!added.ok) return { diff: "", paths: [] };
+		const names = gitIn(dir, ["diff", "--cached", "--name-only", "HEAD"]);
+		const tracked = gitIn(dir, ["diff", "--cached", "HEAD"]);
+		return {
+			diff: tracked.ok ? tracked.out : "",
+			paths: names.ok ? names.out.split("\n").map((path) => path.trim()).filter(Boolean) : [],
+		};
 	};
 
 	const applySlice = (repo: string, diff: string): { ok: boolean; msg: string } => {
@@ -113,7 +117,10 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 				try {
 					if (!r.ok) return { ok: false, output: `${r.output}\n(log: ${r.logPath})` };
 					const reported = parseWorkerFiles(r.output);
-					const changed = reported.length ? reported : gitIn(plan.worktreeDir, ["diff", "--name-only", "HEAD"]).out.split("\n").filter(Boolean);
+					const sliced = sliceDiff(plan.worktreeDir);
+					const changed = sliced.paths;
+					if (!changed.length)
+						return { ok: false, output: `your slice changed no files — make the change in your worktree, run it, then report FILES: and TESTS: again${reported.length ? ` (you reported ${reported.join(", ")}, but the worktree has no change)` : ""}` };
 					const outside = changed.filter((rel) => plan.scopes.length > 0 && !plan.scopes.some((scope) => rel === scope || rel.startsWith(`${scope}/`)));
 					if (outside.length)
 						return { ok: false, output: `your slice wrote outside the files it owns: ${outside.join(", ")} — only ${plan.scopes.join(", ")} belong to slice ${plan.id}. Move the change, or ask the main agent for a wider slice.` };
@@ -142,8 +149,7 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 					const tests = parseWorkerTests(r.output);
 					if (tests?.result === "FAIL")
 						return { ok: false, output: `your slice reports ${tests.result}: ${tests.detail || "(no reason given)"} — fix the failure in your checkout, re-run the tests, then report TESTS: and FILES: again` };
-					const diff = sliceDiff(ctx.cwd, plan.worktreeDir, changed);
-					outcomes.push({ id: plan.id, ok: true, paths: changed, diff, output: r.output, ...(tests ? { tests: tests.result } : {}), ...(task.payload?.dependsOn?.length ? { dependsOn: task.payload.dependsOn } : {}) });
+					outcomes.push({ id: plan.id, ok: true, paths: changed, diff: sliced.diff, output: r.output, ...(tests ? { tests: tests.result } : {}), ...(task.payload?.dependsOn?.length ? { dependsOn: task.payload.dependsOn } : {}) });
 					return { ok: true, output: r.output };
 				} finally {
 					dropWorkerWorktree(ctx.cwd, plan.worktreeDir, plan.branch);
@@ -157,8 +163,10 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 			if (!step.apply) continue;
 			const o = outcomes.find((x) => x.id === step.id)!;
 			const res = applySlice(ctx.cwd, o.diff ?? "");
-			if (res.ok) applied.push(o.id);
-			else failedApplies.push(`${o.id}: ${res.msg}`);
+			if (res.ok) {
+				applied.push(o.id);
+				state.lastModifiedAt = Date.now();
+			} else failedApplies.push(`${o.id}: ${res.msg}`);
 		}
 		const failed = results.filter((r) => !r.ok);
 		const metrics = swarmMetrics(results, Date.now() - swarmStart);

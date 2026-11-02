@@ -306,9 +306,9 @@ export const swarmSummaryLine = (results: SwarmResult[]): string => {
 };
 
 export const SWARM_ROUTING_GUIDELINE = [
-	"Parallelism is your default, not a last resort: when a goal needs several independent reads (survey the repo, compare options, locate code) or several independent proofs, call code instead of serialising the work through yourself.",
+	"Parallelism is your default when the work truly splits: code is for several independent EDITS whose owned paths no two slices share — reading, surveying, comparing and locating code stay your own work, never a fan-out.",
 	"A fan-out report IS the evidence: act on its findings instead of re-reading what a worker already read or re-running what it already ran, and open a file yourself only when the report names a gap.",
-	`The CODERS run the configured model ladder (priority1..priority5 in ${STATE_HOME_LABEL}/models.json) at the same time — use every slot the config offers, and never ask the human which model to use.`,
+	`The CODERS run the configured model ladder (priority1..priority5 in ${STATE_HOME_LABEL}/models.json) at the same time — use the slots the work genuinely fills, and never ask the human which model to use.`,
 	"Never spawn a lone CODER: fewer than two slices is refused, because a CODER is only worth its cost when at least two run side by side. If the work does not split into two independent slices, do the slice yourself instead of calling code.",
 	"While the CODERS run you code your own slice IN THE SAME TURN — your own edits and commands in the same tool block as the fan-out — and you never sit idle waiting for them: main works alongside the coders, then finishes its own slice when their reports come back.",
 	"When a command already proves a case, name that command and never run an equivalent again: a script that already passed is evidence, not work to repeat.",

@@ -115,3 +115,11 @@ test("the coder floor is an exact boundary for every input: fewer than 2 slices 
 	assert.match(MAIN_ALONGSIDE_LINE, /main/i, "the alongside rule is about main, not the coders alone");
 	assert.ok(MAIN_ALONGSIDE_LINE.length > 0);
 });
+
+test("a scope the matcher cannot apply is refused before a coder runs, instead of failing every attempt", () => {
+	for (const bad of [".", "..", "/abs/src", "~/src", "src/*.ts", "src/**", "src/?a.ts", "C:/repo/src", "src/../etc"]) {
+		const refusals = planRefusals(plan([slice("a", [bad])]));
+		assert.equal(refusals.some((r) => r.kind === "files"), true, `${JSON.stringify(bad)} is not a usable owned path`);
+	}
+	assert.deepEqual(planRefusals(plan([slice("a", ["src/a.ts", "lib/"])])), [], "real repo-relative files and directories still pass");
+});

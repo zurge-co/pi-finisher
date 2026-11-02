@@ -4,6 +4,8 @@ import { type QueuedGoal } from "./types.ts";
 
 export const GOAL_QUEUE_MAX = 8;
 
+export const QUEUED_NOTES_HEAD = "kept from the human's own answer, so they are never guessed again:";
+
 export const goalQueueOf = (state: { goalQueue?: QueuedGoal[] }): QueuedGoal[] => state.goalQueue ?? [];
 
 export const queueIndexOf = (queue: QueuedGoal[], goal: string): number => queue.findIndex((q) => goalKey(q.goal) === goalKey(goal));

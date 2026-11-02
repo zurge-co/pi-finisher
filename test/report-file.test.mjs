@@ -72,3 +72,14 @@ test("liveReport is the row while the report file is there and nothing once it i
 	assert.equal(readReportFile(join(cwd, "never-written.md")), undefined);
 	rmSync(cwd, { recursive: true, force: true });
 });
+
+test("a newer report on disk outranks the meta an earlier goal left in state", () => {
+	const cwd = freshCwd();
+	const older = writeReportFile(cwd, input("older", { outcome: "verified", at: 1_700_000_000_000 }));
+	const newer = writeReportFile(cwd, input("newer", { outcome: "halted", at: 1_700_000_100_000, laps: 1 }));
+	assert.deepEqual(currentReport(cwd, older), { outcome: "halted", laps: 1, at: 1_700_000_100_000, goal: "ship the race HUD" }, "the file on disk decides, never a stale meta");
+	assert.deepEqual(currentReport(cwd, newer), liveReport(newer), "a live meta and the disk still answer the same");
+	rmSync(newer.path);
+	assert.equal(currentReport(cwd, older), undefined, "no file, no report, however live the meta looked");
+	rmSync(cwd, { recursive: true, force: true });
+});

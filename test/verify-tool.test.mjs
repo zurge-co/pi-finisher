@@ -276,3 +276,21 @@ test("verify runs the repo's checks through the plan and writes its evidence to 
 	await s.run("verify", { cases: [] });
 	assert.equal(runs(), 1, "a second pass over the same edit state is answered from the plan cache — the suite is not re-run");
 });
+
+test("a cut id binds the case it cuts, never a shorter case that happens to be its prefix", () => {
+	const cases = ["login works", "login works on mobile"];
+	const bound = bindClaims(cases, [{ id: "login works on…", command: "npm test", human: false }]);
+	assert.equal(bound.commands.get("login works on mobile"), "npm test");
+	assert.equal(bound.commands.has("login works"), false, "the shorter case is not credited with a command it never named");
+	assert.deepEqual(bound.unbound, []);
+	assert.equal(bindClaims(cases, [{ id: "login works on", command: "x", human: false }]).commands.get("login works on mobile"), "x");
+});
+
+test("a case command that hits its deadline is unproven, never a failure of the repo", async () => {
+	const commands = new Map([["c1", "sleep 999"]]);
+	const [deadline] = await judgeDeterministic(["c1"], commands, [], [], async (command) => ({ name: command, command, exitCode: 124, tail: "", status: "deadline" }));
+	assert.equal(deadline.result, "UNVERIFIED");
+	assert.match(deadline.reason, /deadline/);
+	const [infra] = await judgeDeterministic(["c1"], commands, [], [], async (command) => ({ name: command, command, exitCode: 127, tail: "command not found", status: "infra" }));
+	assert.equal(infra.result, "UNVERIFIED", "a toolchain that could not run proves nothing either");
+});

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { PLAN_DEFAULT_CONCURRENCY, type PlanResult, type PlanRunner, type PlanStatus, type PlanTask, runPlan, scopedPlan, statusOf } from "./check-runner.ts";
@@ -47,6 +47,11 @@ export const isCheckScript = (name: string, body?: unknown): boolean => {
 	return typeof body === "string" && TEST_RUNNER.test(body);
 };
 
+const STATIC_CHECK = /^(?:typecheck|types?|lint)(?:[-:][\w:-]+)?$/i;
+
+export const isBehaviourCheck = (name: string, body?: unknown): boolean =>
+	!STATIC_CHECK.test(String(name ?? "").trim()) && isCheckScript(name, body);
+
 const checkRank = (name: string): number => {
 	const at = (CHECK_ORDER as readonly string[]).indexOf(name);
 	return at >= 0 ? at : CHECK_ORDER.length;
@@ -74,12 +79,11 @@ export const readPackage = (cwd: string): { scripts?: Record<string, unknown> } 
 };
 
 const PATH_TOKEN = /[^\s"'`=]+/g;
-const PATH_EXT = /\.(?:ts|tsx|js|mjs|cjs|jsx|json|sh|py)$/i;
 
 const topSegment = (token: string): string | undefined => {
 	const clean = token.replace(/^\.\//, "").replace(/\\/g, "/").replace(/^["'`]|["'`]$/g, "");
 	if (!clean || clean.startsWith("-") || clean.startsWith("@") || /^[a-z][a-z0-9+.-]*:\/\//i.test(clean)) return undefined;
-	if (!clean.includes("/") && !PATH_EXT.test(clean)) return undefined;
+	if (!clean.includes("/")) return undefined;
 	const head = clean.split("/")[0];
 	if (!head || head === "." || head === ".." || head === "node_modules" || head.includes("$")) return undefined;
 	return head;
@@ -133,7 +137,7 @@ export const customChecks = (list: unknown): DeterministicCheck[] => customCheck
 
 export const checkTask = (check: DeterministicCheck, pkg?: { scripts?: Record<string, unknown> }): PlanTask => {
 	const body = pkg?.scripts?.[check.name];
-	const derived = scriptPaths(typeof body === "string" ? body : "");
+	const derived = isBehaviourCheck(check.name, body) ? [] : scriptPaths(typeof body === "string" ? body : "");
 	const paths = derived.length ? [...new Set([...derived, "package.json"])] : [];
 	return { id: check.name, command: check.command, args: check.args, ...(paths.length ? { paths } : {}) };
 };
@@ -154,9 +158,27 @@ export const changedPaths = (cwd: string): string[] => {
 	const result = gitOk(["status", "--porcelain", "--untracked-files=all"], cwd);
 	if (!result.ok) return [];
 	const out: string[] = [];
+	const seen = new Set<string>();
 	for (const line of result.out.split(/\r?\n/))
-		for (const path of statusLinePaths(line)) if (!CHANGE_IGNORED.test(path) && !out.includes(path)) out.push(path);
+		for (const path of statusLinePaths(line))
+			if (!CHANGE_IGNORED.test(path) && !seen.has(path)) {
+				seen.add(path);
+				out.push(path);
+			}
 	return out;
+};
+
+export const WORKSPACE_STAMP_MAX = 200;
+
+export const workspaceStamp = (cwd: string, paths: string[] = changedPaths(cwd)): number => {
+	let newest = 0;
+	for (const rel of (Array.isArray(paths) ? paths : []).slice(0, WORKSPACE_STAMP_MAX)) {
+		try {
+			newest = Math.max(newest, statSync(join(cwd, rel)).mtimeMs);
+		} catch {
+		}
+	}
+	return Number.isFinite(newest) ? Math.max(0, Math.floor(newest)) : 0;
 };
 
 const fresh = (call: RecordedCall, after?: number): boolean => !Number.isFinite(after) || call.at === undefined || call.at >= (after as number);
@@ -249,11 +271,16 @@ export const checkFingerprint = (cwd: string, lastModifiedAt?: number): string =
 export const runCheckStage = async (checks: DeterministicCheck[], opts: CheckStageOptions): Promise<CheckStage> => {
 	const list = Array.isArray(checks) ? checks : [];
 	const bodyOf = (check: DeterministicCheck): unknown => opts.pkg?.scripts?.[check.name];
-	const covered = new Set(list.flatMap((check) => checkCommandForms(check.name)).map(normalizeCommand));
+	const packageTasks = checkTasks(list, opts.pkg);
+	const packageRecorded = packageTasks.map((_task, at) => recordedCheckOk(opts.calls ?? [], list[at], opts.lastModifiedAt, bodyOf(list[at])));
+	const pendingPackages = packageTasks.filter((_task, at) => !packageRecorded[at]);
+	const inScopePackages = new Set(scopedPlan(pendingPackages, opts.changed ?? []).map((task) => task.id));
+	const covering = list.filter((_check, at) => packageRecorded[at] || inScopePackages.has(packageTasks[at].id));
+	const covered = new Set(covering.flatMap((check) => checkCommandForms(check.name)).map(normalizeCommand));
 	const custom = customCheckEntries(opts.custom).filter((entry) => !covered.has(normalizeCommand(entry.command)));
 	const all = [...custom.map((entry) => entry.check), ...list];
 	const bodies: unknown[] = [...custom.map((entry) => entry.command), ...list.map(bodyOf)];
-	const tasks = [...custom.map((entry) => ({ id: entry.check.name, command: entry.check.command, args: entry.check.args })), ...checkTasks(list, opts.pkg)];
+	const tasks = [...custom.map((entry) => ({ id: entry.check.name, command: entry.check.command, args: entry.check.args })), ...packageTasks];
 	const recordedAt = tasks.map((task, at) => recordedCheckOk(opts.calls ?? [], all[at], opts.lastModifiedAt, bodies[at]));
 	const recorded = tasks.filter((task, at) => recordedAt[at]).map((task) => task.id);
 	const pending = tasks.filter((task, at) => !recordedAt[at]);
@@ -340,7 +367,7 @@ export const runCommand = async (command: string, cwd: string, timeoutMs: number
 		const out = await execFileAsync("bash", ["-lc", command], { ...SPAWN_OPTS, cwd, timeout: Math.max(1_000, timeoutMs) });
 		return { name: command, command, exitCode: 0, tail: String(out.stdout ?? "").trim(), status: "pass" };
 	} catch (err) {
-		const { exitCode, tail } = spawnFailure(err);
-		return { name: command, command, exitCode, tail, status: exitCode === 0 ? "pass" : "fail" };
+		const { exitCode, tail, timedOut } = spawnFailure(err);
+		return { name: command, command, exitCode, tail, status: statusOf({ exitCode, output: tail, ...(timedOut ? { timedOut: true } : {}) }) };
 	}
 };

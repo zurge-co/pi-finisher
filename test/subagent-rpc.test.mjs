@@ -15,6 +15,9 @@ import {
 	textFromEvent,
 	toolLineFromEvent,
 	isSettled,
+	liveRpcRuns,
+	steerLive,
+	followUpLive,
 } from "../extensions/finisher/index.ts";
 
 const here = new URL("..", import.meta.url).pathname;
@@ -115,4 +118,25 @@ test("the timer is cleared, so a finished run leaves no stray timeout holding th
 	await Promise.all([raceTimeout(Promise.resolve(1), 60_000), raceTimeout(Promise.resolve(2), 60_000)]);
 	const after = process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
 	assert.ok(after <= before, `timeouts leaked: ${before} → ${after}`);
+});
+
+test("a steer is counted only when the live client really accepted it", async () => {
+	liveRpcRuns.clear();
+	liveRpcRuns.set("good", { role: "coder", startedAt: 1, client: { steer: async () => "delivered", followUp: async () => "queued" } });
+	liveRpcRuns.set("dead", {
+		role: "coder",
+		startedAt: 2,
+		client: {
+			steer: async () => {
+				throw new Error("stdin closed");
+			},
+			followUp: async () => {
+				throw new Error("stdin closed");
+			},
+		},
+	});
+	assert.equal(await steerLive("coder", "go left"), 1, "the dead client is never reported as steered");
+	assert.equal(await followUpLive("coder", "after this"), 1);
+	liveRpcRuns.clear();
+	assert.equal(await steerLive("coder", "nobody is live"), 0);
 });

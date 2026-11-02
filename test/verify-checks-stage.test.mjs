@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,6 +16,7 @@ import {
 	customCheckEntries,
 	detectChecks,
 	failingChecks,
+	isBehaviourCheck,
 	judgeDeterministic,
 	readChecks,
 	readPackage,
@@ -24,6 +25,7 @@ import {
 	runCheckStage,
 	scriptPaths,
 	skippedChecks,
+	workspaceStamp,
 	writesFiles,
 } from "../extensions/finisher/index.ts";
 
@@ -70,11 +72,17 @@ test("a green recording is proof only while it is newer than the last edit — e
 	assert.deepEqual(await stageOf(green(1), undefined), { ran: 0, status: "pass", recorded: 1 }, "with no edit on record, staleness cannot be claimed");
 });
 
-test("only a check that names its own paths can be scoped away, and a scoped check's silence is never a failure", async () => {
-	assert.deepEqual(scriptPaths("node --no-warnings --test test/a.test.mjs test/b.test.mjs"), ["test"], "the paths a check owns come from its own script");
+test("a static check is scoped by the paths it names, a check that runs tests always runs, and a scoped check's silence is never a failure", async () => {
+	assert.deepEqual(scriptPaths("node --no-warnings --test test/a.test.mjs test/b.test.mjs"), ["test"], "the paths a check names still come from its own script");
 	assert.deepEqual(scriptPaths("tsc --noEmit --module esnext --allowImportingTsExtensions extensions/finisher/index.ts"), ["extensions"]);
 	assert.deepEqual(scriptPaths("eslint ."), [], "a script that names no path owns nothing in particular");
 	assert.equal(checkTask(CHECK, { scripts: { test: "eslint ." } }).paths, undefined, "an unscoped check always runs — it can never be skipped by a change set");
+	assert.equal(checkTask(CHECK, { scripts: { test: "node --test test/*.test.mjs" } }).paths, undefined, "tests import code they never name, so a test check is never scoped away");
+	assert.deepEqual(checkTask({ name: "lint", command: "npm", args: ["run", "--silent", "lint"] }, { scripts: { lint: "eslint lib/*.ts" } }).paths, ["lib", "package.json"], "static analysis still owns exactly the paths it names");
+	assert.equal(isBehaviourCheck("test:e2e", "playwright test"), true);
+	assert.equal(isBehaviourCheck("gate", "node --test test/*.test.mjs"), true, "a runner in the body is behaviour wherever the script is named");
+	assert.equal(isBehaviourCheck("lint", "eslint lib"), false);
+	assert.equal(isBehaviourCheck("typecheck", "tsc --noEmit src/a.ts"), false, "typecheck and lint are the static checks that can be scoped");
 
 	const dir = repo({ test: "node --test test/*.test.mjs", lint: "eslint lib/*.ts" });
 	const pkg = readPackage(dir);
@@ -90,10 +98,10 @@ test("only a check that names its own paths can be scoped away, and a scoped che
 			return { exitCode: 0, output: "" };
 		},
 	});
-	assert.equal(ran, 0, "a documentation change can affect neither check, so neither is spawned");
-	assert.deepEqual(stage.results.map(checkStatusOf), ["scoped", "scoped"]);
+	assert.equal(ran, 1, "a documentation change cannot affect lint, but it never excuses the test suite");
+	assert.deepEqual(stage.results.map(checkStatusOf), ["scoped", "pass"]);
 	assert.deepEqual(failingChecks(stage.results), [], "not running is not failing");
-	assert.equal(skippedChecks(stage.results).length, 2);
+	assert.equal(skippedChecks(stage.results).length, 1);
 	const evidence = await judgeDeterministic(["c1"], new Map([["c1", "node check.mjs"]]), [{ command: "node check.mjs", ok: true }], stage.results);
 	assert.deepEqual(evidence.map((c) => c.result), ["PASS"], "a skipped check leaves the case to its own recording");
 });
@@ -240,4 +248,41 @@ test("the model's checks are bounded, deduped and never shadow a package check",
 		},
 	});
 	assert.equal(ran, 1, "a custom check that is the package check already running is not a second run of it");
+});
+
+test("a script that names only a root config file cannot be scoped away from source changes", () => {
+	assert.deepEqual(scriptPaths("tsc -p tsconfig.json"), [], "a root-level config is not ownership of a source tree");
+	assert.deepEqual(scriptPaths("jest --config jest.config.js"), []);
+	assert.equal(checkTask({ name: "typecheck", command: "npm", args: ["run", "--silent", "typecheck"] }, { scripts: { typecheck: "tsc -p tsconfig.json" } }).paths, undefined, "the check always runs, so a source edit is still typechecked");
+});
+
+test("a custom check is only folded into a package check that will actually run", async () => {
+	const dir = repo({ lint: "eslint lib/*.ts" });
+	const pkg = readPackage(dir);
+	const seen = [];
+	const stage = await runCheckStage(detectChecks(pkg), {
+		cwd: dir,
+		timeoutMs: 5_000,
+		pkg,
+		changed: ["README.md"],
+		custom: [{ name: "style", command: "npm run lint" }],
+		run: async (task) => {
+			seen.push(task.id);
+			return { exitCode: 0, output: "" };
+		},
+	});
+	assert.deepEqual(seen, ["case:style"], "the package lint is scoped away, so the model's own check is the one that runs");
+	assert.equal(stage.results.find((r) => r.name === "case:style").status, "pass");
+});
+
+test("the workspace stamp is the newest mtime of the changed files, so an edit the harness never saw still makes old evidence stale", () => {
+	const dir = repo({});
+	writeFileSync(join(dir, "a.ts"), "a");
+	writeFileSync(join(dir, "b.ts"), "b");
+	utimesSync(join(dir, "a.ts"), new Date(5_000), new Date(5_000));
+	utimesSync(join(dir, "b.ts"), new Date(9_000), new Date(9_000));
+	assert.equal(workspaceStamp(dir, ["a.ts", "b.ts"]), 9_000);
+	assert.equal(workspaceStamp(dir, ["a.ts"]), 5_000);
+	assert.equal(workspaceStamp(dir, ["missing.ts"]), 0, "a path that cannot be read adds no freshness");
+	assert.equal(workspaceStamp(dir, []), 0);
 });

@@ -4,7 +4,7 @@ import { goalDriverDone } from "./goal-driver.ts";
 import { hudActive, hudRender, hudSignature, HUD_MAX_ROWS, type HudGoal, type HudInput, type HudTheme } from "./hud.ts";
 import { GOAL_HIT } from "./goal-page.ts";
 import { REPORT_HIT } from "./report-page.ts";
-import { currentReport } from "./report-file.ts";
+import { currentReport, liveReport, currentReportMeta } from "./report-file.ts";
 import { panelTickMs } from "./agent-panel.ts";
 import { raceLoaderFrames, raceState } from "./race-state.ts";
 import { type HarnessContext } from "./kit.ts";
@@ -38,14 +38,14 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		};
 	};
 
-	const hudInput = (): Omit<HudInput, "width"> => ({
+	const hudInput = (report: HudInput["report"]): Omit<HudInput, "width"> => ({
 		runs: state.subagentRuns,
 		goal: goalOf(),
-		report: currentReport(lastCtx?.cwd, state.lastReport),
+		report,
 		maxRows: HUD_MAX_ROWS,
 	});
 
-	const widgetVisible = (): boolean => hudActive({ ...hudInput(), width: 1 });
+	const widgetVisible = (): boolean => hudActive({ ...hudInput(currentReport(lastCtx?.cwd, state.lastReport)), width: 1 });
 
 	let lastCtx: ExtensionContext | undefined;
 	let lastSignature: string | undefined;
@@ -78,7 +78,9 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		if (!ctx.hasUI) return;
 		lastCtx = ctx;
 		syncLoader(ctx);
-		const signature = hudSignature(hudInput());
+		const reportMeta = currentReportMeta(lastCtx.cwd, state.lastReport);
+		const input = hudInput(liveReport(reportMeta));
+		const signature = hudSignature(input);
 		if (signature !== lastSignature) {
 			lastSignature = signature;
 			ctx.ui.setWidget(
@@ -104,7 +106,7 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 					};
 					return {
 						render: (width: number) => {
-							const painted = hudRender({ ...hudInput(), width }, theme as unknown as HudTheme);
+							const painted = hudRender({ ...input, report: liveReport(reportMeta), width }, theme as unknown as HudTheme);
 							hits = painted.hits;
 							return painted.lines;
 						},
@@ -124,7 +126,7 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		const goal = state.goalDriver;
 		if (goal && !goalDriverDone(goal)) return RACE_TICK_MS;
 		const liveCount = state.subagentRuns.filter((r) => r.status === "running").length;
-		return liveCount && widgetVisible() ? panelTickMs(liveCount) : undefined;
+		return liveCount ? panelTickMs(liveCount) : undefined;
 	};
 
 	const rescheduleTicker = (ctx: ExtensionContext) => {
@@ -137,11 +139,15 @@ export const createPanelWidget = (ctx: HarnessContext) => {
 		if (!want) return;
 		ticker.timer = setInterval(() => {
 			if (!ticker.ctx) return;
-			lastSignature = undefined;
 			updateWidget(ticker.ctx);
 		}, want);
 		ticker.timer.unref?.();
 	};
 
-	return { activeRun, updateWidget, rescheduleTicker, widgetVisible, syncLoader };
+	const resetWidget = (): void => {
+		lastSignature = undefined;
+		lastLoader = undefined;
+	};
+
+	return { activeRun, updateWidget, rescheduleTicker, widgetVisible, syncLoader, resetWidget };
 };

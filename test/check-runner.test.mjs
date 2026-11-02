@@ -89,7 +89,10 @@ test("a missing toolchain and a cut-off check never count as the repo being brok
 	assert.equal(statusOf({ exitCode: 0, output: "" }), "pass");
 	assert.equal(statusOf({ exitCode: 0, output: "Cannot find module 'typescript'" }), "pass", "exit zero is a pass whatever the output says");
 	assert.equal(statusOf({ exitCode: 127, output: "sh: tsc: command not found" }), "infra");
-	assert.equal(statusOf({ exitCode: 1, output: "Error: ENOENT: no such file or directory" }), "infra");
+	assert.equal(statusOf({ exitCode: 127, output: "bash: tsc: command not found" }), "infra", "a toolchain that cannot be executed is not the repo failing");
+	assert.equal(statusOf({ exitCode: 1, output: "Error: ENOENT: no such file or directory" }), "fail", "a missing fixture at exit 1 is the repo failing, not a missing toolchain");
+	assert.equal(statusOf({ exitCode: 1, output: "Error: Cannot find module './missing'" }), "fail", "a relative import that no longer resolves is a real failure");
+	assert.equal(statusOf({ exitCode: 1, output: "Error: Cannot find module 'eslint'" }), "infra", "a missing bare tool module is the toolchain, not the repo");
 	assert.equal(statusOf({ exitCode: 3, output: "2 tests failed" }), "fail");
 	assert.equal(statusOf({ exitCode: 0, output: "", timedOut: true }), "deadline");
 	for (const marker of PLAN_INFRA_MARKERS) assert.equal(isInfraOutput(`prefix ${marker} suffix`), true);
@@ -117,4 +120,21 @@ test("the real runner maps a real exit code and a real deadline", async () => {
 	assert.equal(slow.timedOut, true, "a hung check is cut by its deadline");
 	assert.equal(statusOf(slow), "deadline");
 	assert.ok(slow.output.length <= PLAN_OUTPUT_MAX, "the captured output stays under the cap");
+});
+
+test("a cached result answers the task that asked for it, never the task that first ran it", async () => {
+	const cache = new Map();
+	const run = async () => ok;
+	const first = await runPlan([{ id: "a", command: "node", args: ["-e", "0"] }], { run, cache, fingerprint: "f1" });
+	assert.deepEqual(first.map((r) => r.id), ["a"]);
+	const second = await runPlan([{ id: "b", command: "node", args: ["-e", "0"] }], { run, cache, fingerprint: "f1" });
+	assert.deepEqual(second.map((r) => [r.id, r.cached]), [["b", true]], "the hit is re-stamped with the id and command of the task that asked");
+	const pair = await runPlan(
+		[
+			{ id: "x", command: "node", args: ["-e", "0"] },
+			{ id: "y", command: "node", args: ["-e", "0"] },
+		],
+		{ run, cache: new Map(), fingerprint: "f2", concurrency: 1 },
+	);
+	assert.deepEqual(pair.map((r) => r.id), ["x", "y"], "two tasks with one command still each get their own result");
 });

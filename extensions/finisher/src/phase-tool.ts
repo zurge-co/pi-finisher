@@ -40,20 +40,23 @@ export const applyPhaseCall = (state: { goalDriver?: GoalRunState }, call: Phase
 			plan: declared,
 		};
 	}
-	if (call.done === undefined) {
+	const given = typeof call.done === "string" ? call.done.trim() : undefined;
+	const closes = call.done === true || (given !== undefined && given.length > 0);
+	if (!closes) {
 		const gate = verifyGate(plan);
 		return {
 			text: [
 				plan.phases.length ? `plan (${lapLabel(plan)}):` : "no plan yet — declare one with lap plan=[...]",
 				...phaseListLines(plan),
 				"",
-				call.done === undefined && gate.allowed ? "every lap is closed — call verify once." : gate.note,
-			].join("\n"),
+				call.done === undefined ? "" : "no lap was closed — done only closes a lap that is finished.",
+				gate.allowed ? "every lap is closed — call verify once." : gate.note,
+			].filter(Boolean).join("\n"),
 			action: "none",
 			plan,
 		};
 	}
-	const ref = typeof call.done === "string" && call.done !== "true" ? call.done.trim() : undefined;
+	const ref = given && given !== "true" ? given : undefined;
 	const next = completeLap(plan, ref || undefined, at);
 	if (next === plan) return { text: `lap: ${ref ? `"${ref}" is not the current lap` : "there is no open lap to close"} — laps close in order, now: ${lapLabel(plan)}`, action: "blocked", plan };
 	state.goalDriver = { ...driver, phases: next.phases, lap: next.lap, lapAt: next.lapAt, lapMs: next.lapMs };

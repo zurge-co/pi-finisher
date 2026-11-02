@@ -70,6 +70,8 @@ export const liveRpcRuns = new Map<string, RpcRunHandle>();
 
 export const runKey = (role: string, at: number): string => `${role}:${at}`;
 
+let runSeq = 0;
+
 export const textFromEvent = (ev: JsonAgentSessionEvent): string => {
 	const e = ev as { type?: string; assistantMessageEvent?: { type?: string; delta?: string } };
 	return e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta" && typeof e.assistantMessageEvent.delta === "string" ? e.assistantMessageEvent.delta : "";
@@ -185,7 +187,8 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 		...(wanted.model ? { model: wanted.model } : {}),
 	});
 	const startedAt = Date.now();
-	const key = runKey(opts.role, startedAt);
+	runSeq += 1;
+	const key = `${runKey(opts.role, startedAt)}:${runSeq}`;
 	liveRpcRuns.set(key, { role: opts.role, client, startedAt, logPath: opts.logPath, onChunk: opts.onChunk });
 	const append = (s: string) => {
 		try {
@@ -221,8 +224,14 @@ export const runRpcSubagent = async (opts: RpcRunOptions): Promise<{ ok: boolean
 				),
 			{ deadlineMs: opts.timeoutMs, signal: opts.signal, poll: () => childExitPoll(client), pollMs: CHILD_POLL_MS },
 		);
-		const disposition = await boundedCall(client.prompt(opts.prompt), `rpc prompt (${opts.role})`, RPC_CALL_MS, () => "queued").catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
-		if (promptRefused(disposition)) {
+		let disposition: unknown;
+		try {
+			disposition = await boundedCall(client.prompt(opts.prompt), `rpc prompt (${opts.role})`, RPC_CALL_MS, () => "queued");
+		} catch (err) {
+			wait.stop();
+			throw err;
+		}
+		if (promptRefused(disposition as string | undefined)) {
 			wait.stop();
 			append("\n--- prompt handled without a run ---\n");
 			return { ok: false, output: `the sub-agent accepted the prompt without starting a run (disposition: ${String(disposition)}) — nothing was executed (log: ${opts.logPath})`, logPath: opts.logPath };
@@ -269,17 +278,22 @@ export const markSteerInLog = (logPath: string | undefined, mode: "steer" | "fol
 	}
 };
 
-const pushIntoLive = async (role: string, message: string, mode: "steer" | "followUp"): Promise<RpcRunHandle[]> => {
-	const live = liveByRole(role);
-	for (const r of live) {
+const STEER_LOST = Symbol("steerLost");
+
+const pushIntoLive = async (role: string, message: string, mode: "steer" | "followUp"): Promise<number> => {
+	let sent = 0;
+	for (const r of liveByRole(role)) {
 		markSteerInLog(r.logPath, mode, message);
-		if (mode === "followUp") await boundedCall(r.client.followUp(message), `rpc followUp (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
-		else await boundedCall(r.client.steer(message), `rpc steer (${r.role})`, RPC_CALL_MS, () => "timed-out" as never).catch(() => undefined);
+		const outcome =
+			mode === "followUp"
+				? await boundedCall<unknown>(r.client.followUp(message), `rpc followUp (${r.role})`, RPC_CALL_MS, () => STEER_LOST).catch(() => STEER_LOST)
+				: await boundedCall<unknown>(r.client.steer(message), `rpc steer (${r.role})`, RPC_CALL_MS, () => STEER_LOST).catch(() => STEER_LOST);
+		if (outcome !== STEER_LOST) sent += 1;
 	}
-	return live;
+	return sent;
 };
 
-export const steerLive = async (role: string, message: string): Promise<number> => (await pushIntoLive(role, message, "steer")).length;
+export const steerLive = async (role: string, message: string): Promise<number> => pushIntoLive(role, message, "steer");
 
-export const followUpLive = async (role: string, message: string): Promise<number> => (await pushIntoLive(role, message, "followUp")).length;
+export const followUpLive = async (role: string, message: string): Promise<number> => pushIntoLive(role, message, "followUp");
 

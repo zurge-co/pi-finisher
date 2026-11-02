@@ -194,3 +194,17 @@ test("after the goal closes, the prompt stops carrying a tracker — a finished 
 	const out = await prompt(hooks, ctx);
 	assert.ok(!out.systemPrompt.includes("[finisher lap tracker]"));
 });
+
+test("an open goal reaches the model as a run, not as a conversation, in every consult mode", async () => {
+	const hooks = await loadHarness();
+	const cwd = tmpRepo();
+	for (const mode of ["always", "off", "auto"]) {
+		const ctx = session(cwd, withPlan(["a", "b"]));
+		await fire(hooks, "session_start", {}, ctx);
+		process.env.FINISHER_CONSULT_MODE = mode;
+		const out = await prompt(hooks, ctx);
+		delete process.env.FINISHER_CONSULT_MODE;
+		assert.match(out?.systemPrompt ?? "", /A goal is open/, `${mode}: the open run is what this turn is`);
+		assert.doesNotMatch(out?.systemPrompt ?? "", /held this session as a conversation|do NOT call goal|set consultMode: off/, `${mode}: no intent rule fights the open run`);
+	}
+});

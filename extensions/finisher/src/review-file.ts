@@ -1,4 +1,4 @@
-import { formatHygieneViolations, isHygieneChecked, scanSource, type HygieneViolation } from "./code-hygiene.ts";
+import { HYGIENE_MAX_BYTES, formatHygieneViolations, isHygieneChecked, lengthDetail, scanSource, type HygieneViolation } from "./code-hygiene.ts";
 import { analyzeTestFile, formatTestFindings, isTestFile, type TestFinding } from "./test-quality.ts";
 
 export interface FileReview {
@@ -22,6 +22,11 @@ export const reviewWrittenFile = (path: string, text: string): FileReview => {
 		weakTests,
 		message: parts.join("\n\n"),
 	};
+};
+
+export const oversizeFileReview = (path: string, bytes: number): FileReview => {
+	const violations: HygieneViolation[] = [{ path, kind: "length", detail: lengthDetail("bytes", bytes, HYGIENE_MAX_BYTES) }];
+	return { ok: false, path, violations, weakTests: [], message: formatHygieneViolations(violations) };
 };
 
 export const buildFileReviewReport = (review: FileReview): string =>

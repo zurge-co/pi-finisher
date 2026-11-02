@@ -19,6 +19,16 @@ export interface PlanInput {
 
 export const normalizeOwned = (raw: string): string => normalizeScope(raw.replace(/\/{2,}/g, "/"));
 
+const GLOB_CHARS = /[*?[\]{}]/;
+
+export const usableOwnedPath = (raw: string): boolean => {
+	const path = normalizeOwned(raw);
+	if (!path || path === "." || path === "..") return false;
+	if (path.startsWith("/") || path.startsWith("~/") || /^[A-Za-z]:\//.test(path)) return false;
+	if (path.split("/").includes("..") || GLOB_CHARS.test(path)) return false;
+	return true;
+};
+
 export const listOf = (raw: unknown): string[] =>
 	Array.isArray(raw) ? raw.map((v) => (typeof v === "string" ? normalizeOwned(v) : "")).filter(Boolean) : [];
 
@@ -82,6 +92,9 @@ export const planRefusals = (slices: PlanSlice[]): Refusal[] => {
 		ids.add(s.id);
 		if (!s.instruction) out.push({ kind: "instruction", slices: [s.id || "(empty)"], detail: `slice ${s.id || "(empty)"} has no instruction — a coder with no job invents one` });
 		if (!s.files.length) out.push({ kind: "files", slices: [s.id || "(empty)"], detail: `slice ${s.id || "(empty)"} declares no files — say which paths it owns, or two coders will edit the same file` });
+		for (const file of s.files)
+			if (!usableOwnedPath(file))
+				out.push({ kind: "files", slices: [s.id || "(empty)"], detail: `slice ${s.id || "(empty)"} owns ${JSON.stringify(file)}, which is not a repo-relative path — name the file or directory it really owns (no ".", "..", globs or absolute paths)` });
 	}
 	for (const o of declaredOverlaps(slices))
 		out.push({ kind: "overlap", slices: [o.a, o.b], detail: `${o.a} and ${o.b} both claim ${o.paths.join(", ")} — give each path to exactly one slice, or merge them into one` });

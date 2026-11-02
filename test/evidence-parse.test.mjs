@@ -104,3 +104,16 @@ test("the marker is found however it is decorated, and a fence line is never a c
 	assert.equal(EVIDENCE_MARKER.test("evidence of things"), false, "a sentence is not a marker");
 	assert.equal(extractCommands(block("```\nexit 0")).length, 0, "a fence line must not be read as a command");
 });
+
+test("a markdown table row is a table, never a shell pipeline, so its status cell cannot fabricate a command", () => {
+	for (const row of ["| npm run build | 1 |", "| npm test | 0 |"]) {
+		assert.deepEqual(statusOf(block(row, "RESULT: PASS")), [], row);
+		assert.equal(judgeCase("c1", block(row, "RESULT: PASS")).result, "UNVERIFIED", row);
+	}
+});
+
+test("narration below a command never lends it a status", () => {
+	const report = block("npm test\n- an earlier draft exited 1 before I fixed it", "RESULT: PASS");
+	assert.deepEqual(statusOf(report), [["npm test", undefined]]);
+	assert.equal(judgeCase("c1", report).result, "UNVERIFIED");
+});

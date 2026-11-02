@@ -217,3 +217,22 @@ test("the surface closes only on the keys a page opts into, never on a scroll ke
 		assert.ok(closed > 0, `${JSON.stringify(key)} closes the page`);
 	}
 });
+
+test("the footer's real height is what the body is budgeted against, so the bottom border is never clipped", () => {
+	for (const rows of [12, 14, 24, 40]) {
+		const page = createScrollPage({
+			requestRender: () => {},
+			termRows: () => rows,
+			border: () => ({ render: (w) => ["─".repeat(w)] }),
+			head: () => undefined,
+			renderHead: () => ["head"],
+			body: () => Array.from({ length: 200 }, (_, i) => `line ${i}`),
+			bodyOf: (body) => body,
+			keyLine: () => ["progress line", "keys line"],
+		});
+		const out = page.render(80);
+		assert.ok(out.length <= scrollCeiling(rows), `${rows} rows: drew ${out.length}, ceiling ${scrollCeiling(rows)}`);
+		assert.equal(out.at(-1), "─".repeat(80), "the bottom border survives");
+		assert.deepEqual(out.slice(-3, -1), ["progress line", "keys line"], "both key rows are drawn");
+	}
+});

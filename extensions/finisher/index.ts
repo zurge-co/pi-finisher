@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildReconcileBulletin, freshState, resetCycleState, takeContextBulletin } from "./src/cycle.ts";
-import { modeSwitchNote, readConsultMode, turnIntent } from "./src/consult.ts";
+import { goalOpenFor, modeSwitchNote, readConsultMode, turnIntent } from "./src/consult.ts";
 import { consentLifts, humanResumes, sessionIdFrom } from "./src/goal-confirm.ts";
 import { claimGoalStopAbort, clearGoalStop, goalStopGate, stopLanguage } from "./src/goal-stop.ts";
 import { DEFAULT_GOAL_LANG, humanLanguage } from "./src/human-language.ts";
@@ -202,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 		pruneProjectDirs(undefined, ctx.cwd);
 		consentLifts(box.get());
 		box.get().goalStop = undefined;
+		widget.resetWidget();
 		kit.updateWidget(ctx);
 	});
 
@@ -276,7 +277,7 @@ export default function (pi: ExtensionAPI) {
 		const intake = !intakeOpen(live.goalDriver) && prompt ? intakeDirective(prompt, live.humanLang, live.turnIntent) : "";
 		const legacy = prompt ? legacyDirective(prompt, live.humanLang) : "";
 		const extra = [intake, legacy, bulletin, liveTrackerText(ctx)].filter(Boolean).join("\n\n");
-		const sp = harnessSystemPrompt(event.systemPrompt, live.humanLang ?? DEFAULT_GOAL_LANG, extra, live.turnIntent);
+		const sp = harnessSystemPrompt(event.systemPrompt, live.humanLang ?? DEFAULT_GOAL_LANG, extra, live.turnIntent, goalOpenFor(live.goalDriver));
 		if (sp === event.systemPrompt) return;
 		return { systemPrompt: sp };
 	});

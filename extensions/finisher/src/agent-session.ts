@@ -4,6 +4,7 @@ import { clip, elapsedLabel, roleTag } from "./agent-panel.ts";
 import { parseLogItems, renderLogItems, toolItemCount, toolToggleHint, TOOL_TOGGLE_KEY } from "./tool-log.ts";
 import { scrollKeysLine } from "./scroll-page.ts";
 import { readTailLines } from "./subagent-log.ts";
+import { graphemes } from "./human-language.ts";
 import { type State, type SubagentRun } from "./types.ts";
 
 export const SESSION_MIN_BODY_ROWS = 4;
@@ -33,8 +34,9 @@ export const recordSteerOnRun = (state: State, role: string, mode: "steer" | "fo
 	recordSteerEvent(runningRunFor(state.subagentRuns, role), mode, message, at);
 
 export const orderedSessionRuns = (runs: SubagentRun[]): SubagentRun[] => {
-	const live = runs.filter((r) => r.status === "running");
-	const finished = runs.filter((r) => r.status !== "running").slice().reverse();
+	const at = (run: SubagentRun): number => (run.status === "running" ? run.startedAt ?? run.at : run.at);
+	const live = runs.filter((r) => r.status === "running").slice().sort((a, b) => at(a) - at(b));
+	const finished = runs.filter((r) => r.status !== "running").slice().sort((a, b) => at(b) - at(a));
 	return [...live, ...finished];
 };
 
@@ -73,10 +75,10 @@ export const cutToWidth = (text: string, max: number): string => {
 	if (visibleWidth(text) <= max) return text;
 	let out = "";
 	let used = 0;
-	for (const ch of text) {
-		const w = visibleWidth(ch);
+	for (const unit of graphemes(text)) {
+		const w = visibleWidth(unit);
 		if (used + w > Math.max(0, max - 1)) break;
-		out += ch;
+		out += unit;
 		used += w;
 	}
 	return `${out}…`;

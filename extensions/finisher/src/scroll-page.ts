@@ -184,16 +184,25 @@ export const createScrollPage = <Head, Body>(parts: ScrollPageParts<Head, Body>)
 			const headLines = parts.renderHead(w, parts.head());
 			lastWidth = w;
 			lastChrome = headLines.length + 2;
-			const rows = rowsFor(lastChrome, w);
 			const total = bodyLines(w);
-			const position = scrollFollow(total.length, rows, at());
-			const win = scrollWindow(total.length, rows, position.offset);
-			const shown = remember({ ...position, offset: win.from });
+			const ceiling = scrollCeiling(parts.termRows(), parts.minRows ?? SCROLL_MIN_ROWS, parts.share ?? SCROLL_OVERLAY_SHARE);
+			const bodyRows = (footer: number): number => Math.max(1, ceiling - lastChrome - Math.max(0, footer));
+			let rows = bodyRows(footerRows(w));
+			let win = scrollWindow(total.length, rows, scrollFollow(total.length, rows, at()).offset);
+			let keyLines = parts.keyLine(w, { offset: win.from, following: at().following, total: total.length, rows });
+			const exact = bodyRows(keyLines.length);
+			if (exact !== rows) {
+				rows = exact;
+				const position = scrollFollow(total.length, rows, at());
+				win = scrollWindow(total.length, rows, position.offset);
+				keyLines = parts.keyLine(w, { offset: win.from, following: position.following, total: total.length, rows });
+			}
+			const shown = remember({ following: at().following, offset: win.from });
 			const body = total.slice(win.from, win.to);
 			const painted = parts.decorate ? parts.decorate(body, win.from, w) : body.map((line) => `${prefix}${line}`);
 			const out: string[] = [...parts.border().render(w), ...headLines, ...painted];
 			for (let i = painted.length; i < rows; i++) out.push("");
-			out.push(...parts.keyLine(w, { ...shown, total: total.length, rows }));
+			out.push(...keyLines);
 			out.push(...parts.border().render(w));
 			return out;
 		},

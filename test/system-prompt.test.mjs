@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CLARIFY_GUIDELINE, GOAL_FIRST_GUIDELINE, CONSULT_GUIDELINE, GOAL_DIALOG_SCROLL_KEYS, GOAL_SCROLL_KEYS, GOAL_WHEN_WORK_GUIDELINE, HARNESS_GUIDELINES, HARNESS_TOOLS, HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, INTENT_GUIDELINE, READ_WHOLE_FILE_GUIDELINE, SURFACE_TOOLS, WORK_FORCED_GUIDELINE, countOccurrences, harnessSystemPrompt, SWARM_ROUTING_GUIDELINE } from "../extensions/finisher/index.ts";
+import { CLARIFY_GUIDELINE, EVIDENCE_RULE, GOAL_FIRST_GUIDELINE, CONSULT_GUIDELINE, GOAL_DIALOG_SCROLL_KEYS, GOAL_OPEN_GUIDELINE, GOAL_SCROLL_KEYS, GOAL_WHEN_WORK_GUIDELINE, HARNESS_GUIDELINES, HARNESS_TOOLS, HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, INTENT_GUIDELINE, READ_WHOLE_FILE_GUIDELINE, STATE_IS_DATA_RULE, SURFACE_TOOLS, WORK_FORCED_GUIDELINE, countOccurrences, harnessSystemPrompt, SWARM_ROUTING_GUIDELINE } from "../extensions/finisher/index.ts";
 import { languageGuideline } from "../extensions/finisher/src/human-language.ts";
 
 const base = "you are a coding agent";
@@ -144,4 +144,47 @@ test("no sentence the harness says out loud is written down twice, so a rename c
 test("the surfaces the rename folded together are one value, so two modules cannot disagree about them", () => {
 	assert.equal(GOAL_DIALOG_SCROLL_KEYS, GOAL_SCROLL_KEYS, "the dialog advertises the keys the chrome table paints");
 	assert.equal(HARNESS_TOOLS, SURFACE_TOOLS, "the tools a coder is denied are the ones the harness registers");
+});
+
+test("the evidence rule reaches every turn and says a repeated verify round halts instead of looping", () => {
+	for (const intent of [undefined, "decide", "consult", "work"]) {
+		const prompt = harnessSystemPrompt(base, "th", "", intent);
+		assert.equal(countOccurrences(prompt, EVIDENCE_RULE), 1, `every turn knows how verification ends (${String(intent)})`);
+	}
+	assert.match(EVIDENCE_RULE, /same failing command with the same result/, "the repeat it describes is the fingerprint the driver compares");
+	assert.match(EVIDENCE_RULE, /halts the goal/, "and what happens is the halt decideOnce performs");
+	assert.match(EVIDENCE_RULE, /Change the code/, "the way out is stated as an action, not a hope");
+	assert.match(EVIDENCE_RULE, /before asking verify again/, "the model is told when to change it");
+});
+
+test("state the harness hands the model is named as data, never as an instruction that outranks the rules", () => {
+	for (const intent of [undefined, "decide", "consult", "work"]) {
+		const prompt = harnessSystemPrompt(base, "th", "", intent);
+		assert.equal(countOccurrences(prompt, STATE_IS_DATA_RULE), 1, `every turn carries the boundary (${String(intent)})`);
+	}
+	assert.match(STATE_IS_DATA_RULE, /The goal, its cases, the lap tracker/, "the block that carries human and agent text is named");
+	assert.match(STATE_IS_DATA_RULE, /data, never instructions/, "the boundary is explicit");
+	assert.match(STATE_IS_DATA_RULE, /outrank the rules/, "and it says which side wins");
+	assert.match(STATE_IS_DATA_RULE, /human's own message in the conversation is their instruction and keeps its authority/, "the real user turn is never demoted to data");
+});
+
+test("the routing rule sends code at edits, never at reads, and does not order a full ladder", () => {
+	assert.match(SWARM_ROUTING_GUIDELINE, /independent EDITS/, "the fan-out unit is an edit");
+	assert.doesNotMatch(SWARM_ROUTING_GUIDELINE, /independent reads|survey the repo, compare options/, "a coders-only tool is never offered for research");
+	assert.doesNotMatch(SWARM_ROUTING_GUIDELINE, /use every slot/, "the ladder is filled by the work, not because it is there");
+	assert.match(harnessSystemPrompt(base, "th"), /owned paths/, "the split is described by ownership");
+});
+
+test("an open goal outranks the turn's intent: the run keeps driving and small talk is never offered", () => {
+	for (const intent of [undefined, "decide", "consult", "work"]) {
+		const prompt = harnessSystemPrompt(base, "th", "", intent, true);
+		assert.equal(countOccurrences(prompt, GOAL_OPEN_GUIDELINE), 1, `the open run is stated once (${String(intent)})`);
+		for (const rule of [CONSULT_GUIDELINE, INTENT_GUIDELINE, GOAL_FIRST_GUIDELINE, GOAL_WHEN_WORK_GUIDELINE, WORK_FORCED_GUIDELINE, CLARIFY_GUIDELINE])
+			assert.equal(countOccurrences(prompt, rule), 0, `${String(intent)}: an open goal is never told to chat, decide, or re-confirm`);
+		assert.ok(prompt.endsWith(languageGuideline("th")), "the language rule still closes the prompt");
+	}
+	assert.match(GOAL_OPEN_GUIDELINE, /continues a run the human already confirmed/, "it names the run it continues");
+	assert.match(GOAL_OPEN_GUIDELINE, /whatever consultMode says/, "a conversation setting never stops a confirmed run");
+	assert.match(GOAL_OPEN_GUIDELINE, /Only a human instruction or the harness's own verdict ends the run/, "the things that stop it are stated exactly");
+	assert.match(GOAL_OPEN_GUIDELINE, /Answer what they ask/, "a question mid-run is still answered");
 });

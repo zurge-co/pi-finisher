@@ -137,3 +137,36 @@ test("opening a report with nothing written is a notice, never a crash", async (
 	rmSync(fresh, { recursive: true, force: true });
 	rmSync(cwd, { recursive: true, force: true });
 });
+
+test("a new session registers the widget even when its first frame matches the last session's", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "finisher-widget-reset-"));
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	const sent = [];
+	const widget = createPanelWidget({ pi: {}, get state() { return box.get(); }, openAgentSession: async () => null, openGoalPage: async () => null, openReportPage: async () => null });
+	const ctx = { hasUI: true, cwd, ui: { setWidget: (key, factory, opts) => sent.push({ key, factory, opts }), setStatus: () => {} } };
+	widget.updateWidget(ctx);
+	widget.updateWidget(ctx);
+	assert.equal(sent.length, 1, "an unchanged frame is not repainted within one session");
+	widget.resetWidget();
+	widget.updateWidget(ctx);
+	assert.equal(sent.length, 2, "session_start forces the widget to be registered again");
+	rmSync(cwd, { recursive: true, force: true });
+});
+
+test("a state change with the same session still repaints, and a mere redraw never does", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "finisher-widget-repaint-"));
+	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
+	const sent = [];
+	const widget = createPanelWidget({ pi: {}, get state() { return box.get(); }, openAgentSession: async () => null, openGoalPage: async () => null, openReportPage: async () => null });
+	const ctx = { hasUI: true, cwd, ui: { setWidget: (key, factory, opts) => sent.push({ key, factory, opts }), setStatus: () => {} } };
+	widget.updateWidget(ctx);
+	assert.equal(sent.length, 1);
+	const component = sent.at(-1).factory({}, { fg: (_token, text) => text });
+	component.render(80);
+	component.render(120);
+	assert.equal(sent.length, 1, "redrawing the registered widget is not a repaint");
+	box.get().subagentRuns.push({ role: "coder", status: "done", ok: true, at: 5, startedAt: 5, summary: "done" });
+	widget.updateWidget(ctx);
+	assert.equal(sent.length, 2, "a new run changes the signature and re-registers the widget");
+	rmSync(cwd, { recursive: true, force: true });
+});

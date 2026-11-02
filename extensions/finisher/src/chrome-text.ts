@@ -2,8 +2,10 @@ import { baseLang, DEFAULT_GOAL_LANG, type HumanLang } from "./human-language.ts
 
 export const CHROME_TEXT_MAX = 120;
 
+const UNREADABLE = /[\u0000-\u001F\u007F\u0085\u2028\u2029]/;
+
 export const usableChrome = (v: unknown): v is string =>
-	typeof v === "string" && v.trim().length > 0 && v.trim().length <= CHROME_TEXT_MAX && !/[\n\r\t]/.test(v) && !/[\u0000-\u001F\u007F]/.test(v);
+	typeof v === "string" && v.trim().length > 0 && v.trim().length <= CHROME_TEXT_MAX && !UNREADABLE.test(v);
 
 export const cleanChromeText = <K extends string>(keys: readonly K[], overrides: Partial<Record<K, string>> | undefined): Partial<Record<K, string>> => {
 	const out: Partial<Record<K, string>> = {};

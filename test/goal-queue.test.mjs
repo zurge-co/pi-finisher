@@ -114,7 +114,7 @@ test("tools.ts wires the queue refusal soft: the queue-candidate branch never ar
 	assert.match(soft, /goalConsent/, "the same human turn never re-opens a dialog the human just dismissed");
 });
 
-const verifySession = () => {
+const verifySession = (extra = {}) => {
 	const defs = [];
 	const asked = [];
 	const box = createStateBox({ phase: "implementation", turnsUsed: 0, tokensUsed: 0, escalations: [], trajectoryFlags: [], subagentRuns: [] });
@@ -132,6 +132,7 @@ const verifySession = () => {
 			box.get().subagentRuns.push({ role, ok: true, summary: "", at: Date.now(), status: "done", logPath: "/tmp/x.log" });
 			return { ok: true, output: "done", logPath: "/tmp/x.log", calls: [] };
 		},
+		...extra,
 	});
 	const ctx = { cwd: mkdtempSync(join(tmpdir(), "finisher-queue-")), model: { provider: "p", id: "m" }, hasUI: true, mode: "tui", ui: { notify: () => {} } };
 	return { asked, box, run: (name, params) => defs.find((d) => d.name === name).execute("c1", params, undefined, undefined, ctx) };
@@ -161,4 +162,28 @@ test("a failed verify round never promotes: the queue waits for the goal to actu
 	assert.equal(s.box.get().goalDriver.goal, "open goal", "a replan round keeps the running goal");
 	assert.equal(s.box.get().goalDriver.doneAt, undefined, "and it is not closed either");
 	assert.deepEqual(s.box.get().goalQueue.map((q) => q.goal), ["queued goal"], "the head keeps waiting for a real close");
+});
+
+test("a goal queued after a clarify round keeps the identity the human named, so it is never confirmed twice", async () => {
+	const clarify = [];
+	const s = verifySession({
+		askClarifyQuestion: async () => {
+			clarify.push("asked");
+			return clarify.length === 1 ? "in a way you notice while using it" : "as I said is enough";
+		},
+	});
+	await s.run("goal", { goal: "keep the build green", cases: ["npm test passes"] });
+	const queued = await s.run("goal", { goal: "make the widget faster", cases: ["it feels faster"] });
+	assert.equal(queued.details.queued, true, "the new goal is queued behind the open one");
+	const queue = s.box.get().goalQueue;
+	assert.equal(queue.length, 1);
+	assert.equal(queue[0].goal, "make the widget faster", "the queue holds the goal the human named, not the clarifications appended to it");
+	assert.deepEqual(queue[0].cases, ["it feels faster"], "the cases are still the confirmed ones");
+	assert.equal(queue[0].notes.length, 1, "the human's own answer is kept beside the goal, never folded into its identity");
+
+	const askedBefore = s.asked.length;
+	const again = await s.run("goal", { goal: "make the widget faster", cases: ["it feels faster"] });
+	assert.equal(s.asked.length, askedBefore, "a goal confirmed at enqueue is never asked again");
+	assert.equal(s.box.get().goalQueue.length, 1, "and it is never queued twice");
+	assert.equal(again.details.updated, true);
 });

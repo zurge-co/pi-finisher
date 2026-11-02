@@ -91,3 +91,13 @@ test("a language tag is normalised once and never invented", () => {
 	for (const bad of ["", "   ", "!", "a", "th-TH-x", "klingon?", 42, null, undefined, {}]) assert.equal(languageTag(bad), undefined, `${JSON.stringify(bad)} is not a language tag`);
 	for (const raw of ["th", "pt-BR", "zh_Hant", "en", "sr-Latn-RS"]) assert.equal(languageTag(languageTag(raw)), languageTag(raw), `normalisation is idempotent for ${raw}`);
 });
+
+test("script votes are a total order: the dominant script comes first, and re-voting an empty or single-script text is stable", () => {
+	assert.deepEqual(scriptVotes("абвг ทำ").map((v) => v.lang), ["ru", "th"], "the larger count leads");
+	assert.deepEqual(scriptVotes("абвгд 中中").map((v) => v.lang), ["ru", "zh"]);
+	for (const text of ["", "hello", "ภาษาไทย", "абвгд 中中"]) {
+		const votes = scriptVotes(text);
+		for (let i = 1; i < votes.length; i++) assert.ok(votes[i - 1].letters >= votes[i].letters, `${text} descends`);
+		assert.deepEqual(scriptVotes(text), votes, "counting is a function of the text");
+	}
+});

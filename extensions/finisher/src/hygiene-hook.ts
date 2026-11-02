@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildFileReviewReport, commandWritePaths, reviewWrittenFile, scriptWrites, stdinTargets, type FileReview } from "./review-file.ts";
+import { HYGIENE_MAX_BYTES, isHygieneChecked } from "./code-hygiene.ts";
+import { buildFileReviewReport, commandWritePaths, oversizeFileReview, reviewWrittenFile, scriptWrites, stdinTargets, type FileReview } from "./review-file.ts";
 import { suiteWriteGate } from "./suite-budget.ts";
 import { type Persist, type UpdateWidget, type HarnessContext } from "./kit.ts";
 import { type State } from "./types.ts";
@@ -22,12 +23,16 @@ export const createHygieneHook = (ctx: HarnessContext) => {
 		return typeof path === "string" && path ? [path] : [];
 	};
 
+	const SUITE_WRITE_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
+
 	const suiteRefusalFor = (ev: any, ctx: ExtensionContext): string | undefined => {
-		if (ev.toolName !== "write" && ev.toolName !== "edit") return undefined;
-		const path = (ev.input as { path?: string })?.path;
-		if (typeof path !== "string" || !path) return undefined;
-		const abs = resolve(ctx.cwd, path);
-		return suiteWriteGate(state.suiteAtStart, ctx.cwd, relative(ctx.cwd, abs) || abs, existsSync(abs));
+		if (!SUITE_WRITE_TOOLS.has(String(ev.toolName ?? "").trim().toLowerCase())) return undefined;
+		for (const target of new Set(targetsFor(ev))) {
+			const abs = resolve(ctx.cwd, target);
+			const refusal = suiteWriteGate(state.suiteAtStart, ctx.cwd, relative(ctx.cwd, abs) || abs, existsSync(abs));
+			if (refusal) return refusal;
+		}
+		return undefined;
 	};
 
 	const applyHygieneCheck = (ev: any, ctx: ExtensionContext): { content?: any[]; isError?: boolean } | undefined => {
@@ -35,13 +40,25 @@ export const createHygieneHook = (ctx: HarnessContext) => {
 		const bad: FileReview[] = [];
 		for (const target of [...new Set(targetsFor(ev))]) {
 			const abs = resolve(ctx.cwd, target);
+			const rel = relative(ctx.cwd, abs) || abs;
+			if (!isHygieneChecked(rel)) continue;
+			let bytes: number;
+			try {
+				bytes = statSync(abs).size;
+			} catch {
+				continue;
+			}
+			if (bytes > HYGIENE_MAX_BYTES) {
+				bad.push(oversizeFileReview(rel, bytes));
+				continue;
+			}
 			let text: string;
 			try {
 				text = readFileSync(abs, "utf8");
 			} catch {
 				continue;
 			}
-			const review = reviewWrittenFile(relative(ctx.cwd, abs) || abs, text);
+			const review = reviewWrittenFile(rel, text);
 			if (!review.ok) bad.push(review);
 		}
 		if (!bad.length) {

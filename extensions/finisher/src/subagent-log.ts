@@ -26,12 +26,15 @@ export const pruneSubagentLogs = (dir: string, keep = SUBAGENT_LOG_MAX - 1): num
 	return removed;
 };
 
+let logSeq = 0;
+
 export const subagentLogPath = (cwd: string, role: string): string => {
 	const dir = join(finisherDir(cwd), "subagents");
 	mkdirSync(dir, { recursive: true });
 	pruneSubagentLogs(dir);
-	const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-	return join(dir, `${stamp}-${role}.log`);
+	const stamp = new Date().toISOString().slice(0, 23).replace(/[:T.]/g, "-");
+	logSeq += 1;
+	return join(dir, `${stamp}-${process.pid}-${logSeq}-${role}.log`);
 };
 
 export const LOG_TAIL_BYTES = 256 * 1024;

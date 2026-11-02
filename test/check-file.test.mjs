@@ -7,6 +7,7 @@ import {
 	CHECK_FILE_MAX,
 	CHECK_OUTPUT_MAX,
 	appendCheck,
+	appendChecks,
 	caseChecks,
 	caseStatus,
 	checkFileLines,
@@ -134,4 +135,16 @@ test("the human-readable check file keeps one line per case and never truncates 
 	assert.equal(rendered.split("\n").length, 1 + 1 + 3);
 	assert.ok(!rendered.endsWith("\n"));
 	assert.equal(checkFileLines(entries).length, 2, "without a case list every recorded case is listed once");
+});
+
+test("a verify pass writes its case lines in one batch, and the bound still holds", () => {
+	const root = mkdtempSync(join(tmpdir(), "finisher-check-batch-"));
+	const entries = Array.from({ length: CHECK_FILE_MAX + 20 }, (_, i) => ({ ...ENTRY, at: i, case: `case ${i}` }));
+	assert.equal(appendChecks(root, entries), true);
+	const kept = readChecks(root);
+	assert.equal(kept.length, CHECK_FILE_MAX, "the file is bounded exactly as a single appends would leave it");
+	assert.equal(kept.at(-1).case, `case ${entries.length - 1}`, "the newest record is the last one written");
+	assert.equal(new Set(kept.map((e) => e.case)).size, CHECK_FILE_MAX, "no case is lost inside the batch");
+	assert.equal(appendChecks(root, []), true, "an empty batch is a no-op that never throws");
+	rmSync(root, { recursive: true, force: true });
 });

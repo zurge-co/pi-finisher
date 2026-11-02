@@ -134,7 +134,9 @@ export const scriptVotes = (text: string): ScriptVote[] => {
 	}
 	if (kana) bump("ja", kana + han);
 	else if (han) bump("zh", han);
-	return SCRIPTS.filter((s) => (counts.get(s.lang) ?? 0) > 0).map((s) => ({ lang: s.lang, letters: counts.get(s.lang) ?? 0 }));
+	return SCRIPTS.filter((s) => (counts.get(s.lang) ?? 0) > 0)
+		.map((s) => ({ lang: s.lang, letters: counts.get(s.lang) ?? 0 }))
+		.sort((a, b) => b.letters - a.letters);
 };
 
 export const languageVote = (text: string): HumanLang | undefined => {

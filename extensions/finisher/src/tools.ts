@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildGoalToolText, casesForGate, goalDriverDone, goalGateAsks, goalGateFor, reopenGoal, resumeOrStart, type GoalRunState } from "./goal-driver.ts";
-import { GOAL_QUEUE_MAX, enqueueGoal, goalQueueFullNote, goalQueueOf, goalQueueRefusedNote, goalQueueUpdatedNote, goalQueuedNote, queueIndexOf } from "./goal-queue.ts";
+import { GOAL_QUEUE_MAX, enqueueGoal, goalQueueFullNote, goalQueueOf, goalQueueRefusedNote, goalQueueUpdatedNote, goalQueuedNote, queueIndexOf, QUEUED_NOTES_HEAD } from "./goal-queue.ts";
 import { type QueuedGoal } from "./types.ts";
 import { costCeilingKeysPresent, readConfirmTimeout, surfaceLine } from "./goal-run.ts";
 import { GOAL_ALREADY_VERIFIED_NOTE, GOAL_CONSENT_WAIT_NOTE, GOAL_DECLINED_NOTE, GOAL_NO_UI_NOTE, GOAL_TIMEOUT_NOTE, GOAL_TOO_MANY_CASES, GOAL_UNCHANGED_NOTE, cleanChrome, consentBlocks, goalCases, humanTurnsFrom, sessionIdFrom, tooManyCasesNote, UNKNOWN_HUMAN_TURNS, type GoalAskOutcome, type GoalChromeOverrides } from "./goal-confirm.ts";
@@ -158,11 +158,12 @@ export const registerTools = (ctx: HarnessContext) => {
 		name: "goal",
 		label: "finisher · goal",
 		description:
-			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with verify, the harness judges each case from the commands it watched you run, hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. The goal is the human's decision and the cases are yours: an unchanged goal is never re-confirmed, and only a changed goal opens the dialog again. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
+			"Confirm a goal ONCE and let the harness drive it: after every lap you verify it yourself with verify, the harness judges each case from the command you named — its own recording, or the run it makes itself — hands the failures back for another round, and stops with one report when every case is proven or the bound is reached. The goal is the human's decision and the cases are yours: an unchanged goal is never re-confirmed, and only a changed goal opens the dialog again. No per-round approval, no token/cost ceiling. Use it instead of asking the human anything mid-run.",
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
 		promptGuidelines: [
 			"Call goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
 			"The same goal is never confirmed twice: calling it again with an unchanged goal resumes the run without a dialog, even if the cases changed or the goal was closed by a verify round.",
+			"A different goal while one is still open is the human's new decision: it is confirmed once and queued behind the running goal, which keeps going until it closes.",
 			"Write the goal and every case in the language the human writes in, and pass that language as lang: the dialog they confirm is in their language, never yours. Paths, identifiers and commands stay verbatim.",
 			"After a 'fix' step, fix the real cause and call goal again with the same goal — the driver keeps the round count and detects unchanged evidence.",
 			"Any case left UNVERIFIED (no executed command) is not progress: run a command that proves it, or declare it { human: true } in verify when only the human can check it.",
@@ -170,7 +171,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		parameters: Type.Object({
 			goal: Type.String({ description: "the outcome, in the human's words — one goal per run" }),
 			start: Type.Optional(Type.Boolean({ description: "true when the human is saying go: it is the only way a conversation turn starts a run (and the only way it opens a dialog)" })),
-			cases: Type.Optional(Type.Array(Type.String(), { description: "the cases that make the goal true (defaults to the spec's own goal cases)" })),
+			cases: Type.Optional(Type.Array(Type.String(), { description: "the cases that make the goal true (defaults to the goal text itself when omitted)" })),
 			lang: Type.Optional(Type.String({ description: "the language the human writes in (e.g. th, ja, pt-BR) — the confirm dialog uses it" })),
 			chrome: Type.Optional(
 				Type.Object({
@@ -302,7 +303,7 @@ export const registerTools = (ctx: HarnessContext) => {
 				}
 				if (gate === "changed" && openPrevious) {
 					const entry: QueuedGoal = {
-						goal: askGoal,
+						goal,
 						cases: askCases,
 						queuedAt: Date.now(),
 						lang,
@@ -357,9 +358,9 @@ export const registerTools = (ctx: HarnessContext) => {
 								"the goal is confirmed — work until every case holds, then call verify ONCE at the end:",
 								...next.map((c, i) => `  ${i + 1}. ${c}`),
 								...(intent === "decide" ? ["", decideGoalNote(state.humanLang)] : []),
-								...(clarifyNotes.length ? ["", "kept from the human's own answer, so they are never guessed again:", ...clarifyNotes.map((note) => `  ${note}`)] : []),
+								...(clarifyNotes.length ? ["", QUEUED_NOTES_HEAD, ...clarifyNotes.map((note) => `  ${note}`)] : []),
 								"",
-								`verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from a command the harness recorded, and each case's result lands in ${stateLabel(ctx.cwd, "checks")} — never in a new test file.`,
+								`verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from the command you named — the harness recording, or the run it makes itself — and each case's result lands in ${stateLabel(ctx.cwd, "checks")} — never in a new test file.`,
 								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",
 								"a case only a human can check is separated, never failed: declare it in verify as { id, human: true, note } and it is listed for them in the final report.",
 							].join("\n"),

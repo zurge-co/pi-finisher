@@ -13,10 +13,10 @@ import { type HarnessContext } from "./kit.ts";
 import { writeReportFile } from "./report-file.ts";
 import { appendCommand } from "./command-record.ts";
 import { STATE_HOME_LABEL, stateLabel } from "./project-dir.ts";
-import { appendCheck, checkFileLines, type CheckEntry, type CheckStatus } from "./check-file.ts";
-import { CHECK_ORDER, CASE_CHECK_PREFIX, changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, provesCommand, readPackage, runCheckStage, runCommand, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
+import { appendChecks, checkFileLines, type CheckEntry, type CheckStatus } from "./check-file.ts";
+import { CHECK_ORDER, CASE_CHECK_PREFIX, changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, provesCommand, readPackage, runCheckStage, runCommand, workspaceStamp, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
 import { type CaseResult } from "./evidence.ts";
-import { advanceGoalQueue, goalPromotedNote } from "./goal-queue.ts";
+import { advanceGoalQueue, goalPromotedNote, QUEUED_NOTES_HEAD } from "./goal-queue.ts";
 import { countSuite } from "./suite-budget.ts";
 import { type QueuedGoal } from "./types.ts";
 
@@ -83,14 +83,12 @@ const claimKeys = (id: string): string[] => {
 
 const matchKey = (cases: string[], key: string): string[] => {
 	const whole = cases.filter((c) => caseKey(c) === key);
-	if (whole.length === 1) return whole;
-	const namesACase = cases.filter((c) => caseKey(c).length >= BARE_MIN && key.startsWith(caseKey(c)));
-	if (namesACase.length === 1) return namesACase;
+	if (whole.length) return whole;
 	const prefix = key.length >= BARE_MIN ? cases.filter((c) => caseKey(c).startsWith(key)) : [];
-	if (prefix.length === 1) return prefix;
-	const inside = key.length >= INSIDE_MIN ? cases.filter((c) => caseKey(c).includes(key)) : [];
-	if (inside.length === 1) return inside;
-	return [...new Set([...namesACase, ...prefix, ...inside])];
+	if (prefix.length) return prefix;
+	const namesACase = cases.filter((c) => caseKey(c).length >= BARE_MIN && key.startsWith(caseKey(c)));
+	if (namesACase.length) return namesACase;
+	return key.length >= INSIDE_MIN ? cases.filter((c) => caseKey(c).includes(key)) : [];
 };
 
 const candidatesFor = (cases: string[], id: string): string[] => {
@@ -190,12 +188,21 @@ export const judgeDeterministic = async (
 		const known = started.get(command);
 		const ran = known ?? (await (run as (command: string) => Promise<CheckResult>)(command));
 		if (!known) started.set(command, ran);
-		out.push({
-			caseId,
-			result: ran.exitCode === 0 ? ("PASS" as const) : ("FAIL" as const),
-			commands: [],
-			reason: ran.exitCode === 0 ? undefined : `\`${command}\` exited ${ran.exitCode} when the harness ran it: ${ran.tail.split("\n").slice(-3).join(" ")}`,
-		});
+		const status = ran.status ?? (ran.exitCode === 0 ? "pass" : "fail");
+		if (status === "deadline" || status === "infra")
+			out.push({
+				caseId,
+				result: "UNVERIFIED" as const,
+				commands: [],
+				reason: `\`${command}\` ${status === "deadline" ? "hit its deadline" : "could not run here"} — nothing was exercised, so nothing is proven`,
+			});
+		else
+			out.push({
+				caseId,
+				result: ran.exitCode === 0 ? ("PASS" as const) : ("FAIL" as const),
+				commands: [],
+				reason: ran.exitCode === 0 ? undefined : `\`${command}\` exited ${ran.exitCode} when the harness ran it: ${ran.tail.split("\n").slice(-3).join(" ")}`,
+			});
 	}
 	return out;
 };
@@ -274,11 +281,11 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 		name: VERIFY_TOOL,
 		label: "finisher · verify",
 		description:
-			`Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own checks (typecheck, lint, test scripts) through a scoped, parallel, cached plan: a check whose changed paths cannot affect it is skipped, a green recording made after the last edit is not re-run, and a toolchain that cannot run here is reported as skipped instead of failing every case. Stage 2 judges each case from the commands the harness itself watched you run: name one command per case, and a case whose command was never recorded stays UNVERIFIED. Every case outcome is written to ${STATE_HOME_LABEL}/checks.`,
-		promptSnippet: "Verify the goal deterministically first, from commands the harness recorded",
+			`Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own checks (typecheck, lint, test scripts) through a scoped, parallel, cached plan: a check whose changed paths cannot affect it is skipped, a green recording made after the last edit is not re-run, and a toolchain that cannot run here is reported as skipped instead of failing every case. Stage 2 judges each case from the command you name: a command the harness already recorded is judged by that recording, and one it has not seen is run now — a case you name no command for stays UNVERIFIED. Every case outcome is written to ${STATE_HOME_LABEL}/checks.`,
+		promptSnippet: "Verify the goal deterministically first, then judge each case from the command it names",
 		promptGuidelines: [
 			`Call ${VERIFY_TOOL} once after every lap is closed with lap done — it is refused while a lap is still open.`,
-			"Name one command per case (cases: [{ id, command }]) that actually exercises it. A case with no recorded command is UNVERIFIED — never claim PASS for it.",
+			"Name one command per case (cases: [{ id, command }]) that actually exercises it. The harness judges from its recording, and runs the command itself when the recording does not have it; a case you leave without a command is UNVERIFIED — never claim PASS for it.",
 			`Proof is a recorded check, not another test: verify writes one line per case to ${STATE_HOME_LABEL}/checks (PASS/FAIL/SKIP/UNVERIFIED) — never add a test file to prove a case.`,
 			"You decide the checks too: pass checks: [{ name, command }] and each one runs for real in the deterministic stage — a red one fails every case, a green one proves the case that names the same command.",
 			`Never run what the deterministic stage already ran: ${CHECK_ORDER.join(", ")} (and any test-kind script such as test:e2e or a jest/vitest script) run once, and a case whose command is that script is proven by that run.`,
@@ -324,15 +331,17 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const cwd = toolCtx.cwd;
 			const timeoutMs = Math.min(readToolTimeout(cwd, VERIFY_TOOL), VERIFY_STAGE_TIMEOUT_MS);
 			const pkg = readPackage(cwd);
+			const changed = changedPaths(cwd);
+			const lastModifiedAt = Math.max(state.lastModifiedAt ?? 0, workspaceStamp(cwd, changed));
 			const stage = p.skipDeterministic
 				? { results: [] as CheckResult[], ran: [], recorded: [], scoped: [] }
-				: await runCheckStage(detectChecks(pkg), { cwd, timeoutMs, pkg, lastModifiedAt: state.lastModifiedAt, changed: changedPaths(cwd), calls: state.verifyCalls ?? [], custom: p.checks });
+				: await runCheckStage(detectChecks(pkg), { cwd, timeoutMs, pkg, lastModifiedAt, changed, calls: state.verifyCalls ?? [], custom: p.checks });
 			const checks = stage.results;
 
 			const openGoal = !!active && !goalDriverDone(active);
 			const cases = openGoal ? (active.cases ?? []) : (p.goal ? [p.goal] : []);
 			const named = bindClaims(cases, caseClaims(p.cases));
-			const calls = freshCalls((state.verifyCalls ?? []) as { command: string; ok: boolean; at?: number }[], state.lastModifiedAt);
+			const calls = freshCalls((state.verifyCalls ?? []) as { command: string; ok: boolean; at?: number }[], lastModifiedAt);
 			const evidence = await judgeDeterministic(cases, named.commands, calls, checks, async (command) => {
 				const result = await runCommand(command, cwd, timeoutMs);
 				state.verifyCalls = appendCommand(state.verifyCalls ?? [], { toolName: "bash", input: { command }, isError: result.exitCode !== 0 });
@@ -343,7 +352,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const driver = openGoal ? active : { ...resumeOrStart(undefined, p.goal?.trim() || verified, Date.now(), cases), attempts: freshAttempts() };
 			const step = nextGoalDriverStep(driver, report);
 			const entries = caseCheckEntries(evidence, named.commands, openGoal ? active.goal : p.goal?.trim());
-			for (const entry of entries) appendCheck(cwd, entry);
+			appendChecks(cwd, entries);
 			const summary = [verifySummaryLines(checks, report, named.commands).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
 
 			if (!openGoal) {
@@ -407,7 +416,14 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 					updateWidget(toolCtx);
 				}
 			}
-			const promotedLines = promotedGoal ? ["", goalPromotedNote(promotedGoal.goal, state.humanLang), ...promotedGoal.cases.map((c, i) => `  ${i + 1}. ${c}`)] : [];
+			const promotedLines = promotedGoal
+				? [
+						"",
+						goalPromotedNote(promotedGoal.goal, state.humanLang),
+						...promotedGoal.cases.map((c, i) => `  ${i + 1}. ${c}`),
+						...(promotedGoal.notes?.length ? ["", QUEUED_NOTES_HEAD, ...promotedGoal.notes.map((note) => `  ${note}`)] : []),
+					]
+				: [];
 			if (step.action === "replan") armGoalRound(step.text);
 			return {
 				content: [{ type: "text", text: [buildGoalToolText(driver, step, finalText), "", summary, ...promotedLines].join("\n") }],

@@ -208,7 +208,7 @@ export const buildCodeWorkerPrompt = (slice: CodeSlice, opts: { goal?: string; w
 			? [`You are killed without warning ${deadlineSecondsOf(opts.deadlineMs)} seconds after you start — keep every command well inside that: split long builds and full test runs into smaller pieces instead of launching one command that can outlive the deadline.`]
 			: []),
 		"Write the code for YOUR slice only, then stop. Do not try to merge, commit, rebase or touch another slice's files.",
-		`Code rules: no comments in code (line or block). Names and structure carry the intent. A file you create must stay at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB, so one read of its path returns all of it.`,
+		`Code rules: no comments in code (line or block). Names and structure carry the intent. Every file your slice changes must stay at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB — the harness checks each changed file — so one read of its path returns all of it. A test you add must assert a real law: the harness rejects a test with no assertion, a tautology, or only a shape check.`,
 		"Dependencies are already available in your checkout (shared from the main repo) — never run an install, and never write inside node_modules.",
 		opts.testCommand
 			? `Before you finish, run \`${opts.testCommand}\` in your checkout and read the result.`

@@ -1,3 +1,5 @@
+import { graphemes } from "./human-language.ts";
+
 export interface PanelRun {
 	role: string;
 	status?: "running" | "done" | "failed";
@@ -53,7 +55,9 @@ export const elapsedLabel = (ms: number): string => {
 export const clip = (s: string, max: number): string => {
 	const flat = s.replace(/\s+/g, " ").trim();
 	if (max <= 0) return "";
-	return flat.length <= max ? flat : `${flat.slice(0, Math.max(0, max - 1))}…`;
+	if (flat.length <= max) return flat;
+	const units = graphemes(flat);
+	return units.length <= max ? flat : `${units.slice(0, Math.max(0, max - 1)).join("")}…`;
 };
 
 export const liveRuns = (runs: PanelRun[]): PanelRun[] => runs.filter((r) => r.status === "running");
@@ -112,4 +116,8 @@ export const panelLines = (runs: PanelRun[], opts: PanelOptions = {}): string[] 
 
 export const panelTickMs = (liveCount: number): number => (liveCount > 1 ? 1_000 : 2_000);
 
-export const streamTail = (text: string, max = 160): string => clip(text.slice(-max), max);
+export const streamTail = (text: string, max = 160): string => {
+	if (max <= 0) return "";
+	if (text.length <= max) return clip(text, max);
+	return clip(graphemes(text).slice(-max).join(""), max);
+};

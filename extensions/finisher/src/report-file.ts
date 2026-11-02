@@ -133,17 +133,21 @@ export const reportMetaFromFile = (cwd: string | undefined): ReportMeta | undefi
 	return { path, at: brief.at, outcome: brief.outcome, goal: brief.goal, laps: brief.laps, round: 0, bytes };
 };
 
-export const currentReport = (cwd: string | undefined, meta?: ReportMeta): ReportBrief | undefined => {
-	const live = liveReport(meta);
-	if (live) return live;
+export const currentReportMeta = (cwd: string | undefined, meta?: ReportMeta): ReportMeta | undefined => {
 	const disk = reportMetaFromFile(cwd);
-	return disk ? { outcome: disk.outcome, laps: disk.laps, at: disk.at, goal: disk.goal } : undefined;
+	if (disk) return disk;
+	return liveReport(meta) ? meta : undefined;
+};
+
+export const currentReport = (cwd: string | undefined, meta?: ReportMeta): ReportBrief | undefined => {
+	const live = currentReportMeta(cwd, meta);
+	return live ? { outcome: live.outcome, laps: live.laps, at: live.at, goal: live.goal } : undefined;
 };
 
 export const liveReport = (meta: ReportMeta | undefined): ReportBrief | undefined => {
 	if (!meta) return undefined;
 	try {
-		if (!existsSync(meta.path) || statSync(meta.path).size <= 0) return undefined;
+		if (statSync(meta.path).size <= 0) return undefined;
 	} catch {
 		return undefined;
 	}

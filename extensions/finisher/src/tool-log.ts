@@ -110,6 +110,8 @@ export const outputLines = (output: string | undefined, max = TOOL_OUTPUT_MAX_LI
 	return hidden > 0 ? [`… ${hidden} earlier line(s) hidden`, ...kept] : kept;
 };
 
+export const outputLineCount = (output: string | undefined): number => (output ? output.replace(/\r/g, "").split("\n").length : 0);
+
 export const toolItemCount = (items: LogItem[]): number => items.filter((i) => i.kind === "tool").length;
 
 export const renderLogItems = (items: LogItem[], opts: { expanded: boolean; maxOutputLines?: number }): string[] => {
@@ -120,10 +122,10 @@ export const renderLogItems = (items: LogItem[], opts: { expanded: boolean; maxO
 			continue;
 		}
 		const block = item.block;
-		const hidden = block.state === "running" ? 0 : outputLines(block.output, opts.maxOutputLines).length;
+		const count = block.state === "running" ? 0 : outputLineCount(block.output);
 		out.push(toolHeadline(block));
 		if (!opts.expanded) {
-			if (hidden > 0) out.push(`    ▸ ${hidden} line(s) of output hidden — press t to show`);
+			if (count > 0) out.push(`    ▸ ${count} line(s) of output — press ${TOOL_TOGGLE_KEY} to show`);
 			continue;
 		}
 		for (const line of outputLines(block.output, opts.maxOutputLines)) out.push(`    ${line}`);

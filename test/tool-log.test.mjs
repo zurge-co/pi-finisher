@@ -32,7 +32,7 @@ test("every tool call in the log is visible, and a fold hides the output while k
 		assert.ok(collapsed.includes(head), `the command is visible while folded: ${head}`);
 		assert.ok(expanded.includes(head), `the command is visible while expanded: ${head}`);
 	}
-	assert.ok(collapsed.includes("line(s) of output hidden"), "a fold says what it is hiding");
+	assert.match(collapsed, /1 line\(s\) of output — press t to show/, "a fold names the output it holds, exactly");
 	assert.ok(!collapsed.includes("5 tests pass"), "the fold really hides the output");
 	assert.ok(expanded.includes("5 tests pass") && expanded.includes("export const x = 1;"), "expanding shows the tool output itself");
 	assert.ok(collapsed.includes("some prose"), "prose around the calls is never dropped");
@@ -91,4 +91,13 @@ test("the viewer really wires the toggle and reads the log through the parser", 
 	assert.match(views, /logs\.beginFrame\(\)/, "the frame boundary is what makes the cache a per-frame cache");
 	assert.equal(/readFileSync/.test(views), false, "a per-frame full re-read of a log is what froze the HUD");
 	assert.match(views, /state\.toolOutputExpanded/, "the choice survives reopening the page");
+});
+
+test("a collapsed tool block reports the lines it actually hides", () => {
+	const short = parseLogItems([start("a", "bash", { command: "true" }), end("a", "bash", "one\ntwo\nthree")]);
+	const shortOut = renderLogItems(short, { expanded: false });
+	assert.ok(shortOut.some((line) => /3 line\(s\) of output — press t to show/.test(line)), `the fold names all three lines: ${shortOut.join(" | ")}`);
+	const long = parseLogItems([start("b", "bash", { command: "true" }), end("b", "bash", Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n"))]);
+	const note = renderLogItems(long, { expanded: false }).find((line) => /line\(s\) of output/.test(line));
+	assert.match(String(note), /100 line\(s\) of output/, "the fold counts the output it holds, not the page it would draw");
 });
