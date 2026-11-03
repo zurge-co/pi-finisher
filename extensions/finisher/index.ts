@@ -99,6 +99,8 @@ export * from "./src/rpc-events.ts";
 export * from "./src/command-record.ts";
 export * from "./src/verify-tool.ts";
 export * from "./src/verify-checks.ts";
+export * from "./src/grounding.ts";
+export * from "./src/peer-review.ts";
 export * from "./src/tool-log.ts";
 export * from "./src/handoff-gate.ts";
 export * from "./src/ladder-model.ts";
@@ -310,6 +312,7 @@ export default function (pi: ExtensionAPI) {
 			goal,
 			consumedLapAt: box.get().freshResetLapAt,
 			reportUnread: reportUnread(heldGoalFor(box.get()), box.get().humanAt),
+			contextPct: ctx.getContextUsage?.()?.percent ?? 0,
 			now: Date.now(),
 		});
 		if (!decision.reset) return;

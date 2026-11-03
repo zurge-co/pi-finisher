@@ -45,6 +45,8 @@ export const clipSummary = (text: string, max = FRESH_SUMMARY_MAX): string => (t
 
 export const FRESH_DEBOUNCE_MS = 2_000;
 
+export const FRESH_RESET_PCT = 70;
+
 export const LAP_DIRECTIVE =
 	"[finisher fresh context] a lap just closed; the work that produced it was summarized on purpose so the next lap starts clean. The lap tracker below is the state that matters — re-read the repo and the tracker on disk instead of trusting memory.";
 
@@ -60,8 +62,13 @@ export interface FreshLapState {
 	goal?: { doneAt?: number; phases?: { id: string; text: string; round: number; addedAt: number }[]; lap?: number; lapAt?: number; lapMs?: number[] };
 	consumedLapAt?: number;
 	reportUnread?: boolean;
+	contextPct?: number | null;
+	resetAtPct?: number;
 	now?: number;
 }
+
+export const contextFilled = (pct: number | null | undefined, threshold = FRESH_RESET_PCT): boolean =>
+	typeof pct === "number" && Number.isFinite(pct) && pct >= threshold;
 
 export const lapBoundaryOpen = (goal: FreshLapState["goal"]): boolean => {
 	if (!goal || goal.doneAt) return false;
@@ -78,6 +85,7 @@ export const freshLapDecision = (o: FreshLapState): { reset: boolean; lapAt?: nu
 		o.hasWork &&
 		!o.aborted &&
 		o.reportUnread !== true &&
+		contextFilled(o.contextPct, o.resetAtPct) &&
 		lapBoundaryOpen(o.goal) &&
 		plan.lapAt !== o.consumedLapAt &&
 		!((o.lastResetAt ?? 0) > now - FRESH_DEBOUNCE_MS);

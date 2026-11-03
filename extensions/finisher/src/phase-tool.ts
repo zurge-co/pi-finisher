@@ -1,7 +1,10 @@
+import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { declarePlan, completeLap, currentLap, allLapsDone, lapLabel, phaseListLines, planOf, verifyGate } from "./goal-phase.ts";
 import { goalDriverDone, type GoalRunState } from "./goal-driver.ts";
 import { type HarnessContext } from "./kit.ts";
 import { consultOnly, goalOpenFor, noGoalNeededNote } from "./consult.ts";
+import { groundPlan, groundingNote } from "./grounding.ts";
+import { blockingGaps, peerGapText, runPeerReview } from "./peer-review.ts";
 
 export interface PhaseCall {
 	plan?: string[];
@@ -73,6 +76,7 @@ export const registerPhaseTool = (ctx: HarnessContext): void => {
 	const state = ctx.state;
 	const persist = ctx.persist;
 	const updateWidget = ctx.updateWidget;
+	const launchReview = ctx.launchSubagent;
 	ctx.pi.registerTool({
 		name: "lap",
 		label: "finisher · lap",
@@ -81,6 +85,7 @@ export const registerPhaseTool = (ctx: HarnessContext): void => {
 		promptSnippet: "Declare the phase plan, then close one lap at a time (verify is gated on all laps)",
 		promptGuidelines: [
 			"After goal is confirmed, declare the plan: lap plan=[\"read the parser\",\"rewrite the retry policy\",\"...\"]. Every entry must be independently workable — one lap, one outcome.",
+			"Ground the plan in the repo before you declare it: every path and npm script a lap names is checked, and a plan built on names that do not exist is refused until you read the code and name the real ones. Say so when a lap creates a path or a script.",
 			"Work exactly one lap at a time. When it is genuinely done, call lap done (or done=\"<lap id>\"). Never close a lap you have not finished.",
 			"The order matters: declare the plan, close laps 1..n, then call verify ONCE. verify is refused while a lap is still open.",
 			"If verify fails, the harness appends fix laps to the plan — work those, then verify again. Never invent laps on your own.",
@@ -92,9 +97,44 @@ export const registerPhaseTool = (ctx: HarnessContext): void => {
 				done: { type: ["string", "boolean"], description: "close the current lap: omit the value or pass true for the current lap, or pass the lap id to close that one" },
 			},
 		},
-		async execute(_id: string, params: PhaseCall) {
+		async execute(_id: string, params: PhaseCall, _sig?: AbortSignal, _on?: unknown, toolCtx?: ExtensionContext) {
 			if (consultOnly(state.turnIntent, false) && !goalOpenFor(state.goalDriver))
 				return { content: [{ type: "text", text: noGoalNeededNote("lap", state.humanLang) }], details: { action: "consult", lap: 0, laps: 0 } };
+			const wanted = (params?.plan ?? []).map((text) => text.trim()).filter(Boolean);
+			const driver = state.goalDriver;
+			const cwd = toolCtx?.cwd;
+			if (wanted.length && cwd && driver && !goalDriverDone(driver)) {
+				const plan = planOf(driver);
+				if (!plan.phases.length || allLapsDone(plan)) {
+					const grounding = groundPlan(cwd, wanted);
+					if (grounding.gaps.length)
+						return {
+							content: [
+								{
+									type: "text",
+									text: ["lap: the plan was not declared — it does not match the repo yet.", groundingNote(grounding), "read the code the laps name, then declare the plan again with the real paths and scripts."].join("\n"),
+								},
+							],
+							details: { action: "blocked", grounding, lap: plan.lap, laps: plan.phases.length },
+							isError: true,
+						};
+					const peer = await runPeerReview({
+						ctx: toolCtx,
+						cwd,
+						goal: driver.goal,
+						refs: wanted,
+						kind: "plan",
+						mainModel: toolCtx.model ? `${toolCtx.model.provider}/${toolCtx.model.id}` : undefined,
+						launch: launchReview,
+					});
+					if (peer.verdict === "gaps" && blockingGaps(peer).length)
+						return {
+							content: [{ type: "text", text: ["lap: the plan was not declared — a second model could not ground it.", peerGapText(peer, "plan")].join("\n") }],
+							details: { action: "blocked", peer, lap: plan.lap, laps: plan.phases.length },
+							isError: true,
+						};
+				}
+			}
 			const before = state.goalDriver;
 			const action = applyPhaseCall(state, params ?? {});
 			if (state.goalDriver !== before) {

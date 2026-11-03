@@ -73,8 +73,8 @@ export const draftDirective = (prompt: string, lang?: string): string => {
 			? "ยังไม่มี goal: ถามมนุษย์ว่า goal คืออะไรด้วยคำพูดของเขาเอง แล้วเรียก goal ก่อนลงมือ"
 			: "no goal yet: ask the human for the goal in their own words, then call goal before you start";
 	if (thaiLang(lang))
-		return `ถ้าข้อความนี้เป็นงานที่ต้องลงมือ — ฉบับร่างจากคำพูดของมนุษย์: goal = ${draft.goal} | case = ${numbered}. เรียก goal ด้วย goal และ case ชุดนี้ ไม่ต้องเดา มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
-	return `if this message is a work order — the draft from the human's own words: goal = ${draft.goal} | cases = ${numbered}. Call goal with this goal and these cases instead of guessing; the human confirms once and the same goal is never asked again`;
+		return `ถ้าข้อความนี้เป็นงานที่ต้องลงมือ — ฉบับร่างตั้งต้นจากคำพูดของมนุษย์: goal = ${draft.goal} | case = ${numbered}. อ่านโค้ดที่ case เหล่านี้ชี้ถึงก่อน แล้วแก้ case ให้ตรงกับ repo จริง จากนั้นจึงเรียก goal: goal จะปฏิเสธ case ที่อ้าง path หรือ script ที่ repo ไม่มี มนุษย์ยืนยันครั้งเดียว และ goal เดิมจะไม่ถูกถามซ้ำ`;
+	return `if this message is a work order — a starting draft from the human's own words: goal = ${draft.goal} | cases = ${numbered}. Read the code those cases point at and correct them against the repo before calling goal; goal refuses a case built on a path or script the repo does not have, the human confirms once, and the same goal is never asked again`;
 };
 
 export const intakeDirective = (prompt: string, lang?: string, intent?: TurnIntent): string => {

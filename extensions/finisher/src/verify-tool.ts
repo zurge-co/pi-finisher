@@ -41,7 +41,9 @@ export const caseClaims = (input: unknown): CaseClaim[] => {
 	if (!Array.isArray(input)) return out;
 	for (const raw of input) {
 		const entry = raw as { id?: unknown; case?: unknown; command?: unknown; human?: unknown; note?: unknown };
-		const id = typeof entry.id === "string" ? entry.id.trim() : typeof entry.case === "string" ? entry.case.trim() : "";
+		const idValue = typeof entry.id === "number" ? String(entry.id) : entry.id;
+		const caseValue = typeof entry.case === "number" ? String(entry.case) : entry.case;
+		const id = typeof idValue === "string" ? idValue.trim() : typeof caseValue === "string" ? caseValue.trim() : "";
 		const command = typeof entry.command === "string" ? entry.command.trim() : "";
 		const human = entry.human === true;
 		const note = typeof entry.note === "string" ? entry.note.trim().slice(0, 160) : "";
@@ -67,6 +69,15 @@ export const VERB_LEAD =
 	/^(?:(?:fix|make|prove|do|ensure|verify|check|test|rerun|re-run)\s+|(?:แก้ไข|ตรวจสอบ|รองรับ|พิสูจน์|ทำให้|แก้|ซ่อม|ทำ|ตรวจ|เพิ่ม|ปรับ|เปลี่ยน|สร้าง|เขียน|ลบ|ย้าย|แยก|รวม|อ่าน)\s*)/i;
 
 export const ORDINAL_ID = /^(?:[c#]|case)\s*#?\s*(\d{1,2})$/i;
+
+export const BARE_ORDINAL = /^#?\s*(\d{1,2})[.):]?$/;
+
+export const ordinalOf = (id: string, total: number): number | undefined => {
+	const match = ORDINAL_ID.exec(id.trim()) ?? BARE_ORDINAL.exec(id.trim());
+	if (!match) return undefined;
+	const at = Number.parseInt(match[1], 10);
+	return at >= 1 && at <= total ? at - 1 : undefined;
+};
 
 export const REMEDY_MARK = /\s+(?:—|–|::|\|)\s+/;
 
@@ -95,10 +106,10 @@ const candidatesFor = (cases: string[], id: string): string[] => {
 	if (!caseKey(id)) return [];
 	const exact = cases.filter((c) => c === id || caseKey(c) === caseKey(id));
 	if (exact.length) return exact;
-	const ordinal = ORDINAL_ID.exec(id.trim());
+	const ordinal = ORDINAL_ID.exec(id.trim()) ?? BARE_ORDINAL.exec(id.trim());
 	if (ordinal) {
-		const at = Number.parseInt(ordinal[1], 10);
-		return at >= 1 && at <= cases.length ? [cases[at - 1]] : [];
+		const at = ordinalOf(id, cases.length);
+		return at === undefined ? [] : [cases[at]];
 	}
 	const keys = claimKeys(id);
 	for (const key of keys) {
@@ -131,6 +142,30 @@ export const bindClaims = (cases: string[], claims: CaseClaim[]): BoundClaims =>
 	}
 	return { commands, human, bound, unbound };
 };
+
+export const carriedCommands = (
+	cases: string[],
+	bound: Map<string, string>,
+	human: Map<string, string>,
+	remembered?: Record<string, string>,
+): Map<string, string> => {
+	const out = new Map<string, string>();
+	for (const caseId of cases) {
+		if (human.has(caseId)) continue;
+		const command = bound.get(caseId) ?? remembered?.[caseId];
+		if (command) out.set(caseId, command);
+	}
+	return out;
+};
+
+export const commandMemory = (commands: Map<string, string>): Record<string, string> => Object.fromEntries([...commands]);
+
+export const unboundRefusal = (claims: CaseClaim[], cases: string[]): string =>
+	[
+		`verify: none of the ${claims.length} case id(s) you named matched a confirmed case, so nothing was judged and no lap was added.`,
+		"copy each case exactly as the goal listed it, or name its position (C1, C2, …):",
+		...cases.map((c, i) => `  C${i + 1}: ${c}`),
+	].join("\n");
 
 export const unboundNote = (unbound: { id: string; candidates: string[] }[]): string =>
 	unbound.length
@@ -281,11 +316,12 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 		name: VERIFY_TOOL,
 		label: "finisher · verify",
 		description:
-			`Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own checks (typecheck, lint, test scripts) through a scoped, parallel, cached plan: a check whose changed paths cannot affect it is skipped, a green recording made after the last edit is not re-run, and a toolchain that cannot run here is reported as skipped instead of failing every case. Stage 2 judges each case from the command you name: a command the harness already recorded is judged by that recording, and one it has not seen is run now — a case you name no command for stays UNVERIFIED. Every case outcome is written to ${STATE_HOME_LABEL}/checks.`,
+			`Verify a confirmed goal yourself — no sub-agent is spawned. Stage 1 runs the repo's own checks (typecheck, lint, test scripts) through a scoped, parallel, cached plan: a check whose changed paths cannot affect it is skipped, a green recording made after the last edit is not re-run, and a toolchain that cannot run here is reported as skipped instead of failing every case. Stage 2 judges each case from the command you name: a command the harness already recorded is judged by that recording, and one it has not seen is run now — a case you name no command for stays UNVERIFIED. The command you name is remembered for its case, so a later round may name only what changed and every remembered command is re-proven against the current tree. Every case outcome is written to ${STATE_HOME_LABEL}/checks.`,
 		promptSnippet: "Verify the goal deterministically first, then judge each case from the command it names",
 		promptGuidelines: [
 			`Call ${VERIFY_TOOL} once after every lap is closed with lap done — it is refused while a lap is still open.`,
-			"Name one command per case (cases: [{ id, command }]) that actually exercises it. The harness judges from its recording, and runs the command itself when the recording does not have it; a case you leave without a command is UNVERIFIED — never claim PASS for it.",
+			"Name one command per case (cases: [{ id, command }]) that actually exercises it; a case may be named by its exact text or by its position (C1, C2, …). The harness judges from its recording, and runs the command itself when the recording does not have it; a case you leave without a command is UNVERIFIED — never claim PASS for it.",
+			"verify remembers the command each case was proven by: in a later round name only the cases that changed, and every other case is re-judged by its remembered command against the current tree — never assume it still passes without that re-run.",
 			`Proof is a recorded check, not another test: verify writes one line per case to ${STATE_HOME_LABEL}/checks (PASS/FAIL/SKIP/UNVERIFIED) — never add a test file to prove a case.`,
 			"You decide the checks too: pass checks: [{ name, command }] and each one runs for real in the deterministic stage — a red one fails every case, a green one proves the case that names the same command.",
 			`Never run what the deterministic stage already ran: ${CHECK_ORDER.join(", ")} (and any test-kind script such as test:e2e or a jest/vitest script) run once, and a case whose command is that script is proven by that run.`,
@@ -340,20 +376,24 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 
 			const openGoal = !!active && !goalDriverDone(active);
 			const cases = openGoal ? (active.cases ?? []) : (p.goal ? [p.goal] : []);
-			const named = bindClaims(cases, caseClaims(p.cases));
+			const claims = caseClaims(p.cases);
+			const named = bindClaims(cases, claims);
+			if (openGoal && claims.length && named.bound.size === 0)
+				return { content: [{ type: "text", text: unboundRefusal(claims, cases) }], details: { unbound: named.unbound, cases }, isError: true };
+			const commands = carriedCommands(cases, named.commands, named.human, openGoal ? active.caseCommands : undefined);
 			const calls = freshCalls((state.verifyCalls ?? []) as { command: string; ok: boolean; at?: number }[], lastModifiedAt);
-			const evidence = await judgeDeterministic(cases, named.commands, calls, checks, async (command) => {
+			const evidence = await judgeDeterministic(cases, commands, calls, checks, async (command) => {
 				const result = await runCommand(command, cwd, timeoutMs);
 				state.verifyCalls = appendCommand(state.verifyCalls ?? [], { toolName: "bash", input: { command }, isError: result.exitCode !== 0 });
 				return result;
 			}, named.human);
 			const report = buildReport(evidence);
 			const verified = `${NON_GOAL_PREFIX}${evidence.map((c) => c.caseId).join(", ") || "run"}`;
-			const driver = openGoal ? active : { ...resumeOrStart(undefined, p.goal?.trim() || verified, Date.now(), cases), attempts: freshAttempts() };
+			const driver = openGoal ? { ...active, caseCommands: commandMemory(commands) } : { ...resumeOrStart(undefined, p.goal?.trim() || verified, Date.now(), cases), attempts: freshAttempts() };
 			const step = nextGoalDriverStep(driver, report);
-			const entries = caseCheckEntries(evidence, named.commands, openGoal ? active.goal : p.goal?.trim());
+			const entries = caseCheckEntries(evidence, commands, openGoal ? active.goal : p.goal?.trim());
 			appendChecks(cwd, entries);
-			const summary = [verifySummaryLines(checks, report, named.commands).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
+			const summary = [verifySummaryLines(checks, report, commands).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
 
 			if (!openGoal) {
 				persist();

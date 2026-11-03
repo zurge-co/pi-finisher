@@ -23,6 +23,7 @@ export interface GoalRunState {
 	lapAt?: number;
 	lapMs?: number[];
 	cases?: string[];
+	caseCommands?: Record<string, string>;
 }
 
 export interface GoalStep {

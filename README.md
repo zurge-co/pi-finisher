@@ -39,10 +39,21 @@ was missing most often, so the plan can be made better instead of guessed.
   120s, `0` = wait forever). A timeout is a refusal: the run stops, complains once, and refuses any
   further `goal` until the human writes again — it never starts on a guess and never re-opens the
   dialog by itself.
-- **The goal is the human's.** A goal and its case list can only change through the confirm dialog:
-  the same goal with the same cases resumes silently, a new case list re-opens the dialog, and a
-  declined or unavailable dialog leaves the confirmed goal byte-identical. A verify run can never
-  name or re-case a goal, and an open plan is never replaced behind your back.
+- **The goal is the human's.** The goal text can only change through the confirm dialog: the same
+  goal resumes silently — changing which cases prove it is the agent's own plan — a new goal
+  re-opens the dialog, and a declined or unavailable dialog leaves the confirmed goal
+  byte-identical. A verify run can never name or re-case a goal, and an open plan is never replaced
+  behind your back.
+- **The plan must match the repo.** Before the confirm dialog, `goal` checks every path and npm
+  script a case names against the workspace; before a plan is stored, `lap` checks it the same way.
+  A name that is not there is refused until the agent reads the code and corrects it — or says the
+  lap creates it. A plan built on guessed names is exactly what comes back as a fix lap at verify.
+- **A second model checks the plan.** When the ladder has a rung other than the model you are
+  talking to, `goal` and `lap` send the numbered cases/plan to it first, read-only, with the repo in
+  front of it. A finding that points at `file:line` blocks until the cases are corrected; a vague
+  opinion never blocks; a reviewer that fails, times out or answers off-format is ignored. The
+  reviewer is a real sub-agent (`reviewer` role) and can never write or run a command.
+  `{"peerReview": false}` in the project config turns the second read off.
 - **A vague goal is asked once, not guessed.** When the human's words cannot yield a checkable case,
   `goal` asks at most 3 questions — each with options to pick (drawn from the repo's own
   module names) and an "as I said is enough" escape — and folds the answers into the cases before the
@@ -326,11 +337,14 @@ says so — it cannot mark a goal confirmed, so verifying first is never a way a
 
 ## Fresh context: a lap boundary, never a goal close
 
-A context reset happens at exactly one moment: **while a goal is still open**, when a lap closes
-(`turn_end` → at most one compaction entry per lap). **Closing the goal is not a boundary** — the
-transcript, the verify report and the evidence that already ran stay on screen and in context to
-read back, nothing fires at settle time, and the next task starts from the context you already have.
-Asking a question, getting an answer, or any other reply is never a boundary either.
+A context reset can happen at exactly one moment: **while a goal is still open**, when a lap closes
+and the context is actually filling (70% or more of the window — `turn_end` → at most one compaction
+entry per lap). A lap boundary with room left in the window keeps the full transcript: the model
+carries what it read, edited and reasoned about into the next lap instead of re-deriving it from a
+summary. **Closing the goal is not a boundary** — the transcript, the verify report and the evidence
+that already ran stay on screen and in context to read back, nothing fires at settle time, and the
+next task starts from the context you already have. Asking a question, getting an answer, or any
+other reply is never a boundary either.
 
 What a lap compaction carries is **not** a transcript or a statistic — it is the lap tracker: the
 goal, the confirmed cases, every lap with its mark and its own spent time, and the latest status of
@@ -342,10 +356,12 @@ stands. Two sessions on the same repo never share a tracker: each reads its own 
 session whose context was cleared resumes the lap from disk instead of guessing it, and the newest 8
 trackers are the ones kept.
 
-The reset is bounded by design: once per lap, never twice for the same lap, never for a plan that has
-just closed its last lap (it hands straight over to verify), and never while a `halted`/`needs-human`
-report is still unread. `{"freshContext": false}` in `~/.pi/finisher/<project>/config.json` turns the
-lap reset off; with it off the context simply keeps growing, and goal close stays untouched either way.
+The reset is bounded by design: only when the context is at or past `FRESH_RESET_PCT` (70%), once per
+lap, never twice for the same lap, never for a plan that has just closed its last lap (it hands
+straight over to verify), and never while a `halted`/`needs-human` report is still unread. When the
+usage is unknown — right after a compaction, before the next response — nothing is reset.
+`{"freshContext": false}` in `~/.pi/finisher/<project>/config.json` turns the lap reset off entirely;
+goal close stays untouched either way.
 
 The handoff stack is **parked** (`HANDOFF_ENABLED = false`): nothing is classified into it, no handoff
 model is called, and it injects nothing. Sub-agents still run under `RpcClient`, so a finding can be

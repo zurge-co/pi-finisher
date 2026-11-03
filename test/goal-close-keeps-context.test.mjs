@@ -39,6 +39,7 @@ const session = (cwd, state) => ({
 	mode: "rpc",
 	hasUI: false,
 	ui: { notify: () => {}, setWidget: () => {}, setWorkingIndicator: () => {}, setWorkingMessage: () => {} },
+	getContextUsage: () => ({ tokens: 90_000, contextWindow: 100_000, percent: 90 }),
 	sessionManager: { getEntries: () => [{ type: "custom", customType: "finisher-state", data: state }] },
 });
 

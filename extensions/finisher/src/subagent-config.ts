@@ -6,21 +6,24 @@ import { DefaultPackageManager, SettingsManager, getAgentDir } from "@earendil-w
 import { finisherDir } from "./types.ts";
 import { SURFACE_TOOLS } from "./goal-run.ts";
 
-export const SUBAGENT_ROLES = ["coder"] as const;
+export const SUBAGENT_ROLES = ["coder", "reviewer"] as const;
 export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
 
 export const isSubagentRole = (role: string): role is SubagentRole => (SUBAGENT_ROLES as readonly string[]).includes(role);
 
 export const SUBAGENT_EXCLUDE_TOOLS: Record<string, string[]> = {
 	coder: [],
+	reviewer: ["write", "edit", "multi_edit", "apply_patch", "patch", "str_replace_editor", "create_file", "bash", "powershell"],
 };
 
 export const SUBAGENT_STRIP_FLAGS: Record<string, string[]> = {
 	coder: ["--no-themes", "--no-prompt-templates", "--no-mcp", "--no-skills"],
+	reviewer: ["--no-themes", "--no-prompt-templates", "--no-mcp", "--no-skills"],
 };
 
 export const SUBAGENT_TIMEOUT_MS: Record<string, number> = {
 	coder: 600_000,
+	reviewer: 240_000,
 	default: 300_000,
 };
 export const subagentTimeout = (role: string, cwd?: string, fallbackCwd?: string): number => {

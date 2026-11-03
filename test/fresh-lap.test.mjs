@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	FRESH_RESET_PCT,
 	FRESH_SUMMARY_MAX,
 	LAP_DIRECTIVE,
 	freshLapDecision,
@@ -22,13 +23,13 @@ test("one reset per lap boundary: the lap that closed is summarized once, and th
 	assert.equal(freshLapDecision({ enabled: true, hasWork: true, goal: first, now: first.lapAt + 5_000 }).reset, false, "nothing has closed yet, so there is nothing to clear");
 
 	const second = { ...first, ...completeLap(first, undefined, first.lapAt + 9_000) };
-	const decided = freshLapDecision({ enabled: true, hasWork: true, goal: second, now: second.lapAt + 1_000 });
+	const decided = freshLapDecision({ enabled: true, hasWork: true, contextPct: 90, goal: second, now: second.lapAt + 1_000 });
 	assert.deepEqual(decided, { reset: true, lapAt: second.lapAt, lap: 2 }, "closing a lap is the boundary that opens the next one");
 
 	assert.equal(freshLapDecision({ enabled: true, hasWork: true, goal: second, consumedLapAt: second.lapAt, now: second.lapAt + 60_000 }).reset, false, "the same boundary can never fire twice, however long the run continues");
 
 	const third = { ...second, ...completeLap(second, undefined, second.lapAt + 9_000) };
-	const next = freshLapDecision({ enabled: true, hasWork: true, goal: third, consumedLapAt: second.lapAt, now: third.lapAt + 1_000 });
+	const next = freshLapDecision({ enabled: true, hasWork: true, contextPct: 90, goal: third, consumedLapAt: second.lapAt, now: third.lapAt + 1_000 });
 	assert.equal(next.reset, true, "closing the next lap is a new boundary");
 	assert.equal(next.lap, 3);
 	assert.equal(next.lapAt, third.lapAt);
@@ -37,7 +38,7 @@ test("one reset per lap boundary: the lap that closed is summarized once, and th
 test("every reason not to reset wins over the boundary, and none of them depends on the plan", () => {
 	const base0 = openGoal();
 	const goal = { ...base0, ...completeLap(base0, undefined, base0.lapAt + 1_000) };
-	const base = { enabled: true, hasWork: true, goal, now: goal.lapAt + 10_000 };
+	const base = { enabled: true, hasWork: true, contextPct: 90, goal, now: goal.lapAt + 10_000 };
 	const off = [
 		[{ enabled: false }, "the switch still wins"],
 		[{ hasWork: false }, "nothing was said, so nothing is compacted"],
@@ -50,6 +51,17 @@ test("every reason not to reset wins over the boundary, and none of them depends
 		[{ goal: { ...goal, phases: [] } }, "a goal with no declared plan has no laps to cross"],
 	];
 	for (const [patch, why] of off) assert.equal(freshLapDecision({ ...base, ...patch }).reset, false, why);
+});
+
+test("a lap boundary only compacts when the context is actually filling — a run with room keeps its transcript", () => {
+	const first = openGoal();
+	const goal = { ...first, ...completeLap(first, undefined, first.lapAt + 1_000) };
+	const at = (contextPct) => freshLapDecision({ enabled: true, hasWork: true, contextPct, goal, now: goal.lapAt + 5_000 });
+	assert.equal(at(20).reset, false, "a fifth of the window used is no reason to throw the conversation away");
+	assert.equal(at(69).reset, false, "just under the threshold still keeps the full context");
+	assert.equal(at(FRESH_RESET_PCT).reset, true, "the threshold is inclusive");
+	assert.equal(at(null).reset, false, "unknown usage never compacts — the next turn knows");
+	assert.equal(at(undefined).reset, false, "a caller that says nothing about usage gets no reset either");
 });
 
 test("a finished plan has no open lap, so closing the last lap hands over to verify instead of compacting", () => {

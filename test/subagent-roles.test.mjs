@@ -28,8 +28,8 @@ const repo = (cfg) => {
 
 const here = new URL("..", import.meta.url).pathname;
 
-test("there is exactly one role left — coders — and every table agrees on it", () => {
-	assert.deepEqual([...SUBAGENT_ROLES], ["coder"], "explore and verify are main's own work, so only coders are spawned");
+test("two roles remain — coders that write, and reviewers that only read — and every table agrees on them", () => {
+	assert.deepEqual([...SUBAGENT_ROLES], ["coder", "reviewer"], "exploration and verification stay main's work; coders write and reviewers audit the plan");
 	for (const role of SUBAGENT_ROLES) {
 		assert.ok(role in SUBAGENT_EXCLUDE_TOOLS, `${role} must declare its tool exclusions`);
 		assert.ok(role in SUBAGENT_STRIP_FLAGS, `${role} must declare its boot flags`);
@@ -38,10 +38,21 @@ test("there is exactly one role left — coders — and every table agrees on it
 	assert.deepEqual(Object.keys(SUBAGENT_EXCLUDE_TOOLS).sort(), [...SUBAGENT_ROLES].sort(), "no extra role may hide in the tool table");
 	assert.deepEqual(Object.keys(SUBAGENT_TIMEOUT_MS).filter((k) => k !== "default").sort(), [...SUBAGENT_ROLES].sort());
 	assert.equal(isSubagentRole("grader"), false, "the merged role is gone");
-	assert.equal(isSubagentRole("reviewer"), false);
+	assert.equal(isSubagentRole("reviewer"), true, "the peer reviewer is a real role: another model audits the plan, it never writes");
 	assert.equal(isSubagentRole("distiller"), false);
-	assert.equal(isSubagentRole("verifier"), false, "the verifier role is gone: main verifies, no child is spawned to judge");
-	assert.equal(isSubagentRole("coder"), true, "coders are the only role left");
+	assert.equal(isSubagentRole("verifier"), false, "the old verifier role is gone: main verifies itself, no child judges the evidence");
+	assert.equal(isSubagentRole("coder"), true);
+});
+
+test("a reviewer reads the repo but can never change it — no write, no edit, no shell", () => {
+	const excluded = SUBAGENT_EXCLUDE_TOOLS.reviewer ?? [];
+	for (const tool of ["write", "edit", "multi_edit", "apply_patch", "bash", "powershell"]) assert.ok(excluded.includes(tool), `${tool} must be excluded, or the reviewer could change what it reviews`);
+	assert.ok(!excluded.includes("read"), "a reviewer must read the code");
+	assert.ok(!excluded.includes("grep"), "a reviewer must search the code");
+	const args = buildRpcSubagentArgs(excluded, "reviewer");
+	const list = args[args.indexOf("--exclude-tools") + 1].split(",");
+	for (const harness of HARNESS_TOOLS) assert.ok(list.includes(harness), `a reviewer must not re-enter the harness: ${harness}`);
+	assert.ok(SUBAGENT_TIMEOUT_MS.reviewer >= 120_000, "a review reads code, so it gets real time");
 });
 
 test("a coder cannot re-enter the harness — every finisher tool is excluded by name, and no verifier exception is left", () => {

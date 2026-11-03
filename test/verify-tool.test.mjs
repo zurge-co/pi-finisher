@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, readJournal, runCheck, runChecks, runCommand, stateLabel, verifySummaryLines, bindClaims, buildReport, caseClaims } from "../extensions/finisher/index.ts";
+import { checkLine, clearCheckCache, detectChecks, failingChecks, judgeDeterministic, readChecks, readJournal, runCheck, runChecks, runCommand, stateLabel, verifySummaryLines, bindClaims, buildReport, carriedCommands, caseClaims, commandMemory, unboundRefusal } from "../extensions/finisher/index.ts";
 
 const repo = (scripts) => {
 	const dir = mkdtempSync(join(tmpdir(), "finisher-checks-"));
@@ -211,12 +211,72 @@ test("a claim can name a case by position, by a cut id, or past a lead verb — 
 	assert.equal(bound("C1").commands.get(cases[0]), "true", "C1 names the first case");
 	assert.equal(bound("case 2").commands.get(cases[1]), "true", "'case 2' names the second case");
 	assert.equal(bound("#3").commands.get(cases[2]), "true", "'#3' names the third case");
+	assert.equal(bound("1").commands.get(cases[0]), "true", "the bare number the goal listed is a position too");
+	assert.equal(bound("2.").commands.get(cases[1]), "true", "'2.' is the same position with the list's punctuation");
 	assert.deepEqual(bound("C9").unbound.map((u) => u.candidates), [[]], "a position past the end matches nothing instead of guessing");
+	assert.deepEqual(bound("9").unbound.map((u) => u.candidates), [[]], "a bare position past the end is no more a guess than C9");
 	assert.equal(bound("the journal records real…").commands.get(cases[1]), "true", "a truncated id still binds when it fits exactly one case");
 	assert.equal(bound("แก้ the journal records real models").commands.get(cases[1]), "true", "a Thai lead verb is stripped before matching");
 	assert.equal(bindClaims(["C2", "a real case"], [{ id: "C2", command: "true", human: false }]).commands.get("C2"), "true", "an exact text still outranks a position");
 	const shared = ["the lap clock ticks", "the lap clock tocks"];
 	assert.deepEqual(bindClaims(shared, [{ id: "the lap clock", command: "true", human: false }]).unbound[0].candidates, shared, "an ambiguous fragment still names both and proves nothing");
+});
+
+test("a case keeps the command that proved it, so a later round never silently unproves a case it did not touch", () => {
+	const cases = ["c1", "c2", "c3"];
+	const first = carriedCommands(cases, new Map([["c1", "npm test"], ["c2", "node b.mjs"]]), new Map());
+	assert.deepEqual([...first], [["c1", "npm test"], ["c2", "node b.mjs"]], "the first round is exactly what was named");
+	const later = carriedCommands(cases, new Map([["c2", "node b2.mjs"]]), new Map(), commandMemory(first));
+	assert.equal(later.get("c1"), "npm test", "a case the round did not mention keeps its command");
+	assert.equal(later.get("c2"), "node b2.mjs", "a fresh claim outranks the memory");
+	assert.equal(later.has("c3"), false, "a case that was never named inherits nothing");
+	const human = carriedCommands(cases, new Map(), new Map([["c1", ""]]), commandMemory(first));
+	assert.equal(human.has("c1"), false, "a human-only claim drops the machine command instead of quietly keeping it");
+});
+
+test("a second verify round re-proves the remembered commands against the current tree — memory is never a pass", async () => {
+	const dir = repo({});
+	writeFileSync(join(dir, "alpha.txt"), "ok");
+	const alpha = `node -e "process.exit(require('node:fs').readFileSync('alpha.txt','utf8').trim()==='ok'?0:1)"`;
+	const beta = (code) => `node -e "process.exit(${code})"`;
+	const s = session({ cwd: dir });
+	await s.run("goal", { goal: "keep every case proven", cases: ["alpha holds", "beta holds"] });
+	await s.run("lap", { plan: ["make both hold"] });
+	await s.run("lap", { done: true });
+
+	const one = await s.run("verify", { cases: [{ id: "1", command: alpha }, { id: "2", command: beta(1) }] });
+	assert.equal(one.isError, true);
+	assert.equal(s.box.get().goalDriver.caseCommands["alpha holds"], alpha, "the command is remembered with the case");
+	await s.run("lap", { done: true });
+
+	writeFileSync(join(dir, "alpha.txt"), "broken");
+	s.box.get().lastModifiedAt = Date.now();
+	const two = await s.run("verify", { cases: [{ id: "2", command: beta(0) }] });
+	assert.equal(two.isError, true, "the omitted case is re-judged, not assumed");
+	assert.match(two.content[0].text, /alpha holds FAIL/, "its remembered command is re-run against the edited tree and fails");
+	assert.match(two.content[0].text, /beta holds PASS/, "the case the round did name is proven");
+	await s.run("lap", { done: true });
+
+	writeFileSync(join(dir, "alpha.txt"), "ok");
+	s.box.get().lastModifiedAt = Date.now();
+	const three = await s.run("verify", { cases: [] });
+	assert.equal(three.isError, undefined, "with the tree fixed, both remembered commands prove their cases");
+	assert.equal(s.box.get().goalDriver.outcome, "verified", "the goal closes on evidence, without re-naming every case");
+});
+
+test("a claim that names no case refuses the round instead of buying a fix lap for a case it never touched", async () => {
+	const s = session({ cwd: repo({}) });
+	await s.run("goal", { goal: "refuse a phantom claim", cases: ["the check passes"] });
+	await s.run("lap", { plan: ["make it pass"] });
+	await s.run("lap", { done: true });
+	const before = (s.box.get().goalDriver.phases ?? []).length;
+	const out = await s.run("verify", { cases: [{ id: "the check that does not exist", command: "true" }] });
+	assert.equal(out.isError, true);
+	assert.match(out.content[0].text, /nothing was judged and no lap was added/);
+	assert.match(out.content[0].text, /C1: the check passes/, "the refusal lists the cases the claim could have named");
+	assert.match(unboundRefusal([{ id: "x", human: false }], ["the check passes"]), /C1: the check passes/, "the refusal names every case it could have meant");
+	assert.equal((s.box.get().goalDriver.phases ?? []).length, before, "no lap is added for a claim that matched nothing");
+	assert.equal(s.box.get().goalDriver.outcome, undefined, "the goal stays open");
 });
 
 test("the report file carries the verdict exactly once and none of the words aimed at the agent", async () => {

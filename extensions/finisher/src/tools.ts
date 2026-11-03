@@ -28,6 +28,8 @@ import { cleanChromeText } from "./chrome-text.ts";
 import { askClarify } from "./clarify-dialog.ts";
 import { caseKey } from "./goal-confirm.ts";
 import { codeConsultNote, consultOnly, decideGoalNote, goalConsultNote, goalOpenFor, worksTurn } from "./consult.ts";
+import { groundPlan, groundingNote } from "./grounding.ts";
+import { blockingGaps, peerGapText, runPeerReview } from "./peer-review.ts";
 
 export const SWARM_MODES = ["code"] as const;
 export const RETIRED_MODES = ["explore", "verify"] as const;
@@ -45,6 +47,8 @@ const humanTurnsNow = (ctx: ExtensionContext): number => {
 
 const sessionIdNow = (ctx: ExtensionContext): string => sessionIdFrom(ctx.sessionManager as never);
 
+const mainModelOf = (ctx: ExtensionContext): string | undefined => (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined);
+
 export const registerTools = (ctx: HarnessContext) => {
 	const persist = ctx.persist;
 	const pi = ctx.pi;
@@ -53,6 +57,7 @@ export const registerTools = (ctx: HarnessContext) => {
 	const runCodeSwarm = ctx.runCodeSwarm;
 	const askGoalConfirm = ctx.askGoalConfirm;
 	const askClarifyQuestion = ctx.askClarifyQuestion;
+	const launchReview = ctx.launchSubagent;
 
 	registerPhaseTool(ctx);
 
@@ -162,6 +167,7 @@ export const registerTools = (ctx: HarnessContext) => {
 		promptSnippet: "Confirm the goal once, then let the driver loop verify→fix until proven (bounded, evidence-gated)",
 		promptGuidelines: [
 			"Call goal first with the goal and its cases: that single confirmation is the only human input this run needs.",
+			"Read the code the cases name before you call goal: every path and npm script a case names is checked against the repo, and a case built on a name that is not there is refused before the dialog. A case about something the repo does not have can never be proven.",
 			"The same goal is never confirmed twice: calling it again with an unchanged goal resumes the run without a dialog, even if the cases changed or the goal was closed by a verify round.",
 			"A different goal while one is still open is the human's new decision: it is confirmed once and queued behind the running goal, which keeps going until it closes.",
 			"Write the goal and every case in the language the human writes in, and pass that language as lang: the dialog they confirm is in their language, never yours. Paths, identifiers and commands stay verbatim.",
@@ -246,6 +252,31 @@ export const registerTools = (ctx: HarnessContext) => {
 					isError: true,
 				};
 			const confirmed = goalCases({ crossCheck: cases, outcomes: undefined, intent: goal });
+			if (asks && cases.length) {
+				const grounding = groundPlan(ctx.cwd, cases);
+				if (grounding.gaps.length)
+					return {
+						content: [
+							{
+								type: "text",
+								text: [
+									"goal: nothing was asked and nothing was started — the cases do not match the repo yet.",
+									groundingNote(grounding),
+									"read the code those names point at, then call goal again with the corrected cases. The goal stays the human's; the cases are yours, and a case about something that is not there cannot be proven.",
+								].join("\n"),
+							},
+						],
+						details: { goal, confirmed: false, grounding },
+						isError: true,
+					};
+				const peer = await runPeerReview({ ctx, cwd: ctx.cwd, goal, refs: cases, kind: "cases", mainModel: mainModelOf(ctx), launch: launchReview });
+				if (peer.verdict === "gaps" && blockingGaps(peer).length)
+					return {
+						content: [{ type: "text", text: ["goal: nothing was asked and nothing was started — a second model could not ground these cases.", peerGapText(peer, "cases")].join("\n") }],
+						details: { goal, confirmed: false, peer },
+						isError: true,
+					};
+			}
 
 			let askGoal = goal;
 			let askCases = confirmed;
