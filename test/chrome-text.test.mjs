@@ -42,17 +42,20 @@ test("a chrome value is used only when it is one readable line, and the same rul
 });
 
 test("the escape the human picks is the escape the answers refuse, in every language and for a supplied one", async () => {
-	const { applyAnswers, clarifyChrome: chrome } = await import("../extensions/finisher/index.ts");
+	const { applyAnswers, clarifyChrome: chrome, clarifyOptions } = await import("../extensions/finisher/index.ts");
+	const questions = [{ question: "which one?", options: ["a", "b"] }];
 	for (const lang of ["en", "th"]) {
 		const words = chrome(lang);
-		const applied = applyAnswers({ goal: "make it better", cases: [] }, { meaning: words.asIs, outcome: words.asIs }, lang);
+		const asked = [{ question: "which one?" }];
+		const applied = applyAnswers({ goal: "make it better", cases: [] }, asked, [{ question: "which one?", answer: words.asIs }], lang);
 		assert.deepEqual(applied.notes, [], `${lang}: picking the escape answers nothing`);
-		assert.deepEqual(applied.open, ["meaning", "words", "outcome"], `${lang}: so every gap is still open`);
+		assert.deepEqual(applied.open, ["which one?"], `${lang}: so the question is still open`);
 	}
 	const own = chrome("pt-BR", { asIs: "como eu disse basta" });
-	const applied = applyAnswers({ goal: "make it better", cases: [] }, { meaning: own.asIs }, "pt-BR", { asIs: own.asIs });
-	assert.deepEqual(applied.open, ["meaning", "words", "outcome"], "an agent-supplied escape is refused as an answer, exactly like the built-in one");
+	const applied = applyAnswers({ goal: "make it better", cases: [] }, questions, [{ question: "which one?", answer: own.asIs }], "pt-BR", { asIs: own.asIs });
+	assert.deepEqual(applied.open, ["which one?"], "an agent-supplied escape is refused as an answer, exactly like the built-in one");
 	assert.equal(applied.cases.includes(own.asIs), false, "and it never becomes a case the harness tries to check");
+	assert.deepEqual(clarifyOptions(["a", "a", "b"]), ["a", "b"], "the choices are the model's own, deduped and nothing more");
 });
 
 test("a human who does not read Thai is never handed Thai: every system note falls back to English for any other language", async () => {
@@ -82,15 +85,13 @@ test("a human who does not read Thai is never handed Thai: every system note fal
 	}
 });
 
-test("an agent-supplied clarify chrome reaches the question page and the note, so the round is in the human's own words", async () => {
+test("an agent-supplied clarify chrome reaches the note, and the question it escapes from is the model's own", async () => {
 	const m = await import("../extensions/finisher/index.ts");
 	const chrome = { asIs: "como eu disse basta", note: "pergunto uma vez só", title: "▚ confirme", later: "depois decidimos" };
-	const questions = m.clarifyQuestions(["meaning"], { goal: "make it better", cases: [] }, "pt-BR", chrome);
-	assert.equal(questions[0].options.at(-1), chrome.asIs, "the escape is the agent's own words");
-	assert.equal(questions[0].options.filter((o) => o === chrome.asIs).length, 1, "and it appears once");
-	assert.match(m.clarifyNote(["meaning"], "pt-BR", chrome), /pergunto uma vez só/, "the rule the note quotes is the agent's own");
-	const plan = m.clarifyPlan({ goal: "make it better", cases: [] }, {}, "k", "pt-BR", chrome);
-	assert.equal(plan.questions[0].options.at(-1), chrome.asIs, "the plan carries the same words to the ask");
+	assert.match(m.clarifyNote(["which one?"], "pt-BR", chrome), /pergunto uma vez só/, "the rule the note quotes is the agent's own");
+	const plan = m.clarifyPlan(m.readClarifyQuestions([{ question: "qual deles?", options: ["um", "outro"] }]), {}, "k");
+	assert.equal(plan.ask, true, "a question the agent wrote is the one that is asked");
+	assert.deepEqual(plan.questions[0].options, ["um", "outro"], "and its choices are exactly the agent's, with no escape the harness added");
 });
 
 test("a chrome label is one readable line: every separator and control character is dropped, never truncated", () => {

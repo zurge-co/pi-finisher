@@ -28,14 +28,14 @@ test("the language directive is the human's, and it is the last rule the agent r
 
 test("the goal-first rule is followed by the clarify rule, which confirms understanding instead of inviting an interview", () => {
 	const guidelines = HARNESS_GUIDELINES("th", "work");
-	const at = guidelines.findIndex((rule) => /at most 3 questions/.test(rule));
+	const at = guidelines.findIndex((rule) => /clarify question exists for one reason only/.test(rule));
 	assert.equal(guidelines[at - 1], GOAL_FIRST_GUIDELINE, "the clarify rule sits directly behind the goal-first rule");
 	assert.ok(at > 0, "and the goal-first rule is the thing in front of it");
 	assert.match(guidelines[at], /as I said is enough/, "the escape the human always has");
-	assert.match(guidelines[at], /reading the code would answer/, "and the questions the harness may never ask");
-	assert.match(guidelines[at], /once per goal/, "the bound is one round per goal");
-	assert.match(guidelines[at], /understood the way the human meant it/, "the round is about understanding, nothing else");
-	assert.match(guidelines[at], /never ask how the work is done and never ask how far it reaches/i, "never the method and never the scope");
+	assert.match(guidelines[at], /The harness supplies no question and no choice, ever/, "and the words are never the harness's");
+	assert.match(guidelines[at], /only one reading is possible, ask nothing at all/, "a goal with one reading gets no question in front of it");
+	assert.match(guidelines[at], /you genuinely cannot tell which reading they meant/, "a question exists for a real doubt about meaning, nothing else");
+	assert.match(guidelines[at], /never ask how the work is done or how far it reaches/i, "never the method and never the scope");
 	assert.doesNotMatch(guidelines[at], /how should the result be checked|how far should the change reach/, "the retired questions are gone from the rule the model reads");
 	assert.ok(harnessSystemPrompt(base, "th").includes(guidelines[at]), "and it really reaches the prompt the model reads");
 });

@@ -138,14 +138,28 @@ test("the mode is re-read from disk every turn: a switch mid-session lands on th
 	assert.match(notes[1].text, /off/);
 });
 
-test("the goal tool asks its bounded clarify round before the confirm dialog, and never asks twice", () => {
+test("the goal tool asks only the questions the model wrote, and never asks the same goal twice", () => {
 	const tools = readFileSync(join(here, "extensions/finisher/src/tools.ts"), "utf8");
-	assert.match(tools, /clarifyPlan\(\{ goal, cases: confirmed \}, state, caseKey\(goal\), lang, state\.clarifyChrome\)/, "the tool reads the gaps from the draft it is about to confirm, in the chrome the agent supplied");
-	assert.match(tools, /plan\.ask[\s\S]{0,600}?askClarifyQuestion\(/, "and asks before the human is shown anything");
+	assert.match(tools, /readClarifyQuestions\(p\.clarify\)/, "the only source of a question is the model's own clarify parameter");
+	assert.doesNotMatch(tools, /clarifyGaps\(|clarifyQuestions\(/, "the tool asks the harness nothing about what a goal might mean");
+	assert.match(tools, /clarifyPlan\(questions, state, caseKey\(goal\)\)/, "the plan is the model's questions, bounded, once per goal");
+	assert.match(tools, /clarify:\s*Type\.Optional\(/, "and the parameter really is on the tool schema");
+	assert.match(tools, /plan\.ask[\s\S]{0,900}?askClarifyQuestion\(/, "and asks before the human is shown anything");
 	assert.match(tools, /markClarify\(state, caseKey\(goal\)/, "the round is marked on the goal itself, so an unchanged goal never asks again");
-	assert.match(tools, /askGoalConfirm\(ctx, askGoal, askCases\)/, "the dialog receives the sharpened goal text and the sharpened cases");
-	assert.match(tools, /state\.clarifyChrome = Object\.keys\(clarifyGiven\)\.length \? clarifyGiven : undefined/, "the clarify chrome is validated once and remembered on the run");
+	assert.match(tools, /askGoalConfirm\(ctx, askGoal, askCases\)/, "the dialog receives the goal and the cases this run stands on");
 	assert.match(readFileSync(join(here, "extensions/finisher/src/gui.ts"), "utf8"), /askClarifyQuestion/, "and the session really provides the question dialog, not a stub");
+});
+
+test("no clarify dialog is opened at all when the model supplies no question", async () => {
+	const seen = [];
+	const human = liveHarness(humanUi(seen)).run("goal", { goal: "the HUD row shows the report", cases: ["test/report-click.test.mjs passes"], lang: "en" });
+	const result = await human;
+	assert.equal(result.isError, undefined);
+	assert.equal(seen.length, 1, "the confirm dialog is the only page the human saw");
+	assert.match(seen[0], /the HUD row shows the report/, "showing exactly the goal they confirmed");
+	assert.deepEqual(result.details.clarify, { asked: 0, questions: [] }, "the tool records no round and no question");
+	assert.deepEqual(result.details.cases, ["test/report-click.test.mjs passes"], "the confirm dialog is what the human saw, with the cases this run stands on");
+	assert.doesNotMatch(result.content[0].text, /clarify|nothing to ask/, "and no clarify text is added to the run's instructions");
 });
 
 test("a session with no dialog refuses the goal instead of waiting on a clarify question", async () => {
@@ -185,21 +199,28 @@ const humanUi = (seen) => ({
 	sessionManager: { getEntries: () => [{ type: "message", message: { role: "user" } }], getSessionId: () => "session-clarify" },
 });
 
-test("the real goal tool asks its bounded round first, and the confirm dialog is handed what the human sharpened", async () => {
+test("the real goal tool asks the model's own questions first, and the confirm dialog is handed what the human settled", async () => {
 	const seen = [];
-	const vague = await liveHarness(humanUi(seen)).run("goal", { goal: "make it better", cases: ["it works"], lang: "en" });
-	assert.equal(vague.isError, undefined, "a vague goal is still confirmable: the ask sharpens it, it never gates it");
-	const questions = seen.slice(0, -1);
-	assert.ok(questions.length >= 1 && questions.length <= CLARIFY_MAX, `asked ${questions.length} questions, never more than the bound`);
-	for (const page of questions) assert.match(page, /as I said is enough/, "every question carries the escape, so the human can stop at any point");
+	const questions = [
+		{ question: "which of these did you mean by better?", options: ["the panel stops flickering", "the HUD draws in fewer frames", "it reads more clearly"] },
+		{ question: "what counts as done for you?", options: ["npm test exits 0", "the flicker stops when I use it"] },
+	];
+	const sharpened = await liveHarness(humanUi(seen)).run("goal", { goal: "make it better", cases: ["it works"], clarify: questions, lang: "en" });
+	assert.equal(sharpened.isError, undefined, "a goal is confirmable whatever the human answers");
+	const asked = seen.slice(0, -1);
+	assert.equal(asked.length, questions.length, "every question the model wrote was asked, and no other");
+	assert.match(asked[0], /which of these did you mean by better\?/, "in the model's own words, not the harness's");
+	assert.match(asked[0], /the HUD draws in fewer frames/, "with the model's own choices");
+	assert.match(asked[0], /as I said is enough/, "and the escape last, so the human can stop at any point");
 	const dialog = seen.at(-1);
 	assert.match(dialog, /make it better/, "the human's own words are still the goal they confirm");
 	assert.match(dialog, /it works/, "and the case they already gave is not lost on the way");
-	assert.match(dialog, /npm test/, "the result the human picked reaches the dialog as a case the harness can check");
+	assert.match(dialog, /npm test/, "the reading the human settled on is a case the harness can check");
+	assert.doesNotMatch(dialog, /the HUD draws in fewer frames/, "and a reading they did not pick never becomes one");
 
 	const quiet = [];
-	const sharp = await liveHarness(humanUi(quiet)).run("goal", { goal: "make the HUD ticker 20% faster in src/hud.ts", cases: ["npm test exits 0"], lang: "en" });
-	assert.equal(sharp.isError, undefined);
-	assert.equal(quiet.length, 1, "a goal that is already specific goes straight to the confirm dialog, asking nothing");
-	assert.match(quiet[0], /src\/hud\.ts/, "and that dialog shows the goal it was given");
+	const direct = await liveHarness(humanUi(quiet)).run("goal", { goal: "the HUD row opens the report page", cases: ["test/report-click.test.mjs passes"], lang: "en" });
+	assert.equal(direct.isError, undefined);
+	assert.equal(quiet.length, 1, "a goal with one reading goes straight to the confirm dialog, asking nothing");
+	assert.match(quiet[0], /the HUD row opens the report page/, "and that dialog shows the goal it was given");
 });

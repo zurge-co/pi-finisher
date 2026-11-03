@@ -23,7 +23,7 @@ import { recordSteerOnRun } from "./agent-session.ts";
 import { countSuite } from "./suite-budget.ts";
 import { registerPhaseTool } from "./phase-tool.ts";
 import { verifyToolDefinition, VERIFY_TOOL } from "./verify-tool.ts";
-import { applyAnswers, clarifyPlan, CLARIFY_CHROME_KEYS, markClarify, type ClarifyChromeOverrides, type ClarifyGap } from "./goal-clarify.ts";
+import { applyAnswers, clarifyChrome, clarifyNote, clarifyPlan, CLARIFY_ASK_RULE, CLARIFY_CHROME_KEYS, markClarify, readClarifyQuestions, type ClarifyAnswered, type ClarifyChromeOverrides } from "./goal-clarify.ts";
 import { cleanChromeText } from "./chrome-text.ts";
 import { askClarify } from "./clarify-dialog.ts";
 import { caseKey } from "./goal-confirm.ts";
@@ -189,10 +189,19 @@ export const registerTools = (ctx: HarnessContext) => {
 					emptyGoal: Type.Optional(Type.String()),
 				}),
 			),
+			clarify: Type.Optional(
+				Type.Array(
+					Type.Object({
+						gap: Type.Optional(Type.String({ description: "optional: meaning | words | outcome" })),
+						question: Type.String({ description: `the question, in your own words and in the human's language — ${CLARIFY_ASK_RULE}` }),
+						options: Type.Array(Type.String(), { description: "the readings you actually see, in the human's language: at least 2, at most 5, at most 3 questions in all" }),
+					}),
+				),
+			),
 			clarifyChrome: Type.Optional(
 				Type.Object({
 					title: Type.Optional(Type.String()),
-					asIs: Type.Optional(Type.String()),
+					asIs: Type.Optional(Type.String({ description: "the human's own words for 'that is what I already said' — the last choice on every question" })),
 					later: Type.Optional(Type.String()),
 					note: Type.Optional(Type.String()),
 				}),
@@ -282,19 +291,24 @@ export const registerTools = (ctx: HarnessContext) => {
 			let askCases = confirmed;
 			let sharpened: string[] | undefined;
 			let clarifyNotes: string[] = [];
-			const clarify: { gaps: ClarifyGap[]; asked: number } = { gaps: [], asked: 0 };
-			const plan = clarifyPlan({ goal, cases: confirmed }, state, caseKey(goal), lang, state.clarifyChrome);
+			let clarifyOpenQuestions: string[] = [];
+			const questions = readClarifyQuestions(p.clarify);
+			const clarify: { asked: number; questions: string[] } = { asked: 0, questions: questions.map((q) => q.question) };
+			const plan = clarifyPlan(questions, state, caseKey(goal));
 			if (worksTurn(intent, start) && asks && plan.ask && typeof askClarifyQuestion === "function" && Boolean(ctx.hasUI)) {
-				const asked = await askClarify((question) => askClarifyQuestion(ctx, { question: question.question, choices: question.options }), plan.questions, lang, state.clarifyChrome);
+				const words = clarifyChrome(lang, state.clarifyChrome);
+				const posed = plan.questions.map((question) => ({ ...question, options: [...question.options.filter((option) => option.toLowerCase() !== words.asIs.toLowerCase()), words.asIs] }));
+				const asked = await askClarify((question) => askClarifyQuestion(ctx, { question: question.question, choices: question.options }), posed, lang, state.clarifyChrome);
 				markClarify(state, caseKey(goal), Date.now());
-				clarify.gaps = plan.gaps;
 				clarify.asked = asked.asked;
-				if (Object.keys(asked.answers).length) {
-					const applied = applyAnswers({ goal, cases: confirmed }, asked.answers, lang, state.clarifyChrome);
+				const answers: ClarifyAnswered[] = Object.entries(asked.answers).map(([question, answer]) => ({ question, answer }));
+				if (answers.length) {
+					const applied = applyAnswers({ goal, cases: confirmed }, posed, answers, lang, state.clarifyChrome);
 					askGoal = applied.goalText;
 					askCases = applied.cases;
 					sharpened = applied.cases;
 					clarifyNotes = applied.notes;
+					clarifyOpenQuestions = applied.open;
 				}
 				persist();
 			}
@@ -390,6 +404,7 @@ export const registerTools = (ctx: HarnessContext) => {
 								...next.map((c, i) => `  ${i + 1}. ${c}`),
 								...(intent === "decide" ? ["", decideGoalNote(state.humanLang)] : []),
 								...(clarifyNotes.length ? ["", QUEUED_NOTES_HEAD, ...clarifyNotes.map((note) => `  ${note}`)] : []),
+								...(clarifyOpenQuestions.length ? ["", clarifyNote(clarifyOpenQuestions, lang, state.clarifyChrome)] : []),
 								"",
 								`verification runs once: the repo's checks run scoped, parallel and cached, every case is judged from the command you named — the harness recording, or the run it makes itself — and each case's result lands in ${stateLabel(ctx.cwd, "checks")} — never in a new test file.`,
 								"changing or adding a case never reopens the dialog — the human confirmed the goal, not the plan for proving it.",

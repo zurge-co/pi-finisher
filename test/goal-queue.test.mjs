@@ -167,13 +167,17 @@ test("a failed verify round never promotes: the queue waits for the goal to actu
 test("a goal queued after a clarify round keeps the identity the human named, so it is never confirmed twice", async () => {
 	const clarify = [];
 	const s = verifySession({
-		askClarifyQuestion: async () => {
-			clarify.push("asked");
-			return clarify.length === 1 ? "in a way you notice while using it" : "as I said is enough";
-		},
+		askClarifyQuestion: async () => (clarify.push("asked"), clarify.length === 1 ? "in a way you notice while using it" : "as I said is enough"),
 	});
 	await s.run("goal", { goal: "keep the build green", cases: ["npm test passes"] });
-	const queued = await s.run("goal", { goal: "make the widget faster", cases: ["it feels faster"] });
+	const queued = await s.run("goal", {
+		goal: "make the widget faster",
+		cases: ["it feels faster"],
+		clarify: [
+			{ question: "faster in what way?", options: ["in a way you notice while using it", "in a way you can point at as a number"] },
+			{ question: "and what proves it?", options: ["npm test exits 0", "it reads better"] },
+		],
+	});
 	assert.equal(queued.details.queued, true, "the new goal is queued behind the open one");
 	const queue = s.box.get().goalQueue;
 	assert.equal(queue.length, 1);
