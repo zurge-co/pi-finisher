@@ -46,18 +46,15 @@ fi
 echo "▸ running tests…"
 npm test
 
-NAME=$(node -p "require('./package.json').name")
-AUTHED=""
-if npm whoami >/dev/null 2>&1; then
-	AUTHED=1
-elif npm owner ls "$NAME" >/dev/null 2>&1; then
-	AUTHED=1
-fi
-if [ -z "$AUTHED" ]; then
+if ! npm whoami >/dev/null 2>&1; then
+	if [ ! -t 0 ]; then
+		echo "✗ npm is not authenticated — run \`npm login\` in a terminal first, then release again (a non-interactive shell cannot log in, and publishing without it fails as a bare 404)" >&2
+		exit 1
+	fi
 	echo "▸ npm login required…"
 	npm login
 fi
-echo "▸ npm auth ok for $NAME ($(npm whoami 2>/dev/null || echo "granular token"))"
+echo "▸ npm user: $(npm whoami)"
 
 NEW=$(npm version "$BUMP" -m "release %s")
 echo "▸ bumped → $NEW (commit+tag created)"
