@@ -79,7 +79,7 @@ pi install ./pi-finisher            # a local checkout, loaded in place
 ```
 
 The package declares what it ships, so one install brings all of it: the extension
-(`extensions/finisher`), the two skills (`skills/goal-intake`, `skills/verify-checks`) and the
+(`extensions/finisher`), the three skills (`skills/goal-intake`, `skills/verify-checks`, `skills/merge-delivery`) and the
 `finisher` theme (`themes/`). Nothing has to be enabled — the tools, the HUD, the two commands and the
 confirm dialog are live the moment pi starts. Confirm it worked with `pi list` (the package is listed)
 and `/finisher models` (the ladder, without editing anything). Remove it with `pi remove npm:pi-finisher`;
@@ -286,8 +286,10 @@ Install it and the fast path is already on — no key, no flag, no dialog:
 - **The suite has a growth ceiling.** A baseline is taken when the goal starts: one more test file and
   a few more cases at most. Past that, a new test file is refused and the evidence goes to the check
   file instead.
-- **Two skills ship with it.** `goal-intake` covers the confirm-before-exploring rule, `verify-checks`
-  covers scoped checks and the check file. They load themselves; there is nothing to enable.
+- **Three skills ship with it.** `goal-intake` covers the confirm-before-exploring rule, `verify-checks`
+  covers scoped checks and the check file, `merge-delivery` covers the one thing left for the human:
+  a `code` fan-out waits in its own delivery worktree, and "merge" or "lgtm" is what lands it. They
+  load themselves; there is nothing to enable.
 - **The human's words are `check` and `result`.** What runs is a check, what it came to is its result.
 
 ## Configuration
@@ -452,7 +454,7 @@ pi-finisher/
 ├── extensions/finisher/
 │   ├── index.ts                     # pi wiring: hooks, tools, commands, TUI
 │   └── src/                         # pure helpers (goal driver, swarm, check runner, check file, panel, …)
-├── skills/                          # goal-intake + verify-checks, loaded with the package
+├── skills/                          # goal-intake + verify-checks + merge-delivery, loaded with the package
 ├── test/                            # node:test suites
 └── themes/                          # finisher dark theme (violet / cyan / mint on graphite)
 ```

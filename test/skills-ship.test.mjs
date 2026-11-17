@@ -60,7 +60,7 @@ test("the manifest carries no junk: no escape-nobody-needs file, no blank metada
 
 test("every shipped skill is discoverable by pi: its own directory, its own name, and a description of when to load it", () => {
 	const dirs = skillDirs();
-	assert.deepEqual(dirs, ["goal-intake", "verify-checks"]);
+	assert.deepEqual(dirs, ["goal-intake", "merge-delivery", "verify-checks"]);
 	for (const dir of dirs) {
 		const text = read("skills", dir, "SKILL.md");
 		const front = frontmatter(text);
@@ -77,6 +77,17 @@ test("the shipped skills carry the rules they are named for, not a title alone",
 	assert.match(read("skills", "goal-intake", "SKILL.md"), /before/);
 	assert.match(read("skills", "verify-checks", "SKILL.md"), /~\/\.pi\/finisher\/<project>\/checks/);
 	assert.match(read("skills", "verify-checks", "SKILL.md"), /UNVERIFIED/);
+	assert.match(read("skills", "merge-delivery", "SKILL.md"), /delivery\.json/);
+	assert.match(read("skills", "merge-delivery", "SKILL.md"), /lgtm/);
+	assert.match(read("skills", "merge-delivery", "SKILL.md"), /git branch -d finisher\/swarm/);
+});
+
+test("a delivery is merged only on the human's word, never by the run that made it", () => {
+	const skill = read("skills", "merge-delivery", "SKILL.md");
+	assert.match(skill, /approval \*\*is\*\* the merge/);
+	assert.match(skill, /git rev-parse HEAD` must equal `baseHead/, "a base that moved is a gate, not a detail");
+	assert.match(skill, /needs-human` or `halted` report is not/);
+	assert.doesNotMatch(skill, /git branch -D/, "the destructive delete is never a command the skill hands the agent");
 });
 
 test("the human's words are check and result, never probe or verdict", () => {

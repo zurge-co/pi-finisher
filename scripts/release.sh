@@ -46,11 +46,18 @@ fi
 echo "▸ running tests…"
 npm test
 
-if ! npm whoami >/dev/null 2>&1; then
+NAME=$(node -p "require('./package.json').name")
+AUTHED=""
+if npm whoami >/dev/null 2>&1; then
+	AUTHED=1
+elif npm owner ls "$NAME" >/dev/null 2>&1; then
+	AUTHED=1
+fi
+if [ -z "$AUTHED" ]; then
 	echo "▸ npm login required…"
 	npm login
 fi
-echo "▸ npm user: $(npm whoami)"
+echo "▸ npm auth ok for $NAME ($(npm whoami 2>/dev/null || echo "granular token"))"
 
 NEW=$(npm version "$BUMP" -m "release %s")
 echo "▸ bumped → $NEW (commit+tag created)"

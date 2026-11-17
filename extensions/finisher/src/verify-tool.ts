@@ -11,6 +11,7 @@ import { planOf, verifyGate } from "./goal-phase.ts";
 import { readToolTimeout } from "./timeout.ts";
 import { type HarnessContext } from "./kit.ts";
 import { writeReportFile } from "./report-file.ts";
+import { deliveryCheckRoot, readDelivery } from "./delivery.ts";
 import { appendCommand } from "./command-record.ts";
 import { STATE_HOME_LABEL, stateLabel } from "./project-dir.ts";
 import { appendChecks, checkFileLines, type CheckEntry, type CheckStatus } from "./check-file.ts";
@@ -365,13 +366,15 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			if (gate.allowed === false) return { content: [{ type: "text", text: gate.note }], details: { gated: true }, isError: true };
 
 			const cwd = toolCtx.cwd;
+			const checkCwd = deliveryCheckRoot(cwd);
+			const delivery = readDelivery(cwd);
 			const timeoutMs = Math.min(readToolTimeout(cwd, VERIFY_TOOL), VERIFY_STAGE_TIMEOUT_MS);
-			const pkg = readPackage(cwd);
-			const changed = changedPaths(cwd);
-			const lastModifiedAt = Math.max(state.lastModifiedAt ?? 0, workspaceStamp(cwd, changed));
+			const pkg = readPackage(checkCwd);
+			const changed = changedPaths(checkCwd);
+			const lastModifiedAt = Math.max(state.lastModifiedAt ?? 0, workspaceStamp(checkCwd, changed));
 			const stage = p.skipDeterministic
 				? { results: [] as CheckResult[], ran: [], recorded: [], scoped: [] }
-				: await runCheckStage(detectChecks(pkg), { cwd, timeoutMs, pkg, lastModifiedAt, changed, calls: state.verifyCalls ?? [], custom: p.checks });
+				: await runCheckStage(detectChecks(pkg), { cwd: checkCwd, timeoutMs, pkg, lastModifiedAt, changed, calls: state.verifyCalls ?? [], custom: p.checks });
 			const checks = stage.results;
 
 			const openGoal = !!active && !goalDriverDone(active);
@@ -383,7 +386,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const commands = carriedCommands(cases, named.commands, named.human, openGoal ? active.caseCommands : undefined);
 			const calls = freshCalls((state.verifyCalls ?? []) as { command: string; ok: boolean; at?: number }[], lastModifiedAt);
 			const evidence = await judgeDeterministic(cases, commands, calls, checks, async (command) => {
-				const result = await runCommand(command, cwd, timeoutMs);
+				const result = await runCommand(command, checkCwd, timeoutMs);
 				state.verifyCalls = appendCommand(state.verifyCalls ?? [], { toolName: "bash", input: { command }, isError: result.exitCode !== 0 });
 				return result;
 			}, named.human);
@@ -393,7 +396,8 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const step = nextGoalDriverStep(driver, report);
 			const entries = caseCheckEntries(evidence, commands, openGoal ? active.goal : p.goal?.trim());
 			appendChecks(cwd, entries);
-			const summary = [verifySummaryLines(checks, report, commands).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), unboundNote(named.unbound)].filter(Boolean).join("\n\n");
+			const rootNote = checkCwd === cwd ? "" : `checks and commands ran in the delivery checkout ${checkCwd} (branch ${delivery?.branch ?? "?"}) — ${cwd} does not hold that work until the human merges it`;
+			const summary = [verifySummaryLines(checks, report, commands).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), rootNote, unboundNote(named.unbound)].filter(Boolean).join("\n\n");
 
 			if (!openGoal) {
 				persist();

@@ -73,6 +73,7 @@ export * from "./src/goal-page.ts";
 export * from "./src/scroll-page.ts";
 export * from "./src/report-page.ts";
 export * from "./src/report-file.ts";
+export * from "./src/delivery.ts";
 export * from "./src/swarm-code.ts";
 export * from "./src/swarm-plan.ts";
 export * from "./src/budget.ts";

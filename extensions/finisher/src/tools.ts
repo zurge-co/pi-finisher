@@ -88,8 +88,8 @@ export const registerTools = (ctx: HarnessContext) => {
 		name: "code",
 		label: "finisher · code",
 		description:
-			`Run CODER sub-agents in parallel on your configured model ladder (priority1..priority5 in ${STATE_HOME_LABEL}/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then merges the slices back in deterministic order and refuses to merge silently when two slices touched the same path. Explore, plan and verify are NOT this tool — you do those yourself, and verification is verify.`,
-		promptSnippet: "Fan out parallel CODERS across the model priority ladder (one worktree per slice)",
+			`Run CODER sub-agents in parallel on your configured model ladder (priority1..priority5 in ${STATE_HOME_LABEL}/models.json, capped by swarmConcurrency). Every slice gets its OWN git worktree + branch, so coders write at the same time without touching each other; the harness then commits the slices, in deterministic order, into ONE delivery worktree (branch finisher/swarm/<runId>, recorded in ${STATE_HOME_LABEL}/delivery.json) and refuses to commit silently when two slices touched the same path. Nothing is merged into the workspace you sit in: the merge belongs to the human's word, and the merge-delivery skill carries it. Explore, plan and verify are NOT this tool — you do those yourself, and verification is verify.`,
+		promptSnippet: "Fan out parallel CODERS across the model priority ladder (one worktree per slice, one delivery worktree for the result)",
 		promptGuidelines: [
 			"This tool only codes. Do the exploring and the planning yourself first — decide the slices, the files each one owns and the interface they share — because every slice you add is paid for by a coder reading context you already have.",
 			"Give every slice its scope (repo-relative paths): two slices sharing a path are a conflict, so split differently. Keep slices independent — they run concurrently, so a slice that needs another's interface must have that interface decided in your plan, not discovered by the coder.",
@@ -98,6 +98,7 @@ export const registerTools = (ctx: HarnessContext) => {
 			"Use as many slices as the work genuinely splits into and no more: fewer coders is faster when the work serialises. Do not spend the whole ladder because it is there.",
 			"Verification is verify, not this tool: you run the deterministic checks and name the command that proves each case, so no sub-agent grades your work.",
 			"Treat a worker's report as the evidence: do not re-read the files it read or re-run the commands it ran.",
+			"The result lands in a delivery worktree, never in the workspace: keep every command you run after a fan-out inside that checkout, and merge it only when the human says merge, lgtm or เอาเลย — the merge-delivery skill names the commands and the gates.",
 			"Decide library/layout/approach yourself — do not ask the human.",
 		],
 		parameters: Type.Object({

@@ -1,8 +1,8 @@
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { formatHygieneViolations } from "./code-hygiene.ts";
+import { createDelivery, deliverSlice, deliveryAdvice, mergeCommand, removeDelivery, writeDelivery, type DeliveryRun } from "./delivery.ts";
 import { analyzeTestFile, formatTestFindings, isTestFile } from "./test-quality.ts";
 import { costCeilingKeysPresent } from "./goal-run.ts";
 import { type LaunchSubagent, type HarnessContext } from "./kit.ts";
@@ -50,16 +50,6 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		};
 	};
 
-	const applySlice = (repo: string, diff: string): { ok: boolean; msg: string } => {
-		if (!diff.trim()) return { ok: true, msg: "no changes" };
-		try {
-			execFileSync("git", ["apply", "--3way", "-"], { cwd: repo, input: diff, stdio: ["pipe", "pipe", "pipe"] });
-			return { ok: true, msg: "applied" };
-		} catch (e: any) {
-			return { ok: false, msg: (e?.stderr?.toString() ?? e?.message ?? String(e)).split("\n")[0] };
-		}
-	};
-
 	const armGoalRound = (text: string): void => {
 		const kick = `GOAL-STILL-OPEN — the driver handed this round back to you (no human will approve anything):\n${text}`;
 		try {
@@ -73,12 +63,21 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		slices: { id: string; instruction: string; scope?: string[]; acceptance?: string[]; dependsOn?: string[]; sharedContract?: string }[],
 		opts: { slots: SwarmSlot[]; concurrency: number; maxAttempts: number; goal?: string; sig?: AbortSignal; ladder: string[]; source: string; notes: string; budget?: string | null },
 	): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown>; isError?: boolean }> => {
+		const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 		let plans: SlicePlan[];
 		try {
-			plans = planSlices(slices, join(finisherDir(ctx.cwd), "worktree", "swarm"), new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
+			plans = planSlices(slices, join(finisherDir(ctx.cwd), "worktree", "swarm"), runId);
 		} catch (e) {
 			return { content: [{ type: "text", text: `code refused: ${(e as Error).message}` }], details: { refused: true }, isError: true };
 		}
+		const built = createDelivery(ctx.cwd, runId);
+		if (!built.ok)
+			return {
+				content: [{ type: "text", text: `code delivered nothing: ${built.msg} — no coder was spawned and ${ctx.cwd} was not touched` }],
+				details: { deliveryFailed: true },
+				isError: true,
+			};
+		const delivery = built.delivery;
 		const outcomes: SliceOutcome[] = [];
 		const byPlan = new Map(plans.map((pl) => [pl.id, pl]));
 		const swarmStart = Date.now();
@@ -162,27 +161,31 @@ export const createCodeSwarm = (ctx: HarnessContext) => {
 		for (const step of mergePlan.steps) {
 			if (!step.apply) continue;
 			const o = outcomes.find((x) => x.id === step.id)!;
-			const res = applySlice(ctx.cwd, o.diff ?? "");
+			const res = deliverSlice(delivery, o.id, o.diff ?? "");
 			if (res.ok) {
 				applied.push(o.id);
 				state.lastModifiedAt = Date.now();
 			} else failedApplies.push(`${o.id}: ${res.msg}`);
 		}
+		const delivered: DeliveryRun = { ...delivery, applied, at: Date.now() };
+		if (applied.length) writeDelivery(ctx.cwd, delivered);
+		else removeDelivery(ctx.cwd, delivery);
 		const failed = results.filter((r) => !r.ok);
 		const metrics = swarmMetrics(results, Date.now() - swarmStart);
 		const lines = [
-			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ CODERS finished with issues" : "✅ CODERS merged"}: ${applied.length}/${results.length} slice(s) applied`,
+			`${failed.length || mergePlan.blocked.length || failedApplies.length ? "⚠ CODERS finished with issues" : "✅ CODERS delivered"}: ${applied.length}/${results.length} slice(s) committed to ${delivery.branch}`,
 			mergeReport(mergePlan, outcomes),
 		];
 		if (failed.length) lines.push(`failed coder(s): ${failed.map((f) => f.id).join(", ")}`);
-		if (failedApplies.length) lines.push(`apply failed (resolve by hand): ${failedApplies.join(" · ")}`);
+		if (failedApplies.length) lines.push(`commit into the delivery worktree failed (resolve by hand): ${failedApplies.join(" · ")}`);
 		if (mergePlan.overlaps.length) lines.push("overlapping slices were NOT merged — split the work so each file has one owner, or merge those by hand");
 		lines.push(metricsLine(metrics));
-		lines.push(`leftovers: worker worktrees were removed; any worktree a coder created and changed the path of lives under ${stateLabel(ctx.cwd, "worktree", "swarm")}/`);
+		lines.push(...(applied.length ? deliveryAdvice(ctx.cwd, delivered) : [`nothing was delivered, so the workspace ${ctx.cwd} and its branch are exactly as they were`]));
+		lines.push(`leftovers: the slice checkouts were removed; the delivery checkout lives under ${stateLabel(ctx.cwd, "worktree", "delivery")}/ until it is merged`);
 		lines.push("keep working: the coders are done, so the next lap is yours — do not sit idle waiting for them");
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
-			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, metrics, results },
+			details: { mode: "code", applied, blocked: mergePlan.blocked, overlaps: mergePlan.overlaps, failedApplies, metrics, results, delivery: applied.length ? delivered : undefined, mergeCommand: applied.length ? mergeCommand(delivered) : undefined },
 			...(failed.length || mergePlan.blocked.length || failedApplies.length ? { isError: true } : {}),
 		};
 	};
