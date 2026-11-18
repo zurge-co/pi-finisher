@@ -28,7 +28,7 @@ export const READ_WHOLE_FILE_GUIDELINE =
 	`Read a module whole: every file here stays at or under ${HYGIENE_MAX_LINES} lines and ${HYGIENE_MAX_BYTES / 1024}KB, so a read of the path alone returns all of it. A call that passes offset or a limit pages a file that already fits — one turn per page, and what you then reason about is a slice of the module treated as if it were the whole.`;
 
 export const CHECK_PROOF_GUIDELINE =
-	`Proof is a recorded check, not another test: a case is proven by a command the harness watched run, and verify writes one PASS/FAIL line per case to ${STATE_HOME_LABEL}/checks/checks.jsonl — never add a test file to prove a case, and never re-run a suite that already ran green after the last edit.`;
+	`Proof is a recorded check, and the project's own test runner is that check: name the script the repo already has — \`npm run --silent test\`, a test:e2e script, vitest, jest, playwright, node --test — and put a UI case into that suite. A headless script of your own that measures DOM, contrast or scroll offset is the last resort, never the first: a small UI tweak breaks it, and keeping it costs more than the feature it guards. verify writes one PASS/FAIL line per case to ${STATE_HOME_LABEL}/checks/checks.jsonl, so never add a test file only to prove a case and never re-run a suite that already ran green after the last edit.`;
 
 export const EVIDENCE_RULE =
 	"Verify is evidence-gated, not effort-gated: a round that repeats the same failing command with the same result is not new evidence, and the harness halts the goal instead of looping. Change the code, or the command that should prove the case, before asking verify again.";

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CLARIFY_GUIDELINE, EVIDENCE_RULE, GOAL_FIRST_GUIDELINE, CONSULT_GUIDELINE, GOAL_DIALOG_SCROLL_KEYS, GOAL_OPEN_GUIDELINE, GOAL_SCROLL_KEYS, GOAL_WHEN_WORK_GUIDELINE, HARNESS_GUIDELINES, HARNESS_TOOLS, HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, INTENT_GUIDELINE, READ_WHOLE_FILE_GUIDELINE, STATE_IS_DATA_RULE, SURFACE_TOOLS, WORK_FORCED_GUIDELINE, countOccurrences, harnessSystemPrompt, SWARM_ROUTING_GUIDELINE } from "../extensions/finisher/index.ts";
+import { CHECK_PROOF_GUIDELINE, CLARIFY_GUIDELINE, EVIDENCE_RULE, GOAL_FIRST_GUIDELINE, CONSULT_GUIDELINE, GOAL_DIALOG_SCROLL_KEYS, GOAL_OPEN_GUIDELINE, GOAL_SCROLL_KEYS, GOAL_WHEN_WORK_GUIDELINE, HARNESS_GUIDELINES, HARNESS_TOOLS, HYGIENE_MAX_BYTES, HYGIENE_MAX_LINES, INTENT_GUIDELINE, READ_WHOLE_FILE_GUIDELINE, STATE_IS_DATA_RULE, SURFACE_TOOLS, WORK_FORCED_GUIDELINE, countOccurrences, harnessSystemPrompt, SWARM_ROUTING_GUIDELINE } from "../extensions/finisher/index.ts";
 import { languageGuideline } from "../extensions/finisher/src/human-language.ts";
 
 const base = "you are a coding agent";
@@ -155,6 +155,20 @@ test("the evidence rule reaches every turn and says a repeated verify round halt
 	assert.match(EVIDENCE_RULE, /halts the goal/, "and what happens is the halt decideOnce performs");
 	assert.match(EVIDENCE_RULE, /Change the code/, "the way out is stated as an action, not a hope");
 	assert.match(EVIDENCE_RULE, /before asking verify again/, "the model is told when to change it");
+});
+
+test("the proof rule sends the model to the project's own runner first and to a headless script of its own last", () => {
+	for (const intent of [undefined, "decide", "consult", "work"]) {
+		const prompt = harnessSystemPrompt(base, "th", "", intent);
+		assert.equal(countOccurrences(prompt, CHECK_PROOF_GUIDELINE), 1, `every turn knows where proof comes from (${String(intent)})`);
+	}
+	assert.match(CHECK_PROOF_GUIDELINE, /the project's own test runner is that check/, "the runner is named as the proof, not as one option among many");
+	for (const runner of [/npm run --silent test/, /test:e2e/, /vitest/, /jest/, /playwright/, /node --test/]) assert.match(CHECK_PROOF_GUIDELINE, runner);
+	assert.match(CHECK_PROOF_GUIDELINE, /measures DOM, contrast or scroll offset is the last resort, never the first/, "the brittle script the rule exists to stop is named exactly");
+	assert.match(CHECK_PROOF_GUIDELINE, /a small UI tweak breaks it, and keeping it costs more than the feature it guards/, "and the rule says why, because the reason is what the model weighs");
+	const verifySource = readFileSync(join(here, "extensions", "finisher", "src", "verify-tool.ts"), "utf8");
+	assert.match(verifySource, /a bespoke headless script measuring DOM, contrast or scroll offset is the last resort, never the first/, "the verify tool hands the model the same order");
+	assert.doesNotMatch(verifySource, /never add a test file to prove a case\./, "the old absolute ban is gone from the guideline the model reads");
 });
 
 test("state the harness hands the model is named as data, never as an instruction that outranks the rules", () => {

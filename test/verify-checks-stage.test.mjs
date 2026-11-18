@@ -17,6 +17,9 @@ import {
 	detectChecks,
 	failingChecks,
 	isBehaviourCheck,
+	proofRunnerOf,
+	runnerProofCommands,
+	runnerProofLine,
 	judgeDeterministic,
 	readChecks,
 	readPackage,
@@ -168,7 +171,11 @@ test("the check file keeps one line per case, and only a PASS case may say PASS"
 
 test("every test-kind script is detected, in a stable order, and a script that proves nothing is never run", () => {
 	const names = (scripts) => detectChecks({ scripts }).map((c) => c.name);
-	assert.deepEqual(names({ "test:e2e": "playwright test", jest: "jest", vitest: "vitest run", unit: "node -e 0", functional: "node -e 0" }), ["functional", "jest", "test:e2e", "unit", "vitest"]);
+	assert.deepEqual(
+		names({ "test:e2e": "playwright test", jest: "jest", vitest: "vitest run", unit: "node -e 0", functional: "node -e 0" }),
+		["vitest", "jest", "test:e2e", "functional", "unit"],
+		"the framework a script runs decides its place, and a script that runs none sorts last however it is named",
+	);
 	assert.deepEqual(names({ verify: "node -e 0", build: "tsc", release: "bash scripts/release.sh", watch: "vitest" }), ["watch"], "the two signals are a check name and a test runner in the body — nothing else");
 	assert.deepEqual(names({ check: "node scripts/check.mjs" }), [], "an ordinary npm script is not a proof of behaviour");
 	const scripted = names({ gate: "node --no-warnings --test test/*.test.mjs", style: "eslint ." });
@@ -273,6 +280,31 @@ test("a custom check is only folded into a package check that will actually run"
 	});
 	assert.deepEqual(seen, ["case:style"], "the package lint is scoped away, so the model's own check is the one that runs");
 	assert.equal(stage.results.find((r) => r.name === "case:style").status, "pass");
+});
+
+test("a framework runner outranks a script that runs no framework, whatever the names sort like", () => {
+	const runners = ["node --no-warnings --test test/*.test.mjs", "vitest run", "jest", "mocha", "ava", "tap run", "playwright test", "cypress run"];
+	assert.deepEqual(runners.map(proofRunnerOf), ["node-test", "vitest", "jest", "mocha", "ava", "tap", "playwright", "cypress"]);
+	for (const body of runners)
+		for (const bespoke of ["node scripts/measure-dom.mjs", "bash scripts/contrast.sh", "node -e 0"]) {
+			const order = detectChecks({ scripts: { "test:aaa": bespoke, "test:zzz": body } });
+			assert.deepEqual(order.map((c) => c.name), ["test:zzz", "test:aaa"], `${body} must outrank ${bespoke} even though test:aaa sorts first`);
+			assert.deepEqual(runnerProofCommands(order), ["npm run --silent test:zzz"], "the proof a case should name is the runner script, never the bespoke one");
+		}
+	assert.deepEqual(detectChecks({ scripts: { "test:aaa": "node scripts/measure-dom.mjs" } }).map((c) => c.runner), [undefined], "a bespoke script is a check but never a runner");
+	assert.deepEqual(detectChecks({ scripts: { "typecheck:web": "tsc -p web" } }).map((c) => c.name), ["typecheck:web"], "a static check keeps its own place whatever the suffix");
+});
+
+test("the proof line names the project's own runner and, with none wired, names the framework instead of a script", () => {
+	const wired = detectChecks({ scripts: { test: "node --test test/*.test.mjs", "test:e2e": "playwright test" } });
+	const line = runnerProofLine(wired);
+	assert.match(line, /npm run --silent test \(node-test\)/, "the proof the line names is the command that runs the repo's own framework");
+	assert.match(line, /npm run --silent test:e2e \(playwright\)/);
+	assert.ok(line.indexOf("node-test") < line.indexOf("playwright"), "the unit runner is named before the browser one");
+	const empty = runnerProofLine([]);
+	assert.match(empty, /no test runner is wired/);
+	assert.match(empty, /last resort/, "a repo with no runner is told which framework to wire, never to write a bespoke script");
+	assert.equal(runnerProofLine(detectChecks({ scripts: { build: "tsc" } })), empty, "a repo with no check and a repo with no runner read the same rule");
 });
 
 test("the workspace stamp is the newest mtime of the changed files, so an edit the harness never saw still makes old evidence stale", () => {

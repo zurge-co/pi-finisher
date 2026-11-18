@@ -22,6 +22,7 @@ export interface DeterministicCheck {
 	name: string;
 	command: string;
 	args: string[];
+	runner?: ProofRunner;
 }
 
 export type CheckOutcome = PlanStatus | "scoped";
@@ -40,6 +41,28 @@ const CHECK_NAME = /^(?:typecheck|types?|lint|test|tests|e2e|spec|unit|functiona
 
 const TEST_RUNNER = /(?:^|[\s;&|(])(?:jest|vitest|mocha|ava|tap|playwright|cypress)\b|node\s+--?[\w-]*\s*--test\b|--test\b/;
 
+export const PROOF_RUNNER_ORDER = ["node-test", "vitest", "jest", "mocha", "ava", "tap", "playwright", "cypress"] as const;
+
+export type ProofRunner = (typeof PROOF_RUNNER_ORDER)[number];
+
+const RUNNER_MARK: { runner: ProofRunner; mark: RegExp }[] = [
+	{ runner: "node-test", mark: /node\s+--?[\w-]*\s*--test\b|--test\b/ },
+	{ runner: "vitest", mark: /\bvitest\b/ },
+	{ runner: "jest", mark: /\bjest\b/ },
+	{ runner: "mocha", mark: /\bmocha\b/ },
+	{ runner: "ava", mark: /\bava\b/ },
+	{ runner: "tap", mark: /\btap\b/ },
+	{ runner: "playwright", mark: /\bplaywright\b/ },
+	{ runner: "cypress", mark: /\bcypress\b/ },
+];
+
+export const proofRunnerOf = (body?: unknown): ProofRunner | undefined => {
+	const text = String(body ?? "");
+	return RUNNER_MARK.find((entry) => entry.mark.test(text))?.runner;
+};
+
+export const isFrameworkBacked = (body?: unknown): boolean => proofRunnerOf(body) !== undefined;
+
 export const isCheckScript = (name: string, body?: unknown): boolean => {
 	const scriptName = String(name ?? "").trim();
 	if (!scriptName) return false;
@@ -52,9 +75,19 @@ const STATIC_CHECK = /^(?:typecheck|types?|lint)(?:[-:][\w:-]+)?$/i;
 export const isBehaviourCheck = (name: string, body?: unknown): boolean =>
 	!STATIC_CHECK.test(String(name ?? "").trim()) && isCheckScript(name, body);
 
-const checkRank = (name: string): number => {
-	const at = (CHECK_ORDER as readonly string[]).indexOf(name);
-	return at >= 0 ? at : CHECK_ORDER.length;
+const STATIC_ORDER = ["typecheck", "lint"] as const;
+
+const staticRank = (name: string): number =>
+	(STATIC_ORDER as readonly string[]).findIndex((prefix) => name === prefix || name.startsWith(`${prefix}:`));
+
+const ADHOC_RANK = 10 + PROOF_RUNNER_ORDER.length;
+
+export const checkRank = (name: string, body?: unknown): number => {
+	const stat = staticRank(name);
+	if (stat >= 0) return stat;
+	const runner = proofRunnerOf(body);
+	if (runner) return 10 + (PROOF_RUNNER_ORDER as readonly string[]).indexOf(runner);
+	return isBehaviourCheck(name, body) ? ADHOC_RANK : ADHOC_RANK + 1;
 };
 
 export const detectChecks = (pkg: { scripts?: Record<string, unknown> } | undefined): DeterministicCheck[] => {
@@ -63,9 +96,35 @@ export const detectChecks = (pkg: { scripts?: Record<string, unknown> } | undefi
 	for (const [name, body] of Object.entries(scripts)) {
 		if (typeof body !== "string" || !body.trim()) continue;
 		if (!isCheckScript(name, body)) continue;
-		found.push({ name, command: "npm", args: ["run", "--silent", name] });
+		const runner = proofRunnerOf(body);
+		found.push({ name, command: "npm", args: ["run", "--silent", name], ...(runner ? { runner } : {}) });
 	}
-	return found.sort((a, b) => checkRank(a.name) - checkRank(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+	return found.sort(
+		(a, b) =>
+			checkRank(a.name, scripts[a.name]) - checkRank(b.name, scripts[b.name]) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+	);
+};
+
+export interface RunnerProof {
+	name: string;
+	runner: ProofRunner;
+	command: string;
+}
+
+export const runnerProofs = (checks: DeterministicCheck[]): RunnerProof[] =>
+	(Array.isArray(checks) ? checks : [])
+		.filter((check) => !!check.runner)
+		.map((check) => ({ name: check.name, runner: check.runner as ProofRunner, command: `${check.command} ${check.args.join(" ")}` }));
+
+export const runnerProofCommands = (checks: DeterministicCheck[]): string[] => runnerProofs(checks).map((proof) => proof.command);
+
+export const runnerProofLine = (checks: DeterministicCheck[]): string => {
+	const proofs = runnerProofs(checks);
+	if (!proofs.length)
+		return "no test runner is wired in package.json: prove behaviour through the framework the project will use (vitest, jest, playwright, node --test) and add the script that runs it — a bespoke headless script is the last resort, never the first";
+	return `the project's own runner is the proof, not a script of its own: ${proofs
+		.map((proof) => `${proof.command} (${proof.runner})`)
+		.join(" · ")} — extend that suite with a case, because a UI tweak breaks a bespoke script and keeping it costs more than the feature it guards`;
 };
 
 export const readPackage = (cwd: string): { scripts?: Record<string, unknown> } | undefined => {

@@ -75,6 +75,19 @@ test("the summary says what the deterministic stage did and what each case came 
 	assert.match(empty, /no typecheck\/lint\/test script/, "a repo with no checks says so instead of pretending it verified");
 });
 
+test("verify names the project's own runner, so the proof a case carries is the framework and never a script of its own", async () => {
+	const s = session({ cwd: repo({ test: "vitest run", "test:e2e": "playwright test" }) });
+	await s.run("goal", { goal: "the runner proves the ui", cases: ["the check passes"] });
+	await s.run("lap", { plan: ["let the runner prove it"] });
+	await s.run("lap", { done: true });
+	s.box.get().verifyCalls = [{ command: "npm test", ok: true }];
+	const out = await s.run("verify", { cases: [{ id: "the check passes", command: "npm test" }], skipDeterministic: true });
+	assert.match(out.content[0].text, /npm run --silent test \(vitest\)/, "the summary names the command that runs the repo's own framework");
+	assert.match(out.content[0].text, /npm run --silent test:e2e \(playwright\)/);
+	const written = readFileSync(stateFile(s.ctx.cwd, "report.md"), "utf8");
+	assert.match(written, /npm run --silent test \(vitest\)/, "and the report the human opens carries the same rule");
+});
+
 const { registerTools, createStateBox } = await import("../extensions/finisher/index.ts").then(async (m) => ({ registerTools: (await import("../extensions/finisher/src/tools.ts")).registerTools, createStateBox: m.createStateBox }));
 
 const session = (opts = {}) => {

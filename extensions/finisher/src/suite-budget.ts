@@ -26,6 +26,23 @@ export const countTestCases = (text: string): number => {
 	return count;
 };
 
+export const FRAMEWORK_SUITE_DIRS = ["e2e", "e2e-tests", "end-to-end", "integration", "cypress", "playwright", "browser", "visual", "ui"] as const;
+
+export const FRAMEWORK_SUITE_MARK = /(?:^|[.\-_])(?:e2e|end2end|playwright|cypress)(?:[.\-_]|$)/i;
+
+export const frameworkSuitePath = (path: string): boolean => {
+	const parts = String(path ?? "")
+		.replace(/\\/g, "/")
+		.replace(/^\.\//, "")
+		.split("/")
+		.filter(Boolean);
+	if (!parts.length) return false;
+	if (FRAMEWORK_SUITE_MARK.test(parts[parts.length - 1] as string)) return true;
+	return parts
+		.slice(0, -1)
+		.some((segment) => (FRAMEWORK_SUITE_DIRS as readonly string[]).includes(segment.toLowerCase()));
+};
+
 const entriesOf = (dir: string): { name: string; isDirectory(): boolean }[] => {
 	try {
 		return readdirSync(dir, { withFileTypes: true }).map((entry) => ({ name: String(entry.name), isDirectory: () => entry.isDirectory() }));
@@ -94,5 +111,6 @@ export const suiteRefusal = (baseline: SuiteSize | undefined, now: SuiteSize, ta
 export const suiteWriteGate = (baseline: SuiteSize | undefined, root: string, target: string, exists: boolean): string | undefined => {
 	const path = String(target ?? "");
 	if (!baseline || exists || !TEST_FILE_MARK.test(path)) return undefined;
+	if (frameworkSuitePath(path)) return undefined;
 	return suiteRefusal(baseline, countSuite(root), path);
 };

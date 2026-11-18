@@ -15,7 +15,7 @@ import { deliveryCheckRoot, readDelivery } from "./delivery.ts";
 import { appendCommand } from "./command-record.ts";
 import { STATE_HOME_LABEL, stateLabel } from "./project-dir.ts";
 import { appendChecks, checkFileLines, type CheckEntry, type CheckStatus } from "./check-file.ts";
-import { CHECK_ORDER, CASE_CHECK_PREFIX, changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, provesCommand, readPackage, runCheckStage, runCommand, workspaceStamp, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
+import { CHECK_ORDER, CASE_CHECK_PREFIX, changedPaths, checkLine, checkStatusOf, detectChecks, failingChecks, freshCalls, provesCommand, readPackage, runCheckStage, runCommand, runnerProofLine, workspaceStamp, type CheckOutcome, type CheckResult } from "./verify-checks.ts";
 import { type CaseResult } from "./evidence.ts";
 import { advanceGoalQueue, goalPromotedNote, QUEUED_NOTES_HEAD } from "./goal-queue.ts";
 import { countSuite } from "./suite-budget.ts";
@@ -257,22 +257,28 @@ export const reuseLine = (checks: CheckResult[], commands: Map<string, string>):
 	return reused.length ? `reused: ${reused.join(" · ")} already ran green in the deterministic stage — not run a second time` : "";
 };
 
-export const verifyStageLines = (checks: CheckResult[], commands: Map<string, string> = new Map()): string[] => {
-	const lines = checks.length ? [`deterministic stage: ${checks.map((c) => checkSummaryMark(c)).join(" · ")}`] : ["deterministic stage: no typecheck/lint/test script found in package.json"];
+export const verifyStageLines = (checks: CheckResult[], commands: Map<string, string> = new Map(), proofLine = ""): string[] => {
+	const stage = checks.length ? `deterministic stage: ${checks.map((c) => checkSummaryMark(c)).join(" · ")}` : "deterministic stage: no typecheck/lint/test script found in package.json";
+	const lines = [...(proofLine ? [stage, proofLine] : [stage])];
 	const reuse = reuseLine(checks, commands);
 	if (reuse) lines.push(reuse);
 	for (const r of failingChecks(checks)) lines.push("", checkLine(r));
 	return lines;
 };
 
-export const verifySummaryLines = (checks: CheckResult[], report: VerifyReport, commands: Map<string, string> = new Map()): string[] => [
-	...verifyStageLines(checks, commands),
+export const verifySummaryLines = (checks: CheckResult[], report: VerifyReport, commands: Map<string, string> = new Map(), proofLine = ""): string[] => [
+	...verifyStageLines(checks, commands, proofLine),
 	"",
 	renderVerifyReport(report),
 ];
 
-export const verifyReportBody = (checks: CheckResult[], report: VerifyReport, commands: Map<string, string>, decisions: AgentDecision[] = []): string =>
-	reportWithDecisions([renderVerifyReport(report), "", ...verifyStageLines(checks, commands)].join("\n"), decisions);
+export const verifyReportBody = (
+	checks: CheckResult[],
+	report: VerifyReport,
+	commands: Map<string, string>,
+	decisions: AgentDecision[] = [],
+	proofLine = "",
+): string => reportWithDecisions([renderVerifyReport(report), "", ...verifyStageLines(checks, commands, proofLine)].join("\n"), decisions);
 
 const CHECK_MARK: Record<CheckOutcome, string> = {
 	pass: "ok",
@@ -323,7 +329,8 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			`Call ${VERIFY_TOOL} once after every lap is closed with lap done — it is refused while a lap is still open.`,
 			"Name one command per case (cases: [{ id, command }]) that actually exercises it; a case may be named by its exact text or by its position (C1, C2, …). The harness judges from its recording, and runs the command itself when the recording does not have it; a case you leave without a command is UNVERIFIED — never claim PASS for it.",
 			"verify remembers the command each case was proven by: in a later round name only the cases that changed, and every other case is re-judged by its remembered command against the current tree — never assume it still passes without that re-run.",
-			`Proof is a recorded check, not another test: verify writes one line per case to ${STATE_HOME_LABEL}/checks (PASS/FAIL/SKIP/UNVERIFIED) — never add a test file to prove a case.`,
+			"Name the proof as the runner the project already has — `npm run --silent test`, a `test:e2e` script, `vitest run`, `playwright test`, `node --test` — and put a UI case into that suite; a bespoke headless script measuring DOM, contrast or scroll offset is the last resort, never the first.",
+			`Proof is a recorded check: verify writes one line per case to ${STATE_HOME_LABEL}/checks (PASS/FAIL/SKIP/UNVERIFIED) — never add a test file only to prove a case.`,
 			"You decide the checks too: pass checks: [{ name, command }] and each one runs for real in the deterministic stage — a red one fails every case, a green one proves the case that names the same command.",
 			`Never run what the deterministic stage already ran: ${CHECK_ORDER.join(", ")} (and any test-kind script such as test:e2e or a jest/vitest script) run once, and a case whose command is that script is proven by that run.`,
 			"A case only the human can check is separated, not failed: pass { id, human: true, note } and it is listed in the report for them at the end.",
@@ -372,9 +379,11 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const pkg = readPackage(checkCwd);
 			const changed = changedPaths(checkCwd);
 			const lastModifiedAt = Math.max(state.lastModifiedAt ?? 0, workspaceStamp(checkCwd, changed));
+			const detected = detectChecks(pkg);
+			const proofLine = runnerProofLine(detected);
 			const stage = p.skipDeterministic
 				? { results: [] as CheckResult[], ran: [], recorded: [], scoped: [] }
-				: await runCheckStage(detectChecks(pkg), { cwd: checkCwd, timeoutMs, pkg, lastModifiedAt, changed, calls: state.verifyCalls ?? [], custom: p.checks });
+				: await runCheckStage(detected, { cwd: checkCwd, timeoutMs, pkg, lastModifiedAt, changed, calls: state.verifyCalls ?? [], custom: p.checks });
 			const checks = stage.results;
 
 			const openGoal = !!active && !goalDriverDone(active);
@@ -397,7 +406,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 			const entries = caseCheckEntries(evidence, commands, openGoal ? active.goal : p.goal?.trim());
 			appendChecks(cwd, entries);
 			const rootNote = checkCwd === cwd ? "" : `checks and commands ran in the delivery checkout ${checkCwd} (branch ${delivery?.branch ?? "?"}) — ${cwd} does not hold that work until the human merges it`;
-			const summary = [verifySummaryLines(checks, report, commands).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), rootNote, unboundNote(named.unbound)].filter(Boolean).join("\n\n");
+			const summary = [verifySummaryLines(checks, report, commands, proofLine).join("\n"), ["evidence: " + stateLabel(cwd, "checks", "checks.jsonl"), ...checkFileLines(entries, cases)].join("\n"), rootNote, unboundNote(named.unbound)].filter(Boolean).join("\n\n");
 
 			if (!openGoal) {
 				persist();
@@ -419,7 +428,7 @@ export const verifyToolDefinition = (ctx: HarnessContext): ToolDefinition<TSchem
 					at: step.state.doneAt ?? Date.now(),
 					laps: (step.state.phases ?? []).length,
 					round: step.round,
-					body: verifyReportBody(checks, report, named.commands, state.decisions ?? []),
+					body: verifyReportBody(checks, report, named.commands, state.decisions ?? [], proofLine),
 				});
 				if (written) state.lastReport = written;
 			}

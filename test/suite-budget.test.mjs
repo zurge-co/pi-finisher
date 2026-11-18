@@ -7,6 +7,7 @@ import {
 	SUITE_GROWTH_MIN,
 	countSuite,
 	countTestCases,
+	frameworkSuitePath,
 	suiteBudget,
 	suiteCeiling,
 	suiteGrowth,
@@ -98,6 +99,28 @@ test("the baseline plus one file is the whole allowance: the second new file is 
 		assert.equal(suiteWriteGate(baseline, root, "test/a.test.mjs", true), undefined, "growing an existing file is not a new file");
 		assert.equal(suiteWriteGate(baseline, root, "extensions/finisher/src/hud.ts", false), undefined, "only test files are gated");
 		assert.equal(suiteWriteGate(undefined, root, "test/d.test.mjs", false), undefined, "no baseline means the gate never fires");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a suite the project's framework owns is never capped, and a plain unit test still is", () => {
+	for (const path of ["e2e/checkout.spec.ts", "test/e2e/login.spec.ts", "test/playwright/a.spec.ts", "cypress/e2e/buy.cy.ts", "test/cart.e2e.spec.mjs", "visual/panel.spec.ts"])
+		assert.equal(frameworkSuitePath(path), true, `${path} is run by a framework, so its own suite is the proof`);
+	for (const path of ["test/budget.test.mjs", "test/unit/a.test.mjs", "src/hud.ts", "test/nothing.spec.ts", ""])
+		assert.equal(frameworkSuitePath(path), false, `${path} is a plain suite file and the ceiling still applies`);
+
+	const root = mkdtempSync(join(tmpdir(), "finisher-suite-framework-"));
+	try {
+		mkdirSync(join(root, "test"), { recursive: true });
+		for (const name of ["a", "b", "c"]) writeFileSync(join(root, "test", `${name}.test.mjs`), 'test("x", () => {});');
+		const baseline = { files: 1, cases: 1 };
+		for (const path of ["test/e2e/checkout.spec.ts", "e2e/login.e2e.spec.ts"])
+			assert.equal(suiteWriteGate(baseline, root, path, false), undefined, `${path} is never refused by a ceiling meant for unit proof`);
+		assert.equal(suiteWriteGate(baseline, root, "test/d.test.mjs", false)?.includes("test/d.test.mjs"), true, "a plain fourth unit file is still over the ceiling");
+		const hook = createHygieneHook({ state: { suiteAtStart: baseline }, persist: () => {}, updateWidget: () => {}, pi: { on: () => {} } });
+		assert.equal(hook.blockedBySuiteBudget({ toolName: "write", input: { path: "test/e2e/checkout.spec.ts" } }, { cwd: root }), undefined, "the write hook lets a framework suite file through at the same ceiling");
+		assert.equal(hook.blockedBySuiteBudget({ toolName: "write", input: { path: "test/d.test.mjs" } }, { cwd: root })?.block, true);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
